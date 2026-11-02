@@ -69,6 +69,8 @@ export interface BlockGeom {
   params: string[];
   comment: string[];
   pinned: boolean;
+  /** Interface bar of a composite block's internals (`in` / `out`); not movable. */
+  iface?: 'in' | 'out';
 }
 
 export type ConnectorKind = 'ext-in' | 'sheet-in' | 'sheet-out' | 'used-by' | 'iface-in' | 'iface-out';
@@ -173,9 +175,28 @@ interface Pre {
 
 const connW = (label: string) => Math.max(56, Math.ceil(label.length * M.CH_PORT + 20));
 
+/** Pseudo-blocks drawing a composite type's interface as `in` / `out` bars. */
+function ifaceBlocks(t: BlockTypeDef): BlockInst[] {
+  const mk = (id: 'in' | 'out', inputs: PortDef[], outputs: PortDef[]): BlockInst => ({
+    id,
+    typeRef: '',
+    sheet: 1,
+    params: {},
+    ext: {},
+    def: { ...t, type: id === 'in' ? 'INPUTS' : 'OUTPUTS', kind: 'basic', inputs, outputs, params: [], diagram: undefined },
+  });
+  const out: BlockInst[] = [];
+  if (t.inputs.length) out.push(mk('in', [], t.inputs));
+  if (t.outputs.length) out.push(mk('out', t.outputs, []));
+  return out;
+}
+
 export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext = {}): SheetLayout {
-  const onSheet = diagram.blocks.filter((b) => sheetOf(diagram, b) === sheet);
-  const byId = new Map(diagram.blocks.map((b) => [b.id, b]));
+  const firstSheet = diagram.sheets[0]?.id ?? 1;
+  const iface = ctx.composite && sheet === firstSheet ? ifaceBlocks(ctx.composite) : [];
+  const onSheet = [...iface, ...diagram.blocks.filter((b) => sheetOf(diagram, b) === sheet)];
+  const byId = new Map([...diagram.blocks, ...(ctx.composite ? ifaceBlocks(ctx.composite) : [])].map((b) => [b.id, b]));
+  const isIface = (b: BlockInst) => !!ctx.composite && (b.id === IFACE_IN || b.id === IFACE_OUT) && b.typeRef === '';
   const here = new Set(onSheet.map((b) => b.id));
   const portType = (b: BlockInst | undefined, dir: 'in' | 'out', port: string): string | undefined =>
     (dir === 'in' ? b?.def?.inputs : b?.def?.outputs)?.find((p) => p.name === port)?.type;
@@ -205,13 +226,15 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     const label = typeLabel(b);
     const maxIn = Math.max(0, ...inputs.map((p) => p.name.length));
     const maxOut = Math.max(0, ...outputs.map((p) => p.name.length));
-    let w = Math.max(
+    let w = isIface(b)
+      ? Math.max(90, Math.max(maxIn, maxOut) * M.CH_PORT + 24)
+      : Math.max(
       M.MIN_W,
       b.id.length * M.CH_NAME + 64,
       label.length * M.CH_SMALL + 64,
       (maxIn + maxOut) * M.CH_PORT + 26,
       Math.max(0, ...params.map((s) => s.length)) * M.CH_SMALL + 14,
-    );
+      );
     w = Math.ceil(w / 10) * 10;
     const rows = Math.max(inputs.length, outputs.length, 1);
     const h = M.HEADER + rows * M.ROW + M.PAD + (params.length ? params.length * M.PARAM_ROW + 6 : 0);
@@ -230,8 +253,6 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     if (dstPre) {
       if (l.from.strategy) {
         dstPre.left.push({ kind: 'ext-in', label: formatEndpoint(l.from), port: l.to.port, link: l.index, signal, target: { strategy: l.from.strategy, block: l.from.block } });
-      } else if (ctx.composite && l.from.block === IFACE_IN) {
-        dstPre.left.push({ kind: 'iface-in', label: l.from.port, port: l.to.port, link: l.index, signal });
       } else if (src && !here.has(src.id)) {
         const s = sheetOf(diagram, src);
         dstPre.left.push({ kind: 'sheet-in', label: `← ${s} / ${src.id}.${l.from.port}`, port: l.to.port, link: l.index, signal, target: { sheet: s, block: src.id } });
@@ -239,9 +260,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     }
     const srcPre = src ? pre.get(src.id) : undefined;
     if (srcPre) {
-      if (ctx.composite && l.to.block === IFACE_OUT) {
-        srcPre.right.push({ kind: 'iface-out', label: l.to.port, port: l.from.port, link: l.index, signal });
-      } else if (dst && !here.has(dst.id)) {
+      if (dst && !here.has(dst.id)) {
         const s = sheetOf(diagram, dst);
         srcPre.right.push({ kind: 'sheet-out', label: `→ ${s} / ${dst.id}.${l.to.port}`, port: l.from.port, link: l.index, signal, target: { sheet: s, block: dst.id } });
       }
@@ -429,6 +448,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       params: p.params,
       comment: p.commentLines,
       pinned,
+      iface: isIface(p.b) ? (p.b.id as 'in' | 'out') : undefined,
     });
   }
 

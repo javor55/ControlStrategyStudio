@@ -21,6 +21,20 @@ interface UndoEntry {
   activeFile: string | null;
 }
 
+/** How the centre shows the active file: drawing only, drawing + text side by side, or text only. */
+export type ViewMode = 'diagram' | 'split' | 'text';
+
+const VIEW_MODE_KEY = 'css:view-mode';
+function initialViewMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    if (v === 'diagram' || v === 'split' || v === 'text') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'split';
+}
+
 export interface EditorState {
   projectId: string;
   files: Files;
@@ -37,6 +51,7 @@ export interface EditorState {
   toasts: Toast[];
   /** Files changed since the last save to browser storage. */
   unsaved: boolean;
+  viewMode: ViewMode;
 }
 
 export interface DispatchOptions {
@@ -75,6 +90,7 @@ export class EditorStore {
       redoStack: [],
       toasts: [],
       unsaved: false,
+      viewMode: this.state?.viewMode ?? initialViewMode(),
     };
   }
 
@@ -209,6 +225,16 @@ export class EditorStore {
 
   select(selection: Selection) {
     this.set({ selection });
+  }
+
+  setViewMode(viewMode: ViewMode) {
+    if (viewMode === this.state.viewMode) return;
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, viewMode);
+    } catch {
+      /* ignore */
+    }
+    this.set({ viewMode, fitRequest: this.state.fitRequest + 1 });
   }
 
   requestFit() {

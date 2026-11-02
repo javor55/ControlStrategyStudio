@@ -12,6 +12,7 @@ import { bumpVersion, parseTypeRef } from './library';
 import { blockTypeFile, classify, folderReadme, joinPath, libraryFile, strategyDocFile, strategyFile } from './paths';
 import type { Endpoint, FileContent, Files } from './types';
 import { newUid } from './uid';
+import { parseFragment, renameFragmentLinks, renameMap } from './fragment';
 import { parseForEdit, stringifyDoc, type YamlPath } from './yamlutil';
 
 export type BlockField = 'type' | 'description' | 'doc' | 'comment' | 'scan' | 'order' | 'sheet';
@@ -60,7 +61,29 @@ export type Op =
   // library
   | { op: 'createLibrary'; folder: string; name?: string; description?: string }
   | { op: 'createBlockType'; lib: string; type: string; category?: string; kind?: 'basic' | 'composite' }
-  | { op: 'newTypeVersion'; file: string; part?: 'major' | 'minor' | 'patch' };
+  | { op: 'newTypeVersion'; file: string; part?: 'major' | 'minor' | 'patch' }
+  // clipboard & multi-selection
+  | ({ op: 'insertFragment'; fragment: string; offset?: [number, number]; sheet?: number } & DiagramTarget)
+  | ({ op: 'removeBlocks'; ids: string[] } & DiagramTarget)
+  // block type definition (file = library/<lib>/<TYPE>@<ver>.yaml)
+  | { op: 'setTypeField'; file: string; field: 'category' | 'description' | 'color' | 'kind'; value?: string }
+  | { op: 'addPort'; file: string; list: PortList; port: PortSpec; index?: number }
+  | { op: 'updatePort'; file: string; list: PortList; name: string; patch: Partial<PortSpec> }
+  | { op: 'removePort'; file: string; list: PortList; name: string }
+  | { op: 'movePort'; file: string; list: PortList; name: string; to: number }
+  | { op: 'setImplementation'; file: string; language?: string; source?: string }
+  | { op: 'renameBlockType'; file: string; type: string };
+
+export type PortList = 'inputs' | 'outputs' | 'params';
+
+export interface PortSpec {
+  name: string;
+  type: string;
+  default?: unknown;
+  unit?: string;
+  values?: string[];
+  description?: string;
+}
 
 export interface OpResult {
   files: Files;
@@ -85,6 +108,10 @@ const BLOCK_KEYS = ['type', 'description', 'doc', 'sheet', 'order', 'scan', 'par
 const STRATEGY_KEYS = ['format', 'uid', 'strategy', 'title', 'description', 'revision', 'author', 'scan', 'sheets', 'blocks', 'links', 'notes'];
 const LINK_KEYS = ['from', 'to', 'comment'];
 const NOTE_KEYS = ['text', 'sheet', 'pos', 'width'];
+const TYPE_KEYS = ['format', 'uid', 'type', 'version', 'category', 'kind', 'description', 'color', 'inputs', 'outputs', 'params', 'implementation', 'diagram'];
+const PORT_KEYS = ['name', 'type', 'default', 'unit', 'values', 'description'];
+const PORT_LISTS: PortList[] = ['inputs', 'outputs', 'params'];
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function keyOf(p: Pair): unknown {
   return isScalar(p.key) ? p.key.value : p.key;
@@ -106,15 +133,58 @@ function ensureMap(doc: Document, path: YamlPath, keyOrder: string[] = STRATEGY_
   return m;
 }
 
-function ensureSeq(doc: Document, path: YamlPath): YAMLSeq {
+function ensureSeq(doc: Document, path: YamlPath, keyOrder: string[] = STRATEGY_KEYS): YAMLSeq {
   const n = getNode(doc, path);
   if (isSeq(n)) {
     if (n.flow && n.items.length === 0) n.flow = false;
     return n;
   }
   const s = new YAMLSeq();
-  setOrdered(ensureMap(doc, path.slice(0, -1)), String(path[path.length - 1]), s, STRATEGY_KEYS);
+  setOrdered(ensureMap(doc, path.slice(0, -1), keyOrder), String(path[path.length - 1]), s, keyOrder);
   return s;
+}
+
+/** Converts plain data to YAML nodes; `params` maps and `pos` pairs become flow style. */
+function blockNode(doc: Document, raw: Record<string, unknown>): YAMLMap {
+  const m = new YAMLMap();
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === 'params' && isPlainObject(v)) {
+      const pm = doc.createNode(v) as YAMLMap;
+      pm.flow = true;
+      m.items.push(new Pair(new Scalar(k), pm));
+    } else m.items.push(new Pair(new Scalar(k), toNode(doc, v)));
+  }
+  return m;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function portNode(doc: Document, spec: Partial<PortSpec>): YAMLMap {
+  const m = new YAMLMap();
+  m.flow = true;
+  for (const k of PORT_KEYS) {
+    const v = (spec as Record<string, unknown>)[k];
+    if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) continue;
+    const node = doc.createNode(v);
+    if (isSeq(node)) node.flow = true;
+    m.items.push(new Pair(new Scalar(k), node));
+  }
+  return m;
+}
+
+function portIndex(seq: YAMLSeq, name: string): number {
+  return seq.items.findIndex((it) => isMap(it) && it.get('name') === name);
+}
+
+function allPortNames(doc: Document): Set<string> {
+  const out = new Set<string>();
+  for (const l of PORT_LISTS) {
+    const seq = getNode(doc, [l]);
+    if (isSeq(seq)) for (const it of seq.items) if (isMap(it)) out.add(String(it.get('name')));
+  }
+  return out;
 }
 
 function toNode(doc: Document, value: unknown): unknown {
@@ -225,6 +295,13 @@ function blockTypeTemplate(type: string, category: string, kind: 'basic' | 'comp
   return stringifyDoc(new Document(data));
 }
 
+function typeFileOf(tx: Tx, file: string): { lib: string } {
+  const role = classify(file);
+  if (role.kind !== 'blocktype') throw new OpError(`"${file}" is not a block type`);
+  if (!tx.has(file)) throw new OpError(`"${file}" does not exist`);
+  return role;
+}
+
 // ---------------------------------------------------------------------------
 // applyOp
 // ---------------------------------------------------------------------------
@@ -323,7 +400,53 @@ function moveWithDoc(tx: Tx, from: string, to: string): void {
 
 function run(tx: Tx, op: Op): void {
   const root = 'root' in op && op.root ? op.root : [];
+  if (runTypeOp(tx, op)) return;
   switch (op.op) {
+    case 'insertFragment': {
+      const frag = parseFragment(op.fragment);
+      if (!frag || (!Object.keys(frag.blocks).length && !frag.notes.length)) throw new OpError('The clipboard does not contain diagram blocks');
+      const [dx, dy] = op.offset ?? [0, 0];
+      tx.edit(op.file, (doc) => {
+        const blocks = ensureMap(doc, [...root, 'blocks']);
+        const map = renameMap(blocks.items.map((p) => String(keyOf(p))), Object.keys(frag.blocks));
+        for (const [id, raw] of Object.entries(frag.blocks)) {
+          const data: Record<string, unknown> = { ...raw };
+          delete data.sheet;
+          const pos = Array.isArray(data.pos) && data.pos.length === 2 ? (data.pos as number[]) : undefined;
+          delete data.pos;
+          const m = blockNode(doc, data);
+          if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, BLOCK_KEYS, doc);
+          if (pos) setOrdered(m, 'pos', [Math.round(pos[0] + dx), Math.round(pos[1] + dy)], BLOCK_KEYS, doc);
+          blocks.items.push(new Pair(new Scalar(map[id]), m));
+        }
+        if (frag.links.length) {
+          const seq = ensureSeq(doc, [...root, 'links']);
+          for (const l of renameFragmentLinks(frag.links, map)) seq.items.push(typeof l === 'string' ? new Scalar(l) : (doc.createNode(l) as YAMLMap));
+        }
+        if (frag.notes.length) {
+          const seq = ensureSeq(doc, [...root, 'notes']);
+          for (const n of frag.notes) {
+            const data: Record<string, unknown> = { ...n };
+            const pos = Array.isArray(data.pos) && data.pos.length === 2 ? (data.pos as number[]) : undefined;
+            delete data.pos;
+            const m = doc.createNode(data) as YAMLMap;
+            if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, NOTE_KEYS, doc);
+            if (pos) setOrdered(m, 'pos', [Math.round(pos[0] + dx), Math.round(pos[1] + dy)], NOTE_KEYS, doc);
+            seq.items.push(m);
+          }
+        }
+      });
+      return;
+    }
+    case 'removeBlocks':
+      tx.edit(op.file, (doc) => {
+        const blocks = getNode(doc, [...root, 'blocks']);
+        if (!isMap(blocks)) throw new OpError('No blocks to remove');
+        const ids = new Set(op.ids);
+        for (const id of ids) blocks.delete(id);
+        rewriteLinks(doc, root, (_i, from, to) => ((from && !from.strategy && ids.has(from.block)) || (to && ids.has(to.block)) ? 'delete' : undefined));
+      });
+      return;
     case 'setText':
       tx.write(op.file, op.text);
       return;
@@ -494,7 +617,10 @@ function run(tx: Tx, op: Op): void {
       return;
     case 'pinAll':
       tx.edit(op.file, (doc) => {
-        for (const [id, p] of Object.entries(op.positions)) setOrdered(blockMap(doc, root, id), 'pos', p.map(Math.round), BLOCK_KEYS, doc);
+        for (const [id, p] of Object.entries(op.positions)) {
+          if (RESERVED_IDS.has(id)) continue; // composite interface bars are not stored
+          setOrdered(blockMap(doc, root, id), 'pos', p.map(Math.round), BLOCK_KEYS, doc);
+        }
       });
       return;
     case 'unpinAll':
@@ -665,6 +791,174 @@ function run(tx: Tx, op: Op): void {
       tx.write(to, stringifyDoc(doc));
       return;
     }
+  }
+}
+
+function runTypeOp(tx: Tx, op: Op): boolean {
+  switch (op.op) {
+    case 'setTypeField':
+      typeFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const m = ensureMap(doc, [], TYPE_KEYS);
+        if (op.field === 'kind') {
+          if (op.value === 'composite') {
+            setOrdered(m, 'kind', 'composite', TYPE_KEYS, doc);
+            if (!isMap(m.get('diagram', true))) {
+              const d = new YAMLMap();
+              d.items.push(new Pair(new Scalar('blocks'), new YAMLMap()));
+              setOrdered(m, 'diagram', d, TYPE_KEYS);
+            }
+          } else {
+            m.delete('kind');
+            m.delete('diagram');
+          }
+          return;
+        }
+        setOrDelete(doc, m, op.field, op.value, TYPE_KEYS);
+      });
+      return true;
+    case 'addPort':
+      typeFileOf(tx, op.file);
+      if (!IDENT_RE.test(op.port.name)) throw new OpError(`Invalid name "${op.port.name}" — use letters, digits and "_"`);
+      tx.edit(op.file, (doc) => {
+        if (allPortNames(doc).has(op.port.name)) throw new OpError(`"${op.port.name}" already exists in this block type`);
+        const seq = ensureSeq(doc, [op.list], TYPE_KEYS);
+        const node = portNode(doc, op.port);
+        if (op.index === undefined || op.index >= seq.items.length) seq.items.push(node);
+        else seq.items.splice(Math.max(0, op.index), 0, node);
+      });
+      return true;
+    case 'updatePort':
+      typeFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const seq = getNode(doc, [op.list]);
+        const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
+        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        const item = seq.items[i] as YAMLMap;
+        const rename = op.patch.name !== undefined && op.patch.name !== op.name ? op.patch.name : undefined;
+        if (rename !== undefined) {
+          if (!IDENT_RE.test(rename)) throw new OpError(`Invalid name "${rename}" — use letters, digits and "_"`);
+          if (allPortNames(doc).has(rename)) throw new OpError(`"${rename}" already exists in this block type`);
+        }
+        for (const [k, v] of Object.entries(op.patch)) {
+          if (k === 'name' && rename === undefined) continue;
+          if (k === 'name' && !rename) throw new OpError('A port needs a name');
+          if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) item.delete(k);
+          else {
+            const node = doc.createNode(v);
+            if (isSeq(node)) node.flow = true;
+            setOrdered(item, k, node, PORT_KEYS);
+          }
+        }
+        if (rename && op.list !== 'params') {
+          const pseudo = op.list === 'inputs' ? 'in' : 'out';
+          rewriteLinks(doc, ['diagram'], (_i, from, to) => {
+            if (!from || !to) return;
+            const f = from.block === pseudo && from.port === op.name ? { ...from, port: rename } : from;
+            const t = to.block === pseudo && to.port === op.name ? { ...to, port: rename } : to;
+            return f !== from || t !== to ? { from: f, to: t } : undefined;
+          });
+        }
+        if (rename) {
+          // `$NAME` parameter references inside composite internals.
+          const blocks = getNode(doc, ['diagram', 'blocks']);
+          if (isMap(blocks)) {
+            for (const p of blocks.items) {
+              const params = isMap(p.value) ? p.value.get('params', true) : undefined;
+              if (!isMap(params)) continue;
+              for (const pp of params.items) if (isScalar(pp.value) && pp.value.value === `$${op.name}`) pp.value.value = `$${rename}`;
+            }
+          }
+        }
+      });
+      return true;
+    case 'removePort':
+      typeFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const seq = getNode(doc, [op.list]);
+        const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
+        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        seq.items.splice(i, 1);
+        if (op.list !== 'params') {
+          const pseudo = op.list === 'inputs' ? 'in' : 'out';
+          rewriteLinks(doc, ['diagram'], (_i, from, to) =>
+            (from?.block === pseudo && from.port === op.name) || (to?.block === pseudo && to.port === op.name) ? 'delete' : undefined,
+          );
+        }
+      });
+      return true;
+    case 'movePort':
+      typeFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const seq = getNode(doc, [op.list]);
+        const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
+        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        const [item] = seq.items.splice(i, 1);
+        seq.items.splice(Math.max(0, Math.min(op.to, seq.items.length)), 0, item);
+      });
+      return true;
+    case 'setImplementation':
+      typeFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const m = ensureMap(doc, [], TYPE_KEYS);
+        if (!op.language && !op.source) {
+          m.delete('implementation');
+          return;
+        }
+        const impl = new YAMLMap();
+        if (op.language) impl.items.push(new Pair(new Scalar('language'), new Scalar(op.language)));
+        if (op.source) {
+          const src = new Scalar(op.source.endsWith('\n') ? op.source : op.source + '\n');
+          src.type = Scalar.BLOCK_LITERAL;
+          impl.items.push(new Pair(new Scalar('source'), src));
+        }
+        setOrdered(m, 'implementation', impl, TYPE_KEYS);
+      });
+      return true;
+    case 'renameBlockType': {
+      const { lib } = typeFileOf(tx, op.file);
+      if (!IDENT_RE.test(op.type)) throw new OpError(`Invalid type name "${op.type}"`);
+      const old = String(parseForEdit(tx.text(op.file)).get('type'));
+      if (old === op.type) return true;
+      const prefix = (t: string) => `library/${lib}/${t}@`;
+      if (Object.keys(tx.files).some((f) => f.startsWith(prefix(op.type)))) throw new OpError(`Type "${op.type}" already exists in library "${lib}"`);
+      for (const f of Object.keys(tx.files).filter((f) => f.startsWith(prefix(old)) && f.endsWith('.yaml'))) {
+        const doc = parseForEdit(tx.text(f));
+        doc.set('type', op.type);
+        const to = f.replace(prefix(old), prefix(op.type));
+        tx.write(to, stringifyDoc(doc));
+        tx.remove(f);
+      }
+      const elsewhere = Object.keys(tx.files).some((f) => f.startsWith('library/') && !f.startsWith(`library/${lib}/`) && new RegExp(`/${old}@[^/]*\\.yaml$`).test(f));
+      const fix = (doc: Document, root: YamlPath): boolean => {
+        const blocks = getNode(doc, [...root, 'blocks']);
+        if (!isMap(blocks)) return false;
+        let changed = false;
+        for (const p of blocks.items) {
+          const t = isMap(p.value) ? p.value.get('type', true) : undefined;
+          if (!isScalar(t) || typeof t.value !== 'string') continue;
+          const r = parseTypeRef(t.value);
+          if (!r || r.type !== old || (r.lib ? r.lib !== lib : elsewhere)) continue;
+          t.value = `${r.lib ? r.lib + '/' : ''}${op.type}${r.version ? '@' + r.version : ''}`;
+          changed = true;
+        }
+        return changed;
+      };
+      for (const f of Object.keys(tx.files)) {
+        const role = classify(f);
+        if (role.kind !== 'strategy' && role.kind !== 'blocktype') continue;
+        let doc: Document;
+        try {
+          doc = parseForEdit(tx.text(f));
+        } catch {
+          continue;
+        }
+        if (fix(doc, role.kind === 'strategy' ? [] : ['diagram'])) tx.write(f, stringifyDoc(doc));
+      }
+      return true;
+    }
+    default:
+      return false;
   }
 }
 

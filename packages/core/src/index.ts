@@ -9,6 +9,7 @@ export * from './library';
 export * from './validate';
 export * from './project';
 export * from './ops';
+export * from './fragment';
 export * from './layout';
 export * from './stdlib';
 export * from './demo';

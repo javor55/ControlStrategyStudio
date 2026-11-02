@@ -192,6 +192,8 @@ export interface FolderNode {
 
 export type Selection =
   | { kind: 'block'; id: string }
+  /** Several blocks (multi-selection). Always 2+ ids; a single block uses kind 'block'. */
+  | { kind: 'blocks'; ids: string[] }
   | { kind: 'link'; index: number }
   | { kind: 'note'; index: number }
   | null;

@@ -64,7 +64,12 @@ export const PRINT_THEME: Theme = {
   fontMono: 'Courier, "Courier New", monospace',
 };
 
-export type RenderSelection = { kind: 'block'; id: string } | { kind: 'link'; index: number } | { kind: 'note'; index: number } | null;
+export type RenderSelection =
+  | { kind: 'block'; id: string }
+  | { kind: 'blocks'; ids: string[] }
+  | { kind: 'link'; index: number }
+  | { kind: 'note'; index: number }
+  | null;
 
 export interface RenderOptions {
   theme?: Theme;
@@ -124,8 +129,28 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   return s;
 }
 
+function renderIface(b: BlockGeom, t: Theme, o: RenderOptions): string {
+  const isIn = b.iface === 'in';
+  let s = `<g${attrs({ 'data-iface': o.interactive ? b.iface : undefined })}>`;
+  s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: b.h, fill: t.paper, stroke: t.iface, 'stroke-width': 1.4, 'stroke-dasharray': '4 2' })}/>`;
+  s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: M.HEADER - 4, fill: t.iface, 'fill-opacity': 0.12, stroke: t.iface, 'stroke-width': 1.4 })}/>`;
+  s += text(b.x + 6, b.y + 13, isIn ? 'IN' : 'OUT', { 'font-family': t.fontSans, 'font-size': 12, 'font-weight': 'bold', fill: t.iface });
+  s += text(b.x + 6, b.y + 25, isIn ? 'block inputs' : 'block outputs', { 'font-family': t.fontMono, 'font-size': 9.5, fill: t.iface });
+  for (const p of b.ports) {
+    const inside = p.dir === 'in' ? b.x : b.x + b.w;
+    s += `<line${attrs({ x1: p.x, y1: p.y, x2: inside, y2: p.y, stroke: t.iface, 'stroke-width': 1.4 })}/>`;
+    s += text(p.dir === 'in' ? b.x + 4 : b.x + b.w - 4, p.y + 3.5, p.name, { 'font-family': t.fontMono, 'font-size': 10, fill: t.ink, 'text-anchor': p.dir === 'in' ? 'start' : 'end' });
+    if (o.interactive) {
+      s += `<rect${attrs({ x: p.dir === 'in' ? p.x - 4 : inside - 2, y: p.y - 6, width: M.STUB + 6, height: 12, fill: 'transparent', 'data-port': p.name, 'data-dir': p.dir, 'data-owner': b.id, style: 'cursor:crosshair' })}/>`;
+    }
+  }
+  return s + '</g>';
+}
+
 function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
-  const selected = o.selection?.kind === 'block' && o.selection.id === b.id;
+  if (b.iface) return renderIface(b, t, o);
+  const sel = o.selection;
+  const selected = (sel?.kind === 'block' && sel.id === b.id) || (sel?.kind === 'blocks' && sel.ids.includes(b.id));
   const error = o.errorBlocks?.has(b.id) || b.unknownType;
   const stroke = selected ? t.accent : error ? t.error : t.ink;
   const sw = selected ? 2.2 : error ? 1.6 : 1.2;
