@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// CSD Studio core data model.
+// Control Strategy Studio core data model.
 //
 // The project is a set of files (YAML, Markdown, assets). YAML is the source of
 // truth; everything below is the *parsed view* of those files. Nothing here

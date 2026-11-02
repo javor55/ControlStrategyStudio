@@ -4,6 +4,7 @@ import { Document } from 'yaml';
 import { store, useEditor } from './state/store';
 import { activeView } from './state/selectors';
 import { browserStore, download, filesToZip, newProjectId, rememberLast, safeFileName, zipToFiles, type ProjectSummary } from './state/persist';
+import { LogoMark } from './ui/Logo';
 import { DialogHost, confirmDialog, promptDialog } from './ui/dialogs';
 import { useMenu, type MenuEntry } from './ui/kit';
 import { Canvas } from './canvas/Canvas';
@@ -99,7 +100,10 @@ function TopBar() {
 
   return (
     <header className="topbar">
-      <span className="brand">CSD Studio</span>
+      <span className="brand">
+        <LogoMark size={24} />
+        <span>Control Strategy <b>Studio</b></span>
+      </span>
       <button className="btn" onClick={(e) => projectMenu(e.currentTarget)}>
         {name} ▾
       </button>

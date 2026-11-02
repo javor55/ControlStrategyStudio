@@ -1,10 +1,12 @@
-# CSD Studio
+<img src="brand/logo-wordmark.svg" alt="Control Strategy Studio" height="64">
+
+# Control Strategy Studio
 
 Tool for writing **control strategy diagrams**: system-independent, CFC-like
 function block diagrams that can be edited as text (YAML) or graphically, versioned
 with git and shared with plants as PDF.
 
-Design document: see the "CSD Studio – návrh" artifact (revision C).
+Design document: see the "Control Strategy Studio – návrh" artifact (revision C).
 
 ## Status
 

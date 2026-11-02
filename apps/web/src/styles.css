@@ -1,4 +1,4 @@
-/* CSD Studio — UI tokens. Neutral engineering chrome; colour is reserved for
+/* Control Strategy Studio — UI tokens. Neutral engineering chrome; colour is reserved for
    state (errors, warnings, selection) as in ISA-101 style HMIs. The drawing
    itself is always on white "paper". */
 :root {
@@ -65,7 +65,8 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .app { display: grid; height: 100%; grid-template-rows: 40px minmax(0, 1fr) auto; grid-template-columns: var(--left-w, 260px) minmax(0, 1fr) var(--right-w, 380px); }
 .app > * { min-width: 0; min-height: 0; }
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--rule-strong); }
-.brand { font: 700 18px var(--f-display); letter-spacing: .03em; margin-right: 8px; white-space: nowrap; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font: 600 17px var(--f-display); letter-spacing: .02em; margin-right: 8px; white-space: nowrap; }
+.brand b { font-weight: 500; color: var(--accent); letter-spacing: .12em; text-transform: uppercase; font-size: 13px; margin-left: 2px; }
 .spacer { flex: 1; }
 .left { background: var(--panel); border-right: 1px solid var(--rule-strong); display: flex; flex-direction: column; overflow: hidden; }
 .center { position: relative; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; }

@@ -61,7 +61,7 @@ export function migrateDocument(doc: Document, kind: DocKind, file: string): Mig
     diags.push({
       severity: 'error',
       code: 'format-too-new',
-      message: `Format ${raw} is newer than this application supports (${formatTag(kind)}). Update CSD Studio.`,
+      message: `Format ${raw} is newer than this application supports (${formatTag(kind)}). Update Control Strategy Studio.`,
       file,
     });
     return { migrated: false, diags };
