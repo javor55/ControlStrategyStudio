@@ -106,7 +106,9 @@ export function layoutActiveSheet(d: ActiveDiagram, sheet: number, extra: Partia
   return layoutSheet(d.diagram, valid, { ...d.layoutContext, ...extra });
 }
 
-/** Diagnostics of one file. */
+const NO_DIAGS: Diag[] = [];
+
+/** Diagnostics of one file. Returns a stable array, so it is safe inside `useEditor` selectors. */
 export function diagsOf(model: ProjectModel, file: string | null | undefined): Diag[] {
-  return file ? model.diagsByFile.get(file) ?? [] : [];
+  return (file && model.diagsByFile.get(file)) || NO_DIAGS;
 }

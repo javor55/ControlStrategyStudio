@@ -1,0 +1,93 @@
+// "?" overlay listing the canvas keyboard shortcuts and mouse gestures.
+import { useEffect, useRef } from 'react';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+const MOD = isMac ? '⌘' : 'Ctrl';
+
+const GROUPS: { title: string; rows: [string, string][] }[] = [
+  {
+    title: 'Mouse',
+    rows: [
+      ['Wheel', 'Scroll vertically'],
+      ['Shift + wheel', 'Scroll horizontally'],
+      [`${MOD} + wheel / pinch`, 'Zoom around the cursor'],
+      ['Middle drag · Space + drag', 'Pan'],
+      ['Drag on empty paper', 'Rubber-band selection'],
+      ['Shift / Ctrl + click or drag', 'Add to / toggle selection'],
+      ['Drag a selected block', 'Move all selected blocks'],
+      ['Drag from a port to a port', 'Connect'],
+      ['Drag from a port to empty paper', 'Add a matching block and connect it'],
+      ['Double-click empty paper', 'Quick insert a block'],
+      ['Double-click block name', 'Rename in place'],
+      ['Double-click parameter / constant', 'Edit value in place'],
+      ['Double-click unconnected input name', 'Set a constant'],
+      ['Double-click composite block', 'Open its internals'],
+      ['Right-click', 'Context menu'],
+    ],
+  },
+  {
+    title: 'Keyboard',
+    rows: [
+      [`${MOD}+C / ${MOD}+X / ${MOD}+V`, 'Copy / cut / paste blocks (at the mouse)'],
+      [`${MOD}+D`, 'Duplicate selection'],
+      [`${MOD}+A`, 'Select all blocks on the sheet'],
+      ['Delete / Backspace', 'Delete selection'],
+      ['Arrows · Shift+arrows', 'Nudge 10 px · 50 px'],
+      [`${MOD}+Z · ${MOD}+Y`, 'Undo · redo'],
+      ['Escape', 'Clear selection / cancel drag'],
+      [`/ · ${MOD}+Space`, 'Quick insert a block'],
+      ['F · Shift+1', 'Fit drawing'],
+      [`${MOD}+0`, 'Zoom 100 %'],
+      ['+ / −', 'Zoom in / out'],
+      ['?', 'This help'],
+    ],
+  },
+];
+
+export function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === '?') {
+        e.preventDefault();
+        close.current();
+      }
+    };
+    // Attach after the key press that opened the overlay has finished propagating.
+    const t = setTimeout(() => document.addEventListener('keydown', key));
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('keydown', key);
+    };
+  }, []);
+  return (
+    <div className="cv-help" role="dialog" aria-label="Canvas shortcuts" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="cv-help-head">
+        <strong>Canvas shortcuts</strong>
+        <button className="btn small icon" title="Close (Esc)" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="cv-help-body">
+        {GROUPS.map((g) => (
+          <section key={g.title}>
+            <h4>{g.title}</h4>
+            <table>
+              <tbody>
+                {g.rows.map(([k, v]) => (
+                  <tr key={k}>
+                    <td>
+                      <kbd>{k}</kbd>
+                    </td>
+                    <td>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
