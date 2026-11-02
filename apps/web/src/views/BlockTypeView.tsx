@@ -1,11 +1,13 @@
-// Centre view for basic (non-composite) block types: preview, interface, versions, usage.
+// Centre view for basic (non-composite) block types: graphical editor of the
+// definition with a live preview, versions and usage.
 import { useMemo } from 'react';
-import { formatValue, layoutSheet, suggestBlockId, type BlockTypeDef, type Diagram, type PortDef } from '@csd/core';
+import { layoutSheet, suggestBlockId, type BlockTypeDef, type Diagram } from '@csd/core';
 import { renderSheetSvg } from '@csd/render';
 import { store, useEditor } from '../state/store';
 import { diagsOf } from '../state/selectors';
 import { SeverityBadge } from '../ui/kit';
-import { deleteTypeVersion, newTypeVersion, usagesOf } from '../project/actions';
+import { deleteTypeVersion, usagesOf } from '../project/actions';
+import { BlockTypeEditor } from '../inspector/BlockTypeEditor';
 import { goToDiag } from '../project/ProblemsBar';
 import './views.css';
 
@@ -26,45 +28,6 @@ export function previewSvg(def: BlockTypeDef): string {
   return renderSheetSvg(layout, { viewBox: vb, width: Math.round(vb.w), height: Math.round(vb.h) });
 }
 
-function PortTable({ title, ports, withUnit = true }: { title: string; ports: PortDef[]; withUnit?: boolean }) {
-  return (
-    <section className="v-sec">
-      <h3>
-        {title} <span className="count">{ports.length}</span>
-      </h3>
-      {ports.length ? (
-        <table className="v-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Default</th>
-              {withUnit && <th>Unit</th>}
-              <th>Description</th>
-            </tr>
-          </thead>
-          <tbody>
-            {ports.map((p) => (
-              <tr key={p.name}>
-                <td className="mono strong">{p.name}</td>
-                <td className="mono">
-                  {p.type}
-                  {p.values?.length ? <span className="muted"> ({p.values.join(' | ')})</span> : null}
-                </td>
-                <td className="mono">{formatValue(p.default)}</td>
-                {withUnit && <td>{p.unit ?? ''}</td>}
-                <td>{p.description ?? ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p className="muted">None.</p>
-      )}
-    </section>
-  );
-}
-
 export function BlockTypeView() {
   const file = useEditor((s) => s.activeFile);
   const model = useEditor((s) => s.model);
@@ -80,12 +43,12 @@ export function BlockTypeView() {
         <div className="view-head">
           <span className="mono view-path">{view.file}</span>
           <span className="spacer" />
-          <span className="view-note">Edit in the source panel on the right</span>
+          <span className="view-note">Fix the YAML in the text view (Alt+2 / Alt+3)</span>
         </div>
         <div className="view-body scroll">
           <div className="v-page">
             <h1>Block type cannot be read</h1>
-            <p className="muted">Fix the YAML in the source panel on the right.</p>
+            <p className="muted">Fix the YAML in the text view: Split (Alt+2) or Text (Alt+3).</p>
             <ul className="v-list">
               {diags.map((d, i) => (
                 <li key={i}>
@@ -113,7 +76,7 @@ export function BlockTypeView() {
         <span className="mono view-path">{view.file}</span>
         <SeverityBadge diags={diags} />
         <span className="spacer" />
-        <span className="view-note">Edit in the source panel on the right</span>
+        <span className="view-note">Every change is written to the YAML</span>
       </div>
       <div className="view-body scroll">
         <div className="v-page">
@@ -130,34 +93,37 @@ export function BlockTypeView() {
                 <span className="muted">{def.library} / </span>
                 {def.type} <span className="ver">@{def.version}</span>
               </h1>
-              {def.description && <p className="lead">{def.description}</p>}
             </div>
             <div className="v-actions">
-              <button className="btn primary" onClick={() => newTypeVersion(def)} title="Copy this version as the next minor version">
-                New version
-              </button>
               <button className="btn danger" onClick={() => deleteTypeVersion(def)}>
                 Delete version
               </button>
             </div>
           </header>
 
-          <section className="v-preview" aria-label="Preview">
-            <div className="v-preview-paper" dangerouslySetInnerHTML={{ __html: svg }} />
-          </section>
-
-          <PortTable title="Inputs" ports={def.inputs} />
-          <PortTable title="Outputs" ports={def.outputs} />
-          <PortTable title="Parameters" ports={def.params} />
-
-          {def.implementation?.source && (
-            <section className="v-sec">
-              <h3>
-                Implementation {def.implementation.language && <span className="count">{def.implementation.language}</span>}
-              </h3>
-              <pre className="v-code">{def.implementation.source}</pre>
-            </section>
+          {diags.length > 0 && (
+            <ul className="v-list" style={{ marginBottom: 16 }}>
+              {diags.map((d, i) => (
+                <li key={i}>
+                  <span className={`badge ${d.severity}`}>{d.severity}</span>
+                  <button className="linkish" onClick={() => goToDiag(d)}>
+                    {d.line ? `line ${d.line}: ` : ''}
+                    {d.message}
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
+
+          <BlockTypeEditor
+            key={def.file}
+            def={def}
+            aside={
+              <section className="v-preview" aria-label="Preview" style={{ margin: 0 }}>
+                <div className="v-preview-paper" dangerouslySetInnerHTML={{ __html: svg }} />
+              </section>
+            }
+          />
 
           <div className="v-cols">
             <section className="v-sec">

@@ -203,7 +203,7 @@ export function ProjectView() {
           <span className="mono view-path">{file}</span>
           <SeverityBadge diags={diagsOf(model, file)} />
           <span className="spacer" />
-          <span className="view-note">Edit in the source panel on the right</span>
+          <span className="view-note">Edit as text in Split (Alt+2) or Text (Alt+3) mode</span>
         </div>
       )}
       <div className="view-body scroll">{lib ? <LibraryPage lib={lib} /> : <ProjectPage onProjectFile={file === PROJECT_FILE} />}</div>

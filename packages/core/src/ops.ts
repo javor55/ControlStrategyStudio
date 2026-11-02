@@ -13,6 +13,7 @@ import { blockTypeFile, classify, folderReadme, joinPath, libraryFile, strategyD
 import type { Endpoint, FileContent, Files } from './types';
 import { newUid } from './uid';
 import { parseFragment, renameFragmentLinks, renameMap } from './fragment';
+import { loadProject } from './project';
 import { parseForEdit, stringifyDoc, type YamlPath } from './yamlutil';
 
 export type BlockField = 'type' | 'description' | 'doc' | 'comment' | 'scan' | 'order' | 'sheet';
@@ -293,6 +294,47 @@ function blockTypeTemplate(type: string, category: string, kind: 'basic' | 'comp
   data.params = [];
   if (kind === 'composite') data.diagram = { blocks: {}, links: ['in.IN -> out.OUT'] };
   return stringifyDoc(new Document(data));
+}
+
+/** Updates strategies and composite types whose blocks use the type in `typeFile` after a port rename. */
+function propagatePortRename(tx: Tx, typeFile: string, list: PortList, from: string, to: string): void {
+  const model = loadProject(tx.files);
+  const renameKey = (m: unknown) => {
+    if (!isMap(m)) return;
+    const pair = m.items.find((p) => keyOf(p) === from);
+    if (pair) pair.key = new Scalar(to);
+  };
+  const fixDiagram = (file: string, root: YamlPath, ids: string[], strategy?: string) => {
+    if (!ids.length) return;
+    tx.edit(file, (doc) => {
+      for (const id of ids) {
+        if (list !== 'outputs') renameKey(getNode(doc, [...root, 'blocks', id, 'params']));
+      }
+      rewriteLinks(doc, root, (_i, f, t) => {
+        if (!f || !t) return;
+        const nf = list === 'outputs' && !f.strategy && ids.includes(f.block) && f.port === from ? { ...f, port: to } : f;
+        const nt = list === 'inputs' && ids.includes(t.block) && t.port === from ? { ...t, port: to } : t;
+        return nf !== f || nt !== t ? { from: nf, to: nt } : undefined;
+      });
+    });
+    if (strategy && list === 'outputs') {
+      // Other strategies reading this output.
+      for (const s of model.strategies) {
+        if (s.file === file) continue;
+        const uses = s.links.some((l) => l.from.strategy === strategy && ids.includes(l.from.block) && l.from.port === from);
+        if (!uses) continue;
+        tx.edit(s.file, (doc) =>
+          rewriteLinks(doc, [], (_i, f, t) =>
+            f && t && f.strategy === strategy && ids.includes(f.block) && f.port === from ? { from: { ...f, port: to }, to: t } : undefined,
+          ),
+        );
+      }
+    }
+  };
+  for (const s of model.strategies) fixDiagram(s.file, [], s.blocks.filter((b) => b.def?.file === typeFile).map((b) => b.id), s.name);
+  for (const t of model.types.all) {
+    if (t.diagram && t.file !== typeFile) fixDiagram(t.file, ['diagram'], t.diagram.blocks.filter((b) => b.def?.file === typeFile).map((b) => b.id));
+  }
 }
 
 function typeFileOf(tx: Tx, file: string): { lib: string } {
@@ -828,8 +870,9 @@ function runTypeOp(tx: Tx, op: Op): boolean {
         else seq.items.splice(Math.max(0, op.index), 0, node);
       });
       return true;
-    case 'updatePort':
+    case 'updatePort': {
       typeFileOf(tx, op.file);
+      let renamedPort: string | undefined;
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [op.list]);
         const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
@@ -860,6 +903,7 @@ function runTypeOp(tx: Tx, op: Op): boolean {
           });
         }
         if (rename) {
+          renamedPort = rename;
           // `$NAME` parameter references inside composite internals.
           const blocks = getNode(doc, ['diagram', 'blocks']);
           if (isMap(blocks)) {
@@ -871,7 +915,9 @@ function runTypeOp(tx: Tx, op: Op): boolean {
           }
         }
       });
+      if (renamedPort) propagatePortRename(tx, op.file, op.list, op.name, renamedPort);
       return true;
+    }
     case 'removePort':
       typeFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {

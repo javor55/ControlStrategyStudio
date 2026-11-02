@@ -1,0 +1,27 @@
+/* Workspace: view modes (Diagram | Split | Text), side panels, top bar switches. */
+.ws { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
+.ws-main { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.ws-text { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); }
+.ws-text[hidden] { display: none; }
+.ws-split .ws-text { flex: 0 0 45%; }
+.ws-text .src { min-height: 0; }
+.ws-splitter { flex: 0 0 5px; cursor: col-resize; background: var(--panel); border-left: 1px solid var(--rule-strong); border-right: 1px solid var(--rule); touch-action: none; }
+.ws-splitter:hover, .ws-splitter:active { background: var(--accent-soft); }
+.ws-hint p { margin: 0 0 10px; }
+body.ws-resizing { cursor: col-resize; user-select: none; }
+body.ws-resizing iframe, body.ws-resizing .cm-editor { pointer-events: none; }
+
+.app > aside.collapsed { visibility: hidden; border: 0; }
+.panel-resizer { position: absolute; top: 0; bottom: 0; width: 5px; z-index: 5; cursor: col-resize; touch-action: none; }
+.panel-resizer.left { right: 0; }
+.panel-resizer.right { left: 0; }
+.panel-resizer:hover, .panel-resizer:active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+
+.seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--sheet); overflow: hidden; height: 26px; flex: none; }
+.seg-btn { display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 0; background: none; cursor: pointer; color: var(--ink-2); font-size: 12.5px; white-space: nowrap; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--rule); }
+.seg-btn:hover { background: var(--hover); color: var(--ink); }
+.seg-btn.on { background: var(--accent); color: var(--accent-ink); }
+.seg-btn:focus-visible { outline-offset: -2px; }
+.topbar .btn.icon.off { color: var(--ink-3); }
+@media (max-width: 1100px) { .seg-btn span { display: none; } .seg-btn { padding: 0 8px; } }

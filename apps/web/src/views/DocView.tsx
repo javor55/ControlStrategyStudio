@@ -36,7 +36,7 @@ export function DocView() {
             {context.label}
           </button>
         )}
-        <span className="view-note">Edit in the source panel on the right</span>
+        <span className="view-note">Edit as text in Split (Alt+2) or Text (Alt+3) mode</span>
       </div>
       <div className="view-body scroll">
         <article className="doc-page">

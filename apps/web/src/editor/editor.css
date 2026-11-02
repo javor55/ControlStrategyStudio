@@ -14,3 +14,12 @@
 .src-cm { flex: 1 1 0; min-height: 0; }
 .src-cm[hidden] { display: none; }
 .src-cm .cm-editor { height: 100%; }
+.src-problems { gap: 6px; flex: 0 0 auto; }
+.src-problems.error { border-color: var(--error); }
+.src-problems.warning { border-color: var(--warning); }
+.src-ok { color: var(--ok); font-size: 11.5px; white-space: nowrap; }
+.src-problem { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; font-size: 12px; border-bottom: 1px solid var(--rule); background: var(--hover); }
+.src-problem.error { background: var(--error-soft); }
+.src-problem.warning { background: var(--warning-soft); }
+.src-problem-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-problem-code { color: var(--ink-3); font-size: 11px; }

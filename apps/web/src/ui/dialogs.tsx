@@ -1,7 +1,7 @@
 // Promise-based dialogs (window.prompt/confirm are blocked in some embeddings).
 //   const name = await promptDialog({ title: 'New strategy', label: 'Name', validate })
 //   if (await confirmDialog({ title: 'Delete?', message: '…', danger: true })) …
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface PromptReq {
   kind: 'prompt';
@@ -39,8 +39,10 @@ export function DialogHost() {
   const [req, setReq] = useState<Req | null>(null);
   const [value, setValue] = useState('');
   const [error, setError] = useState<string>();
+  const openedAt = useRef(0);
   useEffect(() => {
     push = (r) => {
+      openedAt.current = Date.now();
       setReq(r);
       setValue(r.kind === 'prompt' ? r.value ?? '' : '');
       setError(undefined);
@@ -49,6 +51,8 @@ export function DialogHost() {
   }, []);
   if (!req) return null;
   const close = (ok: boolean) => {
+    // The key press that opened the dialog (e.g. Enter in a field) must not confirm it.
+    if (ok && Date.now() - openedAt.current < 250) return;
     if (req.kind === 'prompt') {
       if (ok) {
         const err = req.validate?.(value.trim());

@@ -59,8 +59,19 @@ describe('block type editing', () => {
     expect(f[AI2]).toContain('IN2: $SPREAD');
     const p = loadProject(f);
     expect(p.diagsByFile.get(AI2)).toBeUndefined();
-    // the strategy using the old output name now reports it
-    expect(p.diags.some((d) => d.code === 'unknown-port' && d.file?.endsWith('LIC100.yaml'))).toBe(true);
+    // strategies using the type follow the rename
+    expect(p.diags).toEqual([]);
+    expect(f[`${U100}/LIC100.yaml`]).toContain('LT100.MEAS -> LIC100.PV');
+  });
+  it('propagates port renames to strategies and cross references', () => {
+    let f = run(demo, { op: 'updatePort', file: 'library/std/PID@1.0.0.yaml', list: 'params', name: 'GAIN', patch: { name: 'KP' } });
+    expect(f[FIC]).toContain('params: { KP: 0.8');
+    f = run(f, { op: 'updatePort', file: 'library/std/PID@1.0.0.yaml', list: 'outputs', name: 'MV', patch: { name: 'OUT' } });
+    expect(f[FIC]).toContain('FIC101.OUT -> FV101.IN');
+    expect(f[FIC]).toContain('from: LIC100:LIC100.OUT');
+    f = run(f, { op: 'updatePort', file: 'library/std/PID@1.0.0.yaml', list: 'inputs', name: 'SP_EXT', patch: { name: 'RSP' } });
+    expect(f[FIC]).toContain('to: FIC101.RSP');
+    expect(loadProject(f).diags).toEqual([]);
   });
   it('edits header fields and implementation', () => {
     let f = run(demo, { op: 'setTypeField', file: LAG, field: 'description', value: 'Filter' });

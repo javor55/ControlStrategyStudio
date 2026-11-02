@@ -5,11 +5,14 @@
 //  * local typing → debounce → store().setText(file, text)
 //  * store text changed by someone else → minimal replace (prefix/suffix diff),
 //    so the cursor and scroll position stay put; not added to CM history
-//  * one EditorState per file is cached, so undo history and scroll survive
-//    switching files
+//  * one EditorState per file is cached (module-wide, per project), so undo
+//    history and scroll survive switching files and remounting the editor
+//  * extensions never capture a controller instance: they find it through the
+//    view (`controllers`) and the file through `fileFacet`, so a cached state
+//    can be shown by any controller
 import { basicSetup, EditorView } from 'codemirror';
-import { Annotation, EditorState, StateEffect, StateField, Transaction, type Extension } from '@codemirror/state';
-import { Decoration, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { Annotation, EditorSelection, EditorState, Prec, StateEffect, StateField, Transaction, type Extension } from '@codemirror/state';
+import { Decoration, keymap, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { yaml } from '@codemirror/lang-yaml';
 import { markdown } from '@codemirror/lang-markdown';
 import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -18,6 +21,7 @@ import { tags as t } from '@lezer/highlight';
 import { parseYaml, type Diag, type Selection, type YamlPath } from '@csd/core';
 import { isMap, isSeq, isScalar, type Node, type Pair } from 'yaml';
 import { store } from '../state/store';
+import { fileFacet, yamlAssist } from './assist';
 
 const DEBOUNCE_MS = 300;
 
@@ -26,7 +30,7 @@ const External = Annotation.define<boolean>();
 
 // --- selection highlight -------------------------------------------------------------
 
-const setHighlight = StateEffect.define<{ from: number; to: number } | null>();
+const setHighlight = StateEffect.define<Range[] | null>();
 const lineDeco = Decoration.line({ class: 'cm-csd-sel' });
 const firstLineDeco = Decoration.line({ class: 'cm-csd-sel cm-csd-sel-first' });
 
@@ -36,17 +40,20 @@ const highlightField = StateField.define<DecorationSet>({
     deco = deco.map(tr.changes);
     for (const e of tr.effects) {
       if (!e.is(setHighlight)) continue;
-      if (!e.value) {
+      if (!e.value?.length) {
         deco = Decoration.none;
         continue;
       }
       const doc = tr.state.doc;
-      const from = Math.min(e.value.from, doc.length);
-      const to = Math.min(Math.max(e.value.to, from), doc.length);
-      const a = doc.lineAt(from).number;
-      const b = doc.lineAt(to).number;
-      const ranges = [];
-      for (let n = a; n <= b; n++) ranges.push((n === a ? firstLineDeco : lineDeco).range(doc.line(n).from));
+      const lines = new Map<number, boolean>();
+      for (const r of e.value) {
+        const from = Math.min(r.from, doc.length);
+        const to = Math.min(Math.max(r.to, from), doc.length);
+        const a = doc.lineAt(from).number;
+        const b = doc.lineAt(to).number;
+        for (let n = a; n <= b; n++) lines.set(n, lines.get(n) || n === a);
+      }
+      const ranges = [...lines.keys()].sort((x, y) => x - y).map((n) => (lines.get(n) ? firstLineDeco : lineDeco).range(doc.line(n).from));
       deco = Decoration.set(ranges);
     }
     return deco;
@@ -85,6 +92,15 @@ const theme = EditorView.theme({
   '.cm-diagnostic-warning': { borderLeftColor: 'var(--warning)' },
   '.cm-lintRange-error': { backgroundImage: 'none', textDecoration: 'underline wavy var(--error)', textUnderlineOffset: '3px' },
   '.cm-lintRange-warning': { backgroundImage: 'none', textDecoration: 'underline wavy var(--warning)', textUnderlineOffset: '3px' },
+  '.cm-csd-info': { padding: '6px 9px', maxWidth: '420px', fontFamily: 'var(--f-ui)', fontSize: '12px', lineHeight: '1.4' },
+  '.cm-csd-info-h': { fontFamily: 'var(--f-mono)', fontWeight: '600' },
+  '.cm-csd-info-m': { color: 'var(--ink-2)', fontFamily: 'var(--f-mono)', fontSize: '11.5px', marginTop: '2px' },
+  '.cm-csd-info-t': { color: 'var(--ink-2)', marginTop: '4px', whiteSpace: 'pre-wrap' },
+  '.cm-tooltip.cm-completionInfo': { padding: '0' },
+  '.cm-tooltip-autocomplete': { fontFamily: 'var(--f-mono)' },
+  '.cm-completionDetail': { color: 'var(--ink-3)', fontStyle: 'normal', marginLeft: '1em' },
+  '.cm-completionMatchedText': { textDecoration: 'none', fontWeight: '700' },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail': { color: 'inherit' },
   '.cm-csd-sel': { backgroundColor: 'var(--accent-soft)', boxShadow: 'inset 3px 0 0 var(--accent)' },
 });
 
@@ -117,7 +133,7 @@ export function modeOf(file: string | null): Mode {
 
 // --- YAML structure lookup -----------------------------------------------------------
 
-type Range = { from: number; to: number };
+export type Range = { from: number; to: number };
 
 function nodeRange(n: unknown): Range | undefined {
   const r = (n as Node | null | undefined)?.range;
@@ -135,15 +151,33 @@ function keyOf(p: Pair): unknown {
   return isScalar(p.key) ? p.key.value : p.key;
 }
 
-/** Text range of a block / link / note in the YAML text. */
+/** Text ranges of the selected blocks / link / note in the YAML text. */
+export function selectionRanges(text: string, root: YamlPath, sel: Selection): Range[] {
+  if (!sel) return [];
+  const p = parseYaml(text);
+  if (p.error && !p.doc.contents) return [];
+  if (sel.kind === 'block' || sel.kind === 'blocks') {
+    const ids = new Set(sel.kind === 'block' ? [sel.id] : sel.ids);
+    const blocks = p.doc.getIn([...root, 'blocks'], true);
+    if (!isMap(blocks)) return [];
+    return blocks.items.filter((it) => ids.has(String(keyOf(it as Pair)))).flatMap((it) => pairRange(it as Pair) ?? []);
+  }
+  const seq = p.doc.getIn([...root, sel.kind === 'link' ? 'links' : 'notes'], true);
+  if (!isSeq(seq)) return [];
+  const r = nodeRange(seq.items[sel.index]);
+  return r ? [r] : [];
+}
+
+/** Text range of a block / link / note in the YAML text (first block of a multi-selection). */
 export function selectionRange(text: string, root: YamlPath, sel: Selection): Range | undefined {
   if (!sel) return undefined;
   const p = parseYaml(text);
   if (p.error && !p.doc.contents) return undefined;
-  if (sel.kind === 'block') {
+  if (sel.kind === 'block' || sel.kind === 'blocks') {
+    const id = sel.kind === 'block' ? sel.id : sel.ids[0];
     const blocks = p.doc.getIn([...root, 'blocks'], true);
     if (!isMap(blocks)) return undefined;
-    const pair = blocks.items.find((it) => keyOf(it as Pair) === sel.id) as Pair | undefined;
+    const pair = blocks.items.find((it) => keyOf(it as Pair) === id) as Pair | undefined;
     return pair ? pairRange(pair) : undefined;
   }
   const seq = p.doc.getIn([...root, sel.kind === 'link' ? 'links' : 'notes'], true);
@@ -173,7 +207,10 @@ export function selectionAt(text: string, root: YamlPath, pos: number): Selectio
 }
 
 export function selKey(s: Selection): string {
-  return !s ? '' : s.kind === 'block' ? `b:${s.id}` : `${s.kind}:${s.index}`;
+  if (!s) return '';
+  if (s.kind === 'block') return `b:${s.id}`;
+  if (s.kind === 'blocks') return `bs:${s.ids.join(',')}`;
+  return `${s.kind}:${s.index}`;
 }
 
 // --- controller ------------------------------------------------------------------------
@@ -185,6 +222,36 @@ export interface DiagramInfo {
   sheetOf: (s: Selection) => number | undefined;
 }
 
+/** Problem navigation state reported to the component. */
+export interface ProblemNav {
+  index: number;
+  total: number;
+  diag: Diagnostic;
+}
+
+/** Controller of each live view (extensions look it up here). */
+const controllers = new WeakMap<EditorView, SourceController>();
+
+/** Editor states per file, shared by all controllers of one project. */
+const shared = { projectId: null as string | null, cache: new Map<string, { state: EditorState; scroll?: StateEffect<unknown> }>() };
+
+function cacheFor(projectId: string) {
+  if (shared.projectId !== projectId) {
+    shared.projectId = projectId;
+    shared.cache.clear();
+  }
+  return shared.cache;
+}
+
+const problemKeys = Prec.high(
+  keymap.of([
+    { key: 'F8', run: (v) => !!controllers.get(v)?.nextProblem(1) },
+    { key: 'Shift-F8', run: (v) => !!controllers.get(v)?.nextProblem(-1) },
+  ]),
+);
+
+const updateListener = EditorView.updateListener.of((u) => controllers.get(u.view)?.onUpdate(u));
+
 export class SourceController {
   readonly view: EditorView;
   file: string | null = null;
@@ -192,34 +259,41 @@ export class SourceController {
   /** Last text known to be equal in the store and (at that time) the editor. */
   private synced = '';
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private cache = new Map<string, { state: EditorState; scroll?: StateEffect<unknown> }>();
+  private diags: Diagnostic[] = [];
   /** Selection most recently made from the editor (so it does not scroll back). */
   selfSelection: string | null = null;
   diagram: DiagramInfo | undefined;
   /** Notifies the React component of local (unsynced) edits. */
   onDirty?: (dirty: boolean) => void;
+  /** Notifies the React component of problem navigation (F8). */
+  onProblem?: (p: ProblemNav | null) => void;
 
   constructor(parent: HTMLElement) {
     this.view = new EditorView({ parent, state: this.create('', null) });
+    controllers.set(this.view, this);
   }
 
   destroy() {
     this.flush();
+    if (this.file && this.projectId) cacheFor(this.projectId).set(this.file, { state: this.view.state, scroll: this.view.scrollSnapshot() });
+    controllers.delete(this.view);
     this.view.destroy();
   }
 
   private extensions(file: string | null): Extension[] {
     const mode = modeOf(file);
     return [
+      problemKeys,
       basicSetup,
       EditorView.lineWrapping,
       theme,
       syntaxHighlighting(highlight),
       lintGutter(),
       highlightField,
-      mode === 'yaml' ? yaml() : mode === 'markdown' ? markdown() : [],
+      fileFacet.of(file),
+      mode === 'yaml' ? [yaml(), yamlAssist()] : mode === 'markdown' ? markdown() : [],
       EditorState.tabSize.of(2),
-      EditorView.updateListener.of((u) => this.onUpdate(u)),
+      updateListener,
       EditorView.contentAttributes.of({ 'aria-label': file ? `Source of ${file}` : 'Source' }),
     ];
   }
@@ -228,7 +302,7 @@ export class SourceController {
     return EditorState.create({ doc, extensions: this.extensions(file) });
   }
 
-  private onUpdate(u: ViewUpdate) {
+  onUpdate(u: ViewUpdate) {
     const external = u.transactions.some((tr) => tr.annotation(External));
     if (u.docChanged && !external) {
       clearTimeout(this.timer);
@@ -264,18 +338,21 @@ export class SourceController {
       clearTimeout(this.timer);
       this.timer = undefined;
       this.onDirty?.(false);
-      this.cache.clear();
+      const sameProject = shared.projectId === projectId;
+      cacheFor(projectId);
+      if (!sameProject && this.projectId) this.view.setState(this.create('', null));
       this.projectId = projectId;
       this.file = null;
       this.synced = '';
-      this.view.setState(this.create('', null));
     }
+    const cache = cacheFor(projectId);
     if (file !== this.file) {
       this.flush();
-      if (this.file) this.cache.set(this.file, { state: this.view.state, scroll: this.view.scrollSnapshot() });
+      if (this.file) cache.set(this.file, { state: this.view.state, scroll: this.view.scrollSnapshot() });
       this.file = file;
+      this.onProblem?.(null);
       const text = content ?? '';
-      const hit = file ? this.cache.get(file) : undefined;
+      const hit = file ? cache.get(file) : undefined;
       this.view.setState(hit?.state ?? this.create(text, file));
       if (hit?.scroll) this.view.dispatch({ effects: hit.scroll });
       this.synced = this.view.state.doc.toString();
@@ -319,15 +396,37 @@ export class SourceController {
         source: d.code,
       });
     }
+    out.sort((a, b) => a.from - b.from);
+    this.diags = out;
     this.view.dispatch(setDiagnostics(this.view.state, out));
   }
 
-  /** Highlights the selected element; scrolls to it when `scroll`. */
+  /** Moves the cursor to the next (dir 1) or previous (dir -1) diagnostic, wrapping around. */
+  nextProblem(dir: 1 | -1): ProblemNav | null {
+    const list = this.diags;
+    if (!list.length) return null;
+    const pos = this.view.state.selection.main.head;
+    let i = dir > 0 ? list.findIndex((d) => d.from > pos) : list.map((d) => d.from < pos).lastIndexOf(true);
+    if (i < 0) i = dir > 0 ? 0 : list.length - 1;
+    const d = list[i];
+    this.view.dispatch({
+      selection: EditorSelection.cursor(d.from),
+      effects: EditorView.scrollIntoView(d.from, { y: 'center' }),
+      userEvent: 'select',
+    });
+    this.view.focus();
+    const nav = { index: i, total: list.length, diag: d };
+    this.onProblem?.(nav);
+    return nav;
+  }
+
+  /** Highlights the selected element(s); scrolls to the first one when `scroll`. */
   highlight(sel: Selection, scroll: boolean) {
     const d = this.diagram;
-    const r = d && d.file === this.file ? selectionRange(this.view.state.doc.toString(), d.root, sel) : undefined;
-    const effects: StateEffect<unknown>[] = [setHighlight.of(r ?? null)];
-    if (r && scroll) {
+    const ranges = d && d.file === this.file ? selectionRanges(this.view.state.doc.toString(), d.root, sel) : [];
+    const effects: StateEffect<unknown>[] = [setHighlight.of(ranges.length ? ranges : null)];
+    const r = ranges.length ? ranges.reduce((a, b) => (b.from < a.from ? b : a)) : undefined;
+    if (r && scroll && this.view.dom.offsetParent) {
       const top = this.view.lineBlockAt(r.from).top;
       const bottom = this.view.lineBlockAt(Math.min(r.to, this.view.state.doc.length)).bottom;
       const st = this.view.scrollDOM.scrollTop;
@@ -344,6 +443,8 @@ export class SourceController {
     const sel = selectionAt(this.view.state.doc.toString(), d.root, pos);
     const s = store().getState();
     if (selKey(sel) === selKey(s.selection)) return;
+    // Keep a multi-selection while the cursor moves inside one of its blocks.
+    if (sel?.kind === 'block' && s.selection?.kind === 'blocks' && s.selection.ids.includes(sel.id)) return;
     this.selfSelection = selKey(sel);
     const sheet = d.sheetOf(sel);
     if (sheet !== undefined && sheet !== s.activeSheet) store().open(d.file, { sheet, select: sel });
