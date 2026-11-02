@@ -1,0 +1,9 @@
+{
+  "name": "@csd/render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Renders laid-out diagram sheets to SVG strings (screen, PDF, CLI).",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@csd/core": "0.1.0" }
+}

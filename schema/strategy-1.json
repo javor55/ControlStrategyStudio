@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://csd.studio/schema/strategy-1.json",
+  "type": "object",
+  "required": [
+    "strategy"
+  ],
+  "properties": {
+    "format": {
+      "type": "string"
+    },
+    "uid": {
+      "type": "string"
+    },
+    "strategy": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "scan": {
+      "type": "string"
+    },
+    "sheets": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "patternProperties": {
+          "^x-": {}
+        },
+        "additionalProperties": false
+      }
+    },
+    "blocks": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "doc": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "scan": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer"
+          },
+          "sheet": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "params": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "pos": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "patternProperties": {
+          "^x-": {}
+        },
+        "additionalProperties": false
+      }
+    },
+    "links": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": [
+          "string",
+          "object"
+        ],
+        "if": {
+          "type": "object"
+        },
+        "then": {
+          "required": [
+            "from",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "comment": {
+              "type": "string"
+            }
+          },
+          "patternProperties": {
+            "^x-": {}
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "notes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "sheet": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "pos": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "width": {
+            "type": "number"
+          }
+        },
+        "patternProperties": {
+          "^x-": {}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": {}
+  },
+  "additionalProperties": false
+}

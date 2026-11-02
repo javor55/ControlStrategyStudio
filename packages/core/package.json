@@ -1,0 +1,9 @@
+{
+  "name": "@csd/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CSD Studio core: format, model, library, validation, operations, layout. No UI, no browser APIs.",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "yaml": "^2.9.1", "ajv": "^8.17.1" }
+}
