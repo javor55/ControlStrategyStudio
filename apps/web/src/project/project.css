@@ -1,0 +1,78 @@
+/* Left panel (tree + palette) and the problems bar. */
+.ico { display: block; flex: none; }
+.twisty { display: inline-flex; width: 12px; flex: none; color: var(--ink-3); }
+.tree-count { font: 500 10.5px var(--f-ui); color: var(--ink-3); letter-spacing: 0; text-transform: none; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---- tree ---- */
+.tree { flex: 1 1 60%; min-height: 80px; padding-bottom: 8px; }
+.tree-sec-h { cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 1; background: var(--panel); padding-left: 4px; gap: 4px; }
+.tree-sec-h:hover { color: var(--ink-2); }
+.sec-acts { display: inline-flex; gap: 1px; opacity: .55; }
+.tree-sec-h:hover .sec-acts, .sec-acts:focus-within { opacity: 1; }
+.sec-acts .btn { color: var(--ink-2); }
+.tree-group { min-height: 6px; }
+.tree-row { position: relative; display: flex; align-items: center; gap: 4px; height: 24px; padding-right: 6px; cursor: pointer; white-space: nowrap; user-select: none; border-left: 2px solid transparent; }
+.tree-row:hover { background: var(--hover); }
+.tree-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tree-row.active { background: var(--accent-soft); border-left-color: var(--accent); }
+.tree-row.active .tree-label { color: var(--accent); font-weight: 600; }
+.tree-row.missing .tree-label { color: var(--ink-3); font-style: italic; }
+.tree-ico { display: inline-flex; color: var(--ink-3); flex: none; }
+.tree-row.strategy .tree-ico { color: var(--accent); }
+.tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.tree-row.strategy .tree-label { font-family: var(--f-mono); font-size: 12px; }
+.tree-sub { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); font-size: 11.5px; }
+.tree-row .ver { font: 11px var(--f-mono); color: var(--ink-3); }
+.level-badge { flex: none; margin-left: auto; font: 500 9.5px var(--f-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); border: 1px solid var(--rule); border-radius: 8px; padding: 0 5px; line-height: 14px; }
+.kind-badge { flex: none; font: 500 9.5px var(--f-ui); color: var(--accent); background: var(--accent-soft); border-radius: 8px; padding: 0 5px; line-height: 14px; }
+.tree-row .acts { display: none; margin-left: auto; gap: 1px; flex: none; }
+.tree-row:hover .acts, .tree-row:focus-within .acts { display: inline-flex; }
+.tree-row:hover .level-badge, .tree-row:focus-within .level-badge { margin-left: 4px; }
+.tree-row .acts .btn { height: 20px; width: 20px; color: var(--ink-2); }
+.tree-row .acts .btn:hover { background: var(--rule); }
+.tree-empty { padding: 6px 12px 6px 22px; color: var(--ink-3); font-size: 12px; }
+
+/* ---- palette ---- */
+.palette { position: relative; flex: 0 0 40%; min-height: 80px; display: flex; flex-direction: column; border-top: 1px solid var(--rule-strong); }
+.palette .splitter { position: absolute; left: 0; right: 0; top: -4px; height: 7px; cursor: row-resize; z-index: 2; }
+.palette .splitter:hover { background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 4px, transparent 4px); }
+.palette-search { position: relative; padding: 0 8px 6px; }
+.palette-search .input { padding-left: 24px; }
+.search-ico { position: absolute; left: 15px; top: 6px; color: var(--ink-3); pointer-events: none; }
+.palette-hint { margin: 0 8px 6px; padding: 4px 8px; font-size: 11.5px; color: var(--ink-2); background: var(--hover); border-radius: var(--radius); }
+.palette-list { flex: 1; padding-bottom: 8px; }
+.pal-cat { display: flex; align-items: center; gap: 4px; padding: 5px 8px 2px 6px; font: 600 11px var(--f-ui); color: var(--ink-2); cursor: pointer; user-select: none; }
+.pal-cat .tree-count { margin-left: 2px; }
+.pal-item { display: flex; align-items: baseline; gap: 6px; height: 24px; align-items: center; padding: 0 8px 0 22px; cursor: grab; white-space: nowrap; overflow: hidden; }
+.pal-item:hover { background: var(--hover); }
+.pal-item:active { cursor: grabbing; }
+.pal-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pal-ico { color: var(--ink-3); display: inline-flex; }
+.pal-name { font: 600 12px var(--f-mono); flex: none; }
+.pal-lib { flex: none; font: 500 10px var(--f-ui); color: var(--ext); border: 1px solid currentColor; border-radius: 7px; padding: 0 4px; line-height: 13px; }
+.pal-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); font-size: 11.5px; }
+.palette.disabled .pal-item { cursor: default; }
+.palette.disabled .pal-item:hover { background: none; }
+.palette.disabled .pal-name { color: var(--ink-2); }
+
+/* ---- problems ---- */
+.problems-line { display: flex; align-items: center; height: 28px; gap: 8px; padding: 0 6px; }
+.problems-toggle { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px 0 2px; border: 0; background: none; border-radius: var(--radius); cursor: pointer; white-space: nowrap; }
+.problems-toggle:hover { background: var(--hover); }
+.problems-summary { font-weight: 600; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.error { background: var(--error); }
+.dot.warning { background: var(--warning); }
+.dot.ok { background: var(--ok); }
+.problems-first { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; height: 22px; padding: 0 6px; border: 0; background: none; text-align: left; cursor: pointer; border-left: 1px solid var(--rule); border-radius: 0; color: var(--ink-2); }
+.problems-first:hover { background: var(--hover); }
+.problems-first .msg, .prow .msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.problems .where { color: var(--ink-3); flex: none; white-space: nowrap; font-size: 11px; }
+.badge.sev { min-width: 54px; justify-content: center; flex: none; }
+.problems-list { max-height: 35vh; border-top: 1px solid var(--rule); padding: 2px 0 6px; }
+.pg-h { display: flex; align-items: center; gap: 6px; padding: 6px 12px 2px; color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+.pg-h.active { color: var(--accent); }
+.prow { display: flex; align-items: center; gap: 10px; width: 100%; height: 24px; padding: 0 12px 0 24px; border: 0; background: none; text-align: left; cursor: pointer; }
+.prow:hover { background: var(--hover); }
+.prow .code { color: var(--ink-3); flex: 0 0 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }

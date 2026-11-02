@@ -11,13 +11,15 @@ Design document: see the "CSD Studio – návrh" artifact (revision C).
 | Phase | Content | State |
 |---|---|---|
 | 1 · Core | format & schemas, model, libraries, composite blocks, validation, operations, layout, SVG render, std library, tests | **done** |
-| 2 · Editor | web app: tree, palette, canvas with sheets, properties, YAML editor, undo/redo | next |
-| 3 · Hand-over | PDF (Markdown docs, charts), ZIP, browser storage | planned |
+| 2 · Editor | web app: tree, palette, canvas with sheets, properties, YAML editor, undo/redo, browser autosave, ZIP | **done** |
+| 3 · Hand-over | PDF (Markdown docs, charts) | next |
 | 4 · Versions | git history (isomorphic-git), revisions, diff, library management | planned |
 
 ## Repository layout
 
 ```
+apps/
+  web/      @csd/web    – editor (React); builds to ONE offline HTML file: npm run build → apps/web/dist/index.html
 packages/
   core/     @csd/core   – format, model, validation, operations, layout (no UI, no browser APIs)
   render/   @csd/render – SVG renderer for laid-out sheets (screen, PDF, CLI)

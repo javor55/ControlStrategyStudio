@@ -1,0 +1,26 @@
+/* Diagram canvas. The drawing itself is white paper rendered by @csd/render. */
+.cv { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.cv-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow: hidden; }
+.cv-header strong { font-weight: 600; }
+.cv-path, .cv-title { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+.cv-header.composite { background: var(--accent-soft); }
+
+.cv-main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cv-host { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg); cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; }
+.cv-host:focus { outline: none; }
+.cv-pane { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.cv-svg { position: absolute; box-shadow: 0 1px 6px rgb(20 30 40 / .15); }
+.cv-svg > svg { display: block; }
+.cv-overlay { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.cv-overlay line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+
+.cv-toolbar { position: absolute; top: 8px; right: 10px; z-index: 5; display: flex; align-items: center; gap: 3px; padding: 3px; background: var(--panel); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+.cv-zoom { min-width: 44px; text-align: center; font: 11px var(--f-mono); color: var(--ink-2); }
+.cv-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--rule); }
+
+.cv-tabs { display: flex; align-items: stretch; gap: 1px; height: 28px; padding: 0 6px; background: var(--panel); border-top: 1px solid var(--rule-strong); overflow-x: auto; overflow-y: hidden; }
+.cv-tab { flex: none; padding: 0 12px; border: 0; border-top: 2px solid transparent; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.cv-tab:hover { background: var(--hover); }
+.cv-tab.active { background: var(--sheet); color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
+.cv-tab.doc { font-style: italic; margin-right: 6px; border-right: 1px solid var(--rule); }
+.cv-tab.add { font-weight: 600; }

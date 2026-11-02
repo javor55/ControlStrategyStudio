@@ -15,6 +15,7 @@ import { ProblemsBar } from './project/ProblemsBar';
 import { DocView } from './views/DocView';
 import { BlockTypeView } from './views/BlockTypeView';
 import { ProjectView } from './views/ProjectView';
+import { AssetView } from './views/AssetView';
 
 export function emptyProjectFiles(name: string): Files {
   const project = stringifyDoc(
@@ -163,6 +164,8 @@ function CenterView() {
     case 'library':
     case 'none':
       return <ProjectView />;
+    case 'asset':
+      return <AssetView />;
     default:
       return <div className="empty">This file is edited as text on the right.</div>;
   }

@@ -1,0 +1,16 @@
+/* Source editor (bottom of the right column). */
+.src {
+  flex: 1 1 0; min-height: 120px; display: flex; flex-direction: column; overflow: hidden;
+  --syn-key: #1f5f8b; --syn-string: #2f6b3a; --syn-number: #8a4b00; --syn-atom: #8b2c7a; --syn-comment: #7c8791; --syn-meta: #6a5a9a;
+}
+@media (prefers-color-scheme: dark) {
+  .src { --syn-key: #7fb4dc; --syn-string: #9fcf8f; --syn-number: #e6b06a; --syn-atom: #e28fd2; --syn-comment: #85909a; --syn-meta: #b3a6e6; }
+}
+.src-head { display: flex; align-items: center; gap: 6px; height: 30px; flex: 0 0 auto; padding: 0 8px 0 10px; border-bottom: 1px solid var(--rule); }
+.src-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--ink-2); }
+.src-mode { flex: 0 0 auto; }
+.src-dirty { color: var(--accent); font-size: 10px; }
+.src-body { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.src-cm { flex: 1 1 0; min-height: 0; }
+.src-cm[hidden] { display: none; }
+.src-cm .cm-editor { height: 100%; }

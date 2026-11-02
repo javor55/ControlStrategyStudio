@@ -219,6 +219,11 @@ describe('operations', () => {
       expect(applyOp(r.files, inverseOf(r)).files).toEqual(demo);
     }
   });
+  it('renames the implicit single sheet', () => {
+    const f = run(demo, { op: 'renameSheet', file: FIC, id: 1, title: 'Flow' });
+    expect(f[FIC]).toContain('sheets:\n  - { id: 1, title: Flow }');
+    expect(loadProject(f).strategyByName.get('FIC101')!.sheets).toEqual([{ id: 1, title: 'Flow' }]);
+  });
   it('manages sheets', () => {
     let f = run(demo, { op: 'addSheet', file: FIC, title: 'Alarms' });
     expect(f[FIC]).toContain('sheets:\n  - { id: 1, title: Sheet 1 }\n  - { id: 2, title: Alarms }');

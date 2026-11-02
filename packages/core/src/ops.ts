@@ -601,7 +601,15 @@ function run(tx: Tx, op: Op): void {
       return;
     case 'renameSheet':
       tx.edit(op.file, (doc) => {
-        const seq = getNode(doc, [...root, 'sheets']);
+        let seq = getNode(doc, [...root, 'sheets']);
+        if ((!isSeq(seq) || !seq.items.length) && op.id === 1) {
+          // Implicit single sheet: materialise it so it can carry a title.
+          seq = ensureSeq(doc, [...root, 'sheets']);
+          const first = new YAMLMap();
+          first.flow = true;
+          first.set('id', 1);
+          (seq as YAMLSeq).items.push(first);
+        }
         const item = isSeq(seq) ? seq.items.find((it) => isMap(it) && Number(it.get('id')) === op.id) : undefined;
         if (!isMap(item)) throw new OpError(`Sheet ${op.id} does not exist`);
         if (op.title) item.set('title', op.title);
