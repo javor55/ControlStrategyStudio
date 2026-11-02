@@ -29,7 +29,18 @@ export const M = {
   NOTE_W: 200,
 } as const;
 
+/** What blocks show. All default to true. */
+export interface DisplayOptions {
+  /** Parameter values in the lower part of the block. */
+  params?: boolean;
+  /** Ports that are neither linked nor set to a constant (like hidden pins in CFC). */
+  unusedPorts?: boolean;
+  /** Block comments under the block. */
+  comments?: boolean;
+}
+
 export interface LayoutContext {
+  display?: DisplayOptions;
   /** Scan inherited by blocks without their own. */
   defaultScan?: string;
   /** Interface of the composite type whose internals are laid out. */
@@ -202,6 +213,13 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     (dir === 'in' ? b?.def?.inputs : b?.def?.outputs)?.find((p) => p.name === port)?.type;
 
   // --- per-block geometry ---------------------------------------------------
+  const show = { params: ctx.display?.params !== false, unusedPorts: ctx.display?.unusedPorts !== false, comments: ctx.display?.comments !== false };
+  const usedIn = new Set<string>();
+  const usedOut = new Set<string>();
+  for (const l of diagram.links) {
+    usedIn.add(`${l.to.block}.${l.to.port}`);
+    if (!l.from.strategy) usedOut.add(`${l.from.block}.${l.from.port}`);
+  }
   const pre = new Map<string, Pre>();
   for (const b of onSheet) {
     let inputs = b.def?.inputs ?? [];
@@ -217,8 +235,13 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       inputs = [...ins].map((name) => ({ name, type: 'ANY', ext: {} }));
       outputs = [...outs].map((name) => ({ name, type: 'ANY', ext: {} }));
     }
+    if (!show.unusedPorts && !isIface(b)) {
+      const usedBy = (port: string) => (ctx.usedBy ? ctx.usedBy(b.id, port).length > 0 : false);
+      inputs = inputs.filter((p) => usedIn.has(`${b.id}.${p.name}`) || p.name in b.params);
+      outputs = outputs.filter((p) => usedOut.has(`${b.id}.${p.name}`) || usedBy(p.name));
+    }
     const params: string[] = [];
-    for (const [k, v] of Object.entries(b.params)) {
+    if (show.params) for (const [k, v] of Object.entries(b.params)) {
       if (inputs.some((p) => p.name === k)) continue;
       const unit = b.def?.params.find((p) => p.name === k)?.unit;
       params.push(`${k} = ${formatValue(v)}${unit ? ' ' + unit : ''}`);
@@ -238,7 +261,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     w = Math.ceil(w / 10) * 10;
     const rows = Math.max(inputs.length, outputs.length, 1);
     const h = M.HEADER + rows * M.ROW + M.PAD + (params.length ? params.length * M.PARAM_ROW + 6 : 0);
-    const commentLines = b.comment ? wrapText(b.comment, Math.floor(w / M.CH_TEXT), 4) : [];
+    const commentLines = b.comment && show.comments ? wrapText(b.comment, Math.floor(w / M.CH_TEXT), 4) : [];
     pre.set(b.id, { b, inputs, outputs, w, h, commentLines, left: [], right: [], leftNeed: 0, constNeed: 0, rightNeed: 0 });
     // stash params on the object for later
     (pre.get(b.id) as Pre & { params: string[] }).params = params;

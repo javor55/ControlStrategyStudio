@@ -93,3 +93,17 @@ describe('composite interface layout', () => {
     expect(out.x).toBeGreaterThan(Math.max(...sheet.blocks.filter((b) => !b.iface).map((b) => b.x)));
   });
 });
+
+describe('display options', () => {
+  it('hides unused ports, params and comments', () => {
+    const s = loadProject(demo).strategyByName.get('FIC101')!;
+    const [full] = layoutDiagram(s);
+    const [compact] = layoutDiagram(s, { display: { unusedPorts: false, params: false, comments: false } });
+    const pid = (l: typeof full) => l.blocks.find((b) => b.id === 'FIC101')!;
+    expect(pid(full).ports.length).toBe(13);
+    expect(pid(compact).ports.map((p) => p.name)).toEqual(['PV', 'SP_EXT', 'SP_EXT_ON', 'MV']);
+    expect(pid(compact).params).toEqual([]);
+    expect(pid(compact).comment).toEqual([]);
+    expect(pid(compact).h).toBeLessThan(pid(full).h / 2);
+  });
+});
