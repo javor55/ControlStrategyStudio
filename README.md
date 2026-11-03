@@ -22,11 +22,6 @@
 
 ## Why
 
-Control strategies (loops, interlocks, sequences) are usually drawn twice: once in a
-document for the plant, and again in the engineering tool of a specific DCS
-(PCS 7 CFC, DeltaV, TIA Portal …). Control Strategy Studio keeps the **functional
-design** in one system-independent place:
-
 * **Abstract blocks** — AI, PID, interlock … defined only by their interface (inputs,
   outputs, parameters). No mapping to a vendor; the integrator implements it in the
   plant's DCS.
