@@ -284,14 +284,14 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
 }
 
 function renderConnector(c: ConnectorGeom, t: Theme, o: RenderOptions): string {
-  const color = c.kind === 'ext-in' || c.kind === 'used-by' ? t.ext : c.kind === 'iface-in' || c.kind === 'iface-out' ? t.iface : t.ink2;
+  const color = c.kind === 'ext-in' || c.kind === 'used-by' || c.kind === 'written-by' ? t.ext : c.kind === 'iface-in' || c.kind === 'iface-out' ? t.iface : t.ink2;
   const { x, y, w, h } = c;
   const tip = 8;
   // Flag shape pointing in the signal direction (left → right).
   const d = `M${n(x)} ${n(y - h / 2)} H${n(x + w - tip)} L${n(x + w)} ${n(y)} L${n(x + w - tip)} ${n(y + h / 2)} H${n(x)} Z`;
   const nav = c.target ? JSON.stringify(c.target) : undefined;
   let s = `<g${attrs({ 'data-conn': o.interactive ? nav ?? '' : undefined, style: o.interactive && nav ? 'cursor:pointer' : undefined })}>`;
-  s += `<path${attrs({ d, fill: t.paper, stroke: color, 'stroke-width': 1.2, 'stroke-dasharray': c.kind === 'used-by' ? '3 2' : undefined })}/>`;
+  s += `<path${attrs({ d, fill: t.paper, stroke: color, 'stroke-width': 1.2, 'stroke-dasharray': c.kind === 'used-by' || c.kind === 'written-by' ? '3 2' : undefined })}/>`;
   s += text(x + 6, y + 3.5, c.label, { 'font-family': t.fontMono, 'font-size': 10, fill: color });
   return s + '</g>';
 }

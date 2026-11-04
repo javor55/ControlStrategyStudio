@@ -60,6 +60,8 @@ export interface LayoutContext {
   composite?: BlockTypeDef;
   /** Strategies reading an output of this diagram (derived "used by" tags). */
   usedBy?: (block: string, port: string) => string[];
+  /** Sequences writing an input of this diagram (actions) — drawn as "← SEQ" tags. */
+  writtenBy?: (block: string, port: string) => string[];
   /** Temporary positions, e.g. while a block is dragged. */
   overrides?: Readonly<Record<string, [number, number]>>;
   noteOverrides?: Readonly<Record<number, [number, number]>>;
@@ -99,7 +101,7 @@ export interface BlockGeom {
   iface?: 'in' | 'out';
 }
 
-export type ConnectorKind = 'ext-in' | 'sheet-in' | 'sheet-out' | 'used-by' | 'iface-in' | 'iface-out';
+export type ConnectorKind = 'ext-in' | 'sheet-in' | 'sheet-out' | 'used-by' | 'written-by' | 'iface-in' | 'iface-out';
 
 export interface ConnectorGeom {
   kind: ConnectorKind;
@@ -280,7 +282,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     if (portMode !== 'all' && !isIface(b)) {
       const usedBy = (port: string) => (ctx.usedBy ? ctx.usedBy(b.id, port).length > 0 : false);
       const keep = (p: PortDef, used: boolean) => used || (portMode === 'auto' && p.visibility !== 'connected');
-      inputs = inputs.filter((p) => keep(p, usedIn.has(`${b.id}.${p.name}`) || p.name in b.params));
+      const written = (port: string) => (ctx.writtenBy ? ctx.writtenBy(b.id, port).length > 0 : false);
+      inputs = inputs.filter((p) => keep(p, usedIn.has(`${b.id}.${p.name}`) || p.name in b.params || written(p.name)));
       outputs = outputs.filter((p) => keep(p, usedOut.has(`${b.id}.${p.name}`) || usedBy(p.name)));
     }
     const allParams: string[] = [];
@@ -334,6 +337,15 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       if (dst && !here.has(dst.id)) {
         const s = sheetOf(diagram, dst);
         srcPre.right.push({ kind: 'sheet-out', label: `→ ${s} / ${dst.id}.${l.to.port}`, port: l.from.port, link: l.index, signal, target: { sheet: s, block: dst.id } });
+      }
+    }
+  }
+  if (ctx.writtenBy) {
+    for (const p of pre.values()) {
+      for (const i of p.inputs) {
+        if (usedIn.has(`${p.b.id}.${i.name}`)) continue; // a link already drives it (reported as a conflict)
+        const by = [...new Set(ctx.writtenBy(p.b.id, i.name))];
+        if (by.length) p.left.push({ kind: 'written-by', label: `← ${by.join(', ')}`, port: i.name, signal: wireKind(i.type), target: { strategy: by[0] } });
       }
     }
   }
@@ -547,8 +559,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       wires.push({
         link: c.link,
         kind: c.signal,
-        external: c.kind === 'ext-in',
-        derived: false,
+        external: c.kind === 'ext-in' || c.kind === 'written-by',
+        derived: c.kind === 'written-by',
         points: [[cx + w, port.y], [port.x, port.y]],
         source: `conn:${c.label}`,
         category: lk?.category,

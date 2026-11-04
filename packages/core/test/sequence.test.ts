@@ -148,3 +148,27 @@ describe('SFC layout', () => {
     expect(svg).toContain('LIC100:LT100.PV &gt;= 2.5');
   });
 });
+
+describe('sequence diff and strategy tags', () => {
+  it('diffs steps, actions and transitions', async () => {
+    const { diffProjects } = await import('../src');
+    const f = run(
+      demo,
+      { op: 'addStep', file: SEQ, id: 'S40', description: 'Done' },
+      { op: 'setTransition', file: SEQ, index: 3, to: 'S40' },
+      { op: 'updateAction', file: SEQ, step: 'S10', index: 1, patch: { value: 35 } },
+      { op: 'removeStep', file: SEQ, id: 'S25' },
+    );
+    const d = diffProjects(loadProject(demo), loadProject(f)).sequences[0];
+    expect(d.name).toBe('FILL_T100');
+    expect(d.steps.map((s) => `${s.id}:${s.kind}`).sort()).toEqual(['S10:changed', 'S25:removed', 'S40:added']);
+    expect(d.steps.find((s) => s.id === 'S10')!.changes).toEqual([{ field: 'actions[2]', before: 'N FIC101:FIC101.MAN_VAL := 30', after: 'N FIC101:FIC101.MAN_VAL := 35' }]);
+    expect(d.transitions.map((t) => `${t.key}:${t.kind}`).sort()).toEqual(['S10 → S20+S25:removed', 'S10 → S20:added', 'S20+S25 → S30:removed', 'S20 → S30:added', 'S30 → S0:removed', 'S30 → S40:added'].sort());
+  });
+  it('draws tags on strategy inputs written by sequences', () => {
+    const p = loadProject(demo);
+    const s = p.strategyByName.get('P101')!;
+    const [sheet] = layoutDiagram(s, { writtenBy: (b, port) => p.sequenceRefs('P101', b).filter((r) => r.kind === 'writes' && r.port === port).map((r) => r.sequence) });
+    expect(sheet.connectors.find((c) => c.kind === 'written-by')).toMatchObject({ label: '← FILL_T100' });
+  });
+});
