@@ -21,6 +21,7 @@
 .xp-folder { font-weight: 500; }
 .xp-level { font: 500 9px var(--f-ui); text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); border: 1px solid var(--rule); border-radius: 2px; padding: 0 3px; }
 .xp-warn { padding: 7px 10px; border-radius: var(--radius); background: var(--warning-soft); color: var(--warning); font-size: 12.5px; }
+.xp-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
 .xp-busy { margin-right: auto; color: var(--ink-2); font-size: 12.5px; }
 @media (max-width: 860px) {
   .xp-formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }

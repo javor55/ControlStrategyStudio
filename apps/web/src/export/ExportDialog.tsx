@@ -189,15 +189,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
                   {s.label}
                 </label>
               ))}
-              <div className="xp-h">Parameters in block settings</div>
-              <label className="xp-row">
-                <input type="radio" name="xp-params" checked={config.parameters === 'set'} onChange={() => update({ parameters: 'set' })} />
-                Values set in the strategy and linked inputs
-              </label>
-              <label className="xp-row">
-                <input type="radio" name="xp-params" checked={config.parameters === 'all'} onChange={() => update({ parameters: 'all' })} />
-                All parameters with defaults
-              </label>
+              <p className="xp-note">Block settings list the values set in the strategy and linked inputs; type defaults are in the library appendix.</p>
             </section>
           )}
 

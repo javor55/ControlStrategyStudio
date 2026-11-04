@@ -3,6 +3,7 @@
 // re-derives the project model and schedules autosave.
 import { useSyncExternalStore } from 'react';
 import { EMPTY_VCS, type VcsStatus } from './vcsStatus';
+import { getStartView } from '../settings/prefs';
 import { applyOp, classify, inverseOf, loadProject, OpError, type Files, type Op, type ProjectModel, type Selection } from '@csd/core';
 
 export interface Toast {
@@ -27,6 +28,8 @@ export type ViewMode = 'diagram' | 'split' | 'text';
 
 const VIEW_MODE_KEY = 'css:view-mode';
 function initialViewMode(): ViewMode {
+  const start = getStartView();
+  if (start !== 'last') return start;
   try {
     const v = localStorage.getItem(VIEW_MODE_KEY);
     if (v === 'diagram' || v === 'split' || v === 'text') return v;

@@ -211,7 +211,6 @@ function BlockDetails({ ctx, id, sheet, onSelect }: { ctx: DiagramCtx; id: strin
               <tr>
                 <th>Name</th>
                 <th>Value</th>
-                <th>Default</th>
               </tr>
             </thead>
             <tbody>
@@ -235,12 +234,15 @@ function BlockDetails({ ctx, id, sheet, onSelect }: { ctx: DiagramCtx; id: strin
                         {formatValue(p.value)}
                         {p.unknown ? ' ⚠' : ''}
                       </b>
+                    ) : p.default !== undefined ? (
+                      <span className="muted" title="Default of the block type">
+                        {formatValue(p.default)}
+                      </span>
                     ) : (
                       <span className="muted">—</span>
                     )}
                     {p.set && <span className="set-mark">set</span>}
                   </td>
-                  <td className="mono muted">{p.default === undefined ? '' : formatValue(p.default)}</td>
                 </tr>
               ))}
             </tbody>

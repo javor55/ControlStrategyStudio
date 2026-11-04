@@ -30,10 +30,11 @@ import {
   type SheetLayout,
   type YamlPath,
 } from '@csd/core';
-import { renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
+import { drawingRenderOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
 import { store, useEditor, type EditorState } from '../state/store';
 import { activeDiagramOf, diagsOf, layoutActiveSheet, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
+import { setCanvasPrefs, useCanvasPrefs, type ParamsMode, type PinsMode } from '../settings/prefs';
 import { confirmDialog, promptDialog } from '../ui/dialogs';
 import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
 import { QuickInsert } from './QuickInsert';
@@ -49,7 +50,6 @@ const MAX_K = 8;
 const CLICK_SLOP = 3; // px of movement before a press becomes a drag
 const FIT_TOP = 44; // px reserved for the toolbar when fitting
 const PASTE_STEP = 30;
-const DISPLAY_KEY = 'css:canvas-display';
 /** Screen px within which a dragged wire end snaps to a pin. */
 const SNAP_PX = 15;
 /** Screen px from a link's end (at a pin) where a press grabs that end for reconnecting. */
@@ -118,19 +118,17 @@ interface SnapTarget {
   same?: boolean;
 }
 
-type PinsMode = NonNullable<DisplayOptions['ports']>;
-
 const PINS_MODES: [PinsMode, string, string][] = [
   ['all', 'All', 'Draw every pin of every block'],
   ['auto', 'Normal', 'Hide unused pins that the block type marks "when used"'],
   ['used', 'Used only', 'Draw only linked pins and pins set to a constant'],
 ];
 
-interface Display {
-  params: boolean;
-  ports: PinsMode;
-  comments: boolean;
-}
+const PARAMS_MODES: [ParamsMode, string, string][] = [
+  ['block', 'Per block', 'Each block shows or hides its parameters (arrow on the block); new blocks follow the project default'],
+  ['all', 'Show all', 'Parameter values on every block'],
+  ['none', 'Hide all', 'No parameter values on any block'],
+];
 
 type Inline =
   | { kind: 'rename'; id: string }
@@ -165,29 +163,6 @@ function typeRefFor(def: BlockTypeDef, all: readonly BlockTypeDef[]): string {
   return libs.size > 1 ? `${def.library}/${def.type}` : def.type;
 }
 
-function readDisplay(): Display {
-  const d: Display = { params: true, ports: 'auto', comments: true };
-  try {
-    const v = JSON.parse(localStorage.getItem(DISPLAY_KEY) ?? '{}');
-    if (typeof v.params === 'boolean') d.params = v.params;
-    if (typeof v.comments === 'boolean') d.comments = v.comments;
-    if (v.ports === 'all' || v.ports === 'auto' || v.ports === 'used') d.ports = v.ports;
-    // Older versions stored a "Show unused ports" checkbox.
-    else if (v.unusedPorts === false) d.ports = 'used';
-  } catch {
-    /* ignore */
-  }
-  return d;
-}
-
-function writeDisplay(d: Display) {
-  try {
-    localStorage.setItem(DISPLAY_KEY, JSON.stringify(d));
-  } catch {
-    /* ignore */
-  }
-}
-
 /** Number of items in the `links` list of a diagram file (after a dry-run edit). */
 function linkCount(text: string, root: YamlPath): number {
   let n: unknown = parseYaml(text).data;
@@ -216,7 +191,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const endHoverRef = useRef(false);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [zoomPct, setZoomPct] = useState(100);
-  const [display, setDisplay] = useState(readDisplay);
+  const display = useCanvasPrefs();
   const [showView, setShowView] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -239,7 +214,10 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
 
   // --- layout & render -----------------------------------------------------------
   // While a wire is dragged, every port is shown so hidden inputs can be targeted.
-  const effDisplay = useMemo<DisplayOptions>(() => (wire ? { ...display, ports: 'all' } : display), [display, wire !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+  const effDisplay = useMemo<DisplayOptions>(
+    () => ({ paramsMode: display.paramsMode, comments: display.comments, ports: wire ? 'all' : display.ports }),
+    [display.paramsMode, display.comments, display.ports, wire !== null], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const baseLayout = useMemo(
     () => layoutActiveSheet(ad, activeSheet, { overrides, noteOverrides, display: effDisplay }),
     [ad, activeSheet, overrides, noteOverrides, effDisplay],
@@ -307,7 +285,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       renderSheetSvg(reconnecting === undefined ? layout : { ...layout, wires: layout.wires.filter((w) => w.link !== reconnecting) }, {
         interactive: true,
         categories: model.meta.signalCategories,
-        grid: true,
+        ...drawingRenderOptions(model.meta.drawing),
+        grid: display.grid,
         selection,
         errorBlocks: errors.blocks,
         errorLinks: errors.links,
@@ -315,7 +294,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         height: layout.bounds.h,
         diff: renderDiff,
       }),
-    [layout, selection, errors, model.meta.signalCategories, reconnecting, renderDiff],
+    [layout, selection, errors, model.meta.signalCategories, model.meta.drawing, display.grid, reconnecting, renderDiff],
   );
 
   // --- view transform ----------------------------------------------------------------
@@ -877,7 +856,13 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       e.preventDefault();
       startPan(e);
     } else if (e.button !== 0) return;
-    else if (el.closest('[data-port]')) {
+    else if (el.closest('[data-params-toggle]')) {
+      // Arrow / "N parameters" footer: expand or collapse this block's parameters
+      // (no selection change, no drag).
+      e.preventDefault();
+      toggleParams(el.closest('[data-params-toggle]')!.getAttribute('data-params-toggle')!);
+      return;
+    } else if (el.closest('[data-port]')) {
       const p = el.closest('[data-port]')!;
       const owner = p.getAttribute('data-owner')!;
       const port = p.getAttribute('data-port')!;
@@ -1102,7 +1087,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         return;
       }
     }
-    if (el.closest('[data-port], [data-iface], [data-note], [data-link], [data-conn]')) return;
+    if (el.closest('[data-port], [data-iface], [data-note], [data-link], [data-conn], [data-params-toggle]')) return;
     const blockEl = el.closest('[data-block]');
     if (blockEl) openComposite(blockEl.getAttribute('data-block')!);
     else openQuick(e.clientX, e.clientY);
@@ -1254,6 +1239,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       if (b.def?.kind === 'composite') items.push({ label: 'Open inside', onClick: () => openComposite(id) });
       items.push({ label: 'Rename…', onClick: () => setInline({ kind: 'rename', id }) });
       if (b.pos) items.push({ label: 'Unpin position', onClick: () => dispatch({ op: 'moveBlock', id, pos: null, ...target }, { label: `Unpin ${id}` }) });
+      const tg = geomOf(id)?.paramsToggle;
+      if (tg) items.push({ label: tg.expanded ? 'Hide parameters' : `Show parameters (${tg.count})`, onClick: () => toggleParams(id) });
       items.push('separator', ...clipItems(), ...sheetItems([id]));
       items.push({
         label: 'Delete',
@@ -1349,12 +1336,32 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     ops.push({ op: 'unpinAll', ...target });
     dispatch({ op: 'batch', label: 'Align by order', ops }, { label: 'Align by order' });
   };
-  const setDisplayOpt = (patch: Partial<Display>) =>
-    setDisplay((d) => {
-      const next = { ...d, ...patch };
-      writeDisplay(next);
-      return next;
-    });
+  const setDisplayOpt = setCanvasPrefs;
+
+  // --- parameters shown per block --------------------------------------------------------
+  const paramsDefault = model.meta.drawing.params !== 'hide';
+  /** `display.params` value for a block: undefined when it equals the project default (keeps YAML clean). */
+  const paramsValue = (expanded: boolean) => (expanded === paramsDefault ? undefined : expanded);
+  const toggleParams = (id: string) => {
+    const tg = geomOf(id)?.paramsToggle;
+    if (!tg) return;
+    const next = !tg.expanded;
+    dispatch({ op: 'setBlockDisplay', id, params: paramsValue(next), ...target }, { label: `${next ? 'Show' : 'Hide'} parameters of ${id}` });
+  };
+  /** Expand or collapse the parameters of every block on this sheet (one undo step). */
+  const setSheetParams = (expanded: boolean) => {
+    const value = paramsValue(expanded);
+    const ops: Op[] = [];
+    for (const g of layoutRef.current.blocks) {
+      if (!g.paramsToggle) continue; // interface bars, blocks without parameters
+      const b = ad.diagram.blocks.find((x) => x.id === g.id);
+      if (b && b.display?.params !== value) ops.push({ op: 'setBlockDisplay', id: b.id, params: value, ...target });
+    }
+    setShowView(false);
+    if (!ops.length) return;
+    const label = `${expanded ? 'Expand' : 'Collapse'} parameters on sheet ${sheet}`;
+    dispatch({ op: 'batch', label, ops }, { label });
+  };
 
   // --- overlays (canvas-area px) ------------------------------------------------------------
   let wireLine: { x0: number; y0: number; x1: number; y1: number } | null = null;
@@ -1487,9 +1494,21 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             </button>
             {showView && (
               <div className="cv-dd-panel" role="menu">
-                <label>
-                  <input type="checkbox" checked={display.params} onChange={() => setDisplayOpt({ params: !display.params })} /> Show parameters
-                </label>
+                <div className="cv-dd-group" role="radiogroup" aria-label="Parameters">
+                  <span className="cv-dd-h">Parameters</span>
+                  {PARAMS_MODES.map(([mode, label, title]) => (
+                    <label key={mode} title={title}>
+                      <input type="radio" name="cv-params" checked={display.paramsMode === mode} onChange={() => setDisplayOpt({ paramsMode: mode })} /> {label}
+                      {mode === 'block' && <span className="cv-dd-note"> (default)</span>}
+                    </label>
+                  ))}
+                  <button type="button" className="cv-dd-item" disabled={display.paramsMode !== 'block'} title="Show the parameters of every block on this sheet" onClick={() => setSheetParams(true)}>
+                    Expand all on this sheet
+                  </button>
+                  <button type="button" className="cv-dd-item" disabled={display.paramsMode !== 'block'} title="Hide the parameters of every block on this sheet" onClick={() => setSheetParams(false)}>
+                    Collapse all on this sheet
+                  </button>
+                </div>
                 <label>
                   <input type="checkbox" checked={display.comments} onChange={() => setDisplayOpt({ comments: !display.comments })} /> Show comments
                 </label>

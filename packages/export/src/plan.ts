@@ -353,10 +353,11 @@ export function planExport(
 }
 
 /** Renderer options matching the export configuration. */
-export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'wireStyles' | 'feedbackStyle'> {
+export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'wireStyles' | 'feedbackStyle' | 'paramsToggles'> {
   const d = plan.config.display;
   return {
     ...drawingRenderOptions(plan.meta.drawing),
+    paramsToggles: false,
     categories: d.categories ? plan.categories : undefined,
     showFeedback: d.feedback,
     showOrder: d.order,

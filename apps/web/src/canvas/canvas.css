@@ -77,3 +77,8 @@
 .cv-dd-panel .cv-dd-h { padding: 2px 6px; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
 .cv-dd-panel .cv-seg { display: flex; gap: 2px; padding: 0 6px 2px; }
 .cv-dd-panel .cv-seg .btn { flex: 1; }
+.cv-dd-panel .cv-dd-group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.cv-dd-panel .cv-dd-note { color: var(--ink-3); }
+.cv-dd-panel .cv-dd-item { display: block; width: 100%; text-align: left; padding: 4px 6px 4px 26px; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
+.cv-dd-panel .cv-dd-item:hover:not(:disabled) { background: var(--hover); }
+.cv-dd-panel .cv-dd-item:disabled { color: var(--ink-3); cursor: default; }

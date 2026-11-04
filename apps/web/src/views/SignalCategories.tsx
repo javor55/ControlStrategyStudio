@@ -17,7 +17,7 @@ function setCategory(name: string, category: SignalCategory | undefined, label: 
 }
 
 /** Colour input that commits once, when the picker is closed (native `change`), not on every move. */
-function ColorInput({ value, onCommit, label }: { value: string; onCommit: (v: string) => void; label: string }) {
+export function ColorInput({ value, onCommit, label }: { value: string; onCommit: (v: string) => void; label: string }) {
   const ref = useRef<HTMLInputElement>(null);
   const commit = useRef(onCommit);
   commit.current = onCommit;
@@ -111,7 +111,7 @@ export function SignalCategoriesSection() {
                     <select className="select" aria-label={`Line style of ${name}`} value={c.style ?? 'solid'} onChange={(e) => update(name, { style: e.target.value as SignalCategory['style'] }, `Line style of ${name}`)}>
                       {STYLES.map((s) => (
                         <option key={s} value={s}>
-                          {s}
+                          {s === 'dashdot' ? 'dash-dot' : s}
                         </option>
                       ))}
                     </select>

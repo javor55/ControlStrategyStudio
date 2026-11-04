@@ -46,7 +46,10 @@ export interface ExportConfig {
   strategies: string[];
   paper: 'A4' | 'A3';
   sections: ExportSections;
-  /** Block settings: only values set in the strategy, or every parameter with its default. */
+  /**
+   * Block settings: only values set in the strategy (and linked inputs), or every parameter.
+   * The editor always exports `set`; type defaults are documented in the library appendix.
+   */
   parameters: 'set' | 'all';
   display: ExportDisplay;
   /** Title block overrides (default: project data, today). */
@@ -87,7 +90,8 @@ export function normalizeExportConfig(raw: unknown, format: ExportFormat): Expor
     strategies: Array.isArray(r.strategies) ? r.strategies.filter((s) => typeof s === 'string') : d.strategies,
     paper: r.paper === 'A4' || r.paper === 'A3' ? r.paper : d.paper,
     sections: { ...d.sections, ...(r.sections ?? {}) },
-    parameters: r.parameters === 'all' ? 'all' : 'set',
+    // The "all parameters with defaults" choice was removed from the editor; older stored configs fall back to `set`.
+    parameters: 'set',
     display: { ...d.display, ...(r.display ?? {}) },
     titleBlock: { ...(r.titleBlock ?? {}) },
   };

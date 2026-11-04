@@ -404,7 +404,9 @@ async function diagramPage(w: Writer, plan: ExportPlan, sheet: SheetPlan, name: 
   w.text(title, nx, yTitle, { size: 11, maxWidth: geo.right - nx });
   if (sub) w.text(sub, geo.right, yTitle, { size: 8, color: C.muted, align: 'right' });
   const area = { x: geo.left, y: geo.top + 9, w: geo.right - geo.left, h: geo.bottom - geo.top - 9 };
-  const svg = renderSheetSvg(sheet.layout, { ...exportRenderOptions(plan), theme: PDF_THEME, background: false });
+  // On paper the ▾ of expanded parameters cannot be clicked: drop it (collapsed blocks keep their "N parameters" line).
+  const layout = sheet.layout; // exportRenderOptions() turns off the expand / collapse arrows
+  const svg = renderSheetSvg(layout, { ...exportRenderOptions(plan), theme: PDF_THEME, background: false });
   const b = sheet.layout.bounds;
   const f = fitBox(b.w, b.h, area.w, area.h, 1.6 * PX);
   if (!f.w) return;
@@ -478,14 +480,14 @@ function blockSettings(w: Writer, b: StrategyPlanBlock, plan: ExportPlan) {
   }
   const rows = b.params;
   w.table({
-    head: [['Name', 'Kind', 'Value', 'Default', 'Unit', 'Description']],
-    body: rows.map((p) => [p.name, p.kind === 'input' ? 'input' : 'param', p.linkedFrom ? `← ${p.linkedFrom}${p.value !== undefined ? `  (${p.value})` : ''}` : (p.value ?? ''), p.default ?? '', p.unit ?? '', p.description ?? '']),
+    // Only what the strategy sets (and linked inputs) — type defaults belong to the library appendix.
+    head: [['Name', 'Kind', 'Value', 'Unit', 'Description']],
+    body: rows.map((p) => [p.name, p.kind === 'input' ? 'input' : 'param', p.linkedFrom ? `← ${p.linkedFrom}${p.value !== undefined ? `  (${p.value})` : ''}` : (p.value ?? ''), p.unit ?? '', p.description ?? '']),
     columnStyles: {
-      0: { font: MONO, cellWidth: ctx.width * 0.13 },
+      0: { font: MONO, cellWidth: ctx.width * 0.14 },
       1: { cellWidth: ctx.width * 0.055, textColor: rgb(C.muted) },
-      2: { cellWidth: ctx.width * 0.18 },
-      3: { cellWidth: ctx.width * 0.11, textColor: rgb(C.muted) },
-      4: { cellWidth: ctx.width * 0.06 },
+      2: { cellWidth: ctx.width * 0.22 },
+      3: { cellWidth: ctx.width * 0.07 },
     },
     headStyles: { fillColor: [255, 255, 255], textColor: rgb(C.muted), fontStyle: 'bold', fontSize: 7 },
     cellHook: (d) => {

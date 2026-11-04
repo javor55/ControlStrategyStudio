@@ -448,7 +448,6 @@ function BlocksTab({ ctx }: { ctx: DiagramCtx }) {
                     <th>Name</th>
                     <th>Type</th>
                     <th>Value</th>
-                    <th>Default</th>
                     <th>Unit</th>
                     <th>Description</th>
                   </tr>
@@ -462,7 +461,6 @@ function BlocksTab({ ctx }: { ctx: DiagramCtx }) {
                       </td>
                       <td className="mono muted">{p.type}</td>
                       <td className="mono">{p.linkedFrom ? <span className="muted">← {p.linkedFrom}</span> : p.set ? <b>{p.value}</b> : ''}</td>
-                      <td className="mono muted">{p.default ?? ''}</td>
                       <td className="muted">{p.unit ?? ''}</td>
                       <td>{p.description}</td>
                     </tr>

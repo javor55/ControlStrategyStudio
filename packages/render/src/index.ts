@@ -101,6 +101,8 @@ export interface RenderOptions {
   showOrder?: boolean;
   /** Signal names and comments along links (default true). */
   showLabels?: boolean;
+  /** Expand / collapse arrows on blocks with parameters (default true; off for read-only output). */
+  paramsToggles?: boolean;
   /** Visual diff: highlight added / changed items and draw removed ones as ghosts. */
   diff?: RenderDiff;
   /** Line style per signal kind (project drawing style). Default: solid, colour by kind. */
@@ -259,8 +261,11 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
   }
   if (b.paramsToggle) {
     const tg = b.paramsToggle;
-    const hit = o.interactive ? { 'data-params-toggle': b.id, style: 'cursor:pointer' } : {};
-    if (tg.expanded) {
+    const toggles = o.paramsToggles !== false;
+    const hit = o.interactive && toggles ? { 'data-params-toggle': b.id, style: 'cursor:pointer' } : {};
+    if (tg.expanded && !toggles) {
+      // read-only output: nothing to draw for expanded parameters
+    } else if (tg.expanded) {
       // ▾ at the right end of the parameter separator
       const cx = b.x + b.w - 9;
       const cy = tg.y + 1;
@@ -271,7 +276,7 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
       s += `<line${attrs({ x1: b.x, y1: fy - 1, x2: b.x + b.w, y2: fy - 1, stroke: t.rule, 'stroke-width': 0.8 })}/>`;
       s += `<path${attrs({ d: `M${n(b.x + 7)} ${n(fy + 2)} L${n(b.x + 11)} ${n(fy + 6)} L${n(b.x + 7)} ${n(fy + 10)}`, fill: 'none', stroke: t.ink3, 'stroke-width': 1.3 })}/>`;
       s += text(b.x + 16, fy + 9.5, `${tg.count} parameter${tg.count > 1 ? 's' : ''}`, { ...sans, 'font-size': 9.5, fill: t.ink3 });
-      if (o.interactive) s += `<rect${attrs({ x: b.x, y: fy - 1, width: b.w, height: M.PARAM_ROW + 3, fill: 'transparent', ...hit })}><title>Show parameters</title></rect>`;
+      if (o.interactive && toggles) s += `<rect${attrs({ x: b.x, y: fy - 1, width: b.w, height: M.PARAM_ROW + 3, fill: 'transparent', ...hit })}><title>Show parameters</title></rect>`;
     }
   }
   b.comment.forEach((line, i) => (s += text(b.x, b.y + b.h + 13 + i * M.COMMENT_LINE, line, { ...sans, 'font-size': 10.5, 'font-style': 'italic', fill: t.ink2 })));

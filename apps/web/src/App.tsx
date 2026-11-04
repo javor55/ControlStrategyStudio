@@ -20,6 +20,7 @@ import { ProjectView } from './views/ProjectView';
 import { AssetView } from './views/AssetView';
 import './editor/workspace.css';
 import { ExportDialog } from './export/ExportDialog';
+import { SettingsDialog } from './settings/SettingsDialog';
 import { HistoryDialogs, HistoryDrawer, VcsStatus } from './history/VcsStatus';
 
 export function emptyProjectFiles(name: string): Files {
@@ -170,14 +171,27 @@ function PanelIcon({ side, open }: { side: 'left' | 'right'; open: boolean }) {
   );
 }
 
+function GearIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round">
+      <path d="M6.9 1.2h2.2l.4 1.9 1.2.5 1.6-1.1 1.6 1.6-1.1 1.6.5 1.2 1.9.4v2.2l-1.9.4-.5 1.2 1.1 1.6-1.6 1.6-1.6-1.1-1.2.5-.4 1.9H6.9l-.4-1.9-1.2-.5-1.6 1.1-1.6-1.6 1.1-1.6-.5-1.2-1.9-.4V6.9l1.9-.4.5-1.2-1.1-1.6 1.6-1.6 1.6 1.1 1.2-.5z" />
+      <circle cx="8" cy="8" r="2.2" />
+    </svg>
+  );
+}
+
 function TopBar({ panels }: { panels: PanelsApi }) {
   const name = useEditor((s) => s.model.meta.name);
   const [exporting, setExporting] = useState(false);
+  const [settings, setSettings] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
         e.preventDefault();
         setExporting(true);
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ',') {
+        e.preventDefault();
+        setSettings(true);
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -283,7 +297,11 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       <button className="btn primary" title="Export PDF, interactive HTML, JSON or TOML (Ctrl+E)" onClick={() => setExporting(true)}>
         Export…
       </button>
+      <button className="btn ghost icon" title="Settings: drawing style and editor (Ctrl+,)" aria-label="Settings" onClick={() => setSettings(true)}>
+        <GearIcon />
+      </button>
       {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
       <input
         ref={fileInput}
         type="file"
