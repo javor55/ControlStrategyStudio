@@ -266,6 +266,15 @@
                 },
                 "minItems": 2,
                 "maxItems": 2
+              },
+              "display": {
+                "type": "object",
+                "properties": {
+                  "params": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "patternProperties": {

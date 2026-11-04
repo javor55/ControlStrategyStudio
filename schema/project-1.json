@@ -27,6 +27,114 @@
         "type": "string"
       }
     },
+    "drawing": {
+      "type": "object",
+      "properties": {
+        "signals": {
+          "type": "object",
+          "properties": {
+            "bool": {
+              "type": "object",
+              "properties": {
+                "color": {
+                  "type": "string"
+                },
+                "style": {
+                  "enum": [
+                    "solid",
+                    "dashed",
+                    "dotted",
+                    "dashdot"
+                  ]
+                },
+                "width": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 6
+                }
+              },
+              "additionalProperties": false
+            },
+            "real": {
+              "type": "object",
+              "properties": {
+                "color": {
+                  "type": "string"
+                },
+                "style": {
+                  "enum": [
+                    "solid",
+                    "dashed",
+                    "dotted",
+                    "dashdot"
+                  ]
+                },
+                "width": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 6
+                }
+              },
+              "additionalProperties": false
+            },
+            "other": {
+              "type": "object",
+              "properties": {
+                "color": {
+                  "type": "string"
+                },
+                "style": {
+                  "enum": [
+                    "solid",
+                    "dashed",
+                    "dotted",
+                    "dashdot"
+                  ]
+                },
+                "width": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 6
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "mark": {
+              "type": "boolean"
+            },
+            "style": {
+              "enum": [
+                "solid",
+                "dashed",
+                "dotted",
+                "dashdot",
+                "same"
+              ]
+            },
+            "color": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "params": {
+          "enum": [
+            "show",
+            "hide"
+          ]
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "additionalProperties": false
+    },
     "signal_categories": {
       "type": "object",
       "propertyNames": {
@@ -42,7 +150,8 @@
             "enum": [
               "solid",
               "dashed",
-              "dotted"
+              "dotted",
+              "dashdot"
             ]
           },
           "width": {

@@ -230,6 +230,7 @@ export interface FolderNode {
   readme?: string;
   folders: FolderNode[];
   strategies: string[]; // strategy files
+  sequences: string[]; // sequence files
 }
 
 export type Selection =
@@ -239,3 +240,79 @@ export type Selection =
   | { kind: 'link'; index: number }
   | { kind: 'note'; index: number }
   | null;
+
+// ---------------------------------------------------------------------------
+// Sequences (SFC / Grafcet)
+// ---------------------------------------------------------------------------
+
+/** IEC 61131-3 action qualifiers used in sequences. */
+export type ActionQualifier = 'N' | 'S' | 'R' | 'P1' | 'P0' | 'D' | 'L';
+export const ACTION_QUALIFIERS: ActionQualifier[] = ['N', 'S', 'R', 'P1', 'P0', 'D', 'L'];
+
+export interface SeqAction {
+  index: number;
+  q: ActionQualifier;
+  /** Block input written by the action (`STRATEGY:BLOCK.PORT`), if linked. */
+  set?: Endpoint;
+  /** Value written (N / P / D / L on non-BOOL inputs); BOOL targets default to TRUE. */
+  value?: unknown;
+  /** Delay (D) or limit (L). */
+  time?: string;
+  /** Free description — the whole action in early design. */
+  text?: string;
+  ext: Ext;
+}
+
+export interface SeqStep {
+  id: string;
+  initial: boolean;
+  description?: string;
+  doc?: string;
+  comment?: string;
+  actions: SeqAction[];
+  /** Expected time in the step (monitoring). */
+  time?: { min?: string; max?: string };
+  sheet: number;
+  pos?: [number, number];
+  ext: Ext;
+}
+
+export interface SeqTransition {
+  /** Index in the YAML `transitions` list (address for operations). */
+  index: number;
+  /** One step, or several for a parallel join. */
+  from: string[];
+  /** One step, or several for a parallel fork. */
+  to: string[];
+  condition?: string;
+  comment?: string;
+  ext: Ext;
+}
+
+export interface Sequence {
+  file: string;
+  uid?: string;
+  name: string;
+  title?: string;
+  description?: string;
+  revision?: string;
+  author?: string;
+  scan?: string;
+  folder: string;
+  docFile?: string;
+  sheets: SheetDef[];
+  steps: SeqStep[];
+  transitions: SeqTransition[];
+  /** Named external signals of the sequence (operator commands …). */
+  inputs: PortDef[];
+  notes: NoteInst[];
+  ext: Ext;
+}
+
+/** Signals every sequence provides as `SEQ.<name>` (besides `<step>.X` and `<step>.T`). */
+export const SEQUENCE_SIGNALS: PortDef[] = [
+  { name: 'RUNNING', type: 'BOOL', description: 'A step other than the initial step is active', ext: {} },
+  { name: 'DONE', type: 'BOOL', description: 'The sequence returned to its initial step after running', ext: {} },
+  { name: 'ALARM', type: 'BOOL', description: 'A step exceeded its maximum time', ext: {} },
+  { name: 'STEP', type: 'INT', description: 'Number of the active step (first active step for parallel branches)', ext: {} },
+];

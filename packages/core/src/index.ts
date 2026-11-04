@@ -16,3 +16,5 @@ export * from './demo';
 export { newUid } from './uid';
 export { parseYaml, lineAt, rangeAt, stringifyDoc, type ParsedYaml, type YamlPath } from './yamlutil';
 export * from './diff';
+export * from './expr';
+export * from './sequence';

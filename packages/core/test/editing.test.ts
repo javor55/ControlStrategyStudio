@@ -50,7 +50,7 @@ describe('block type editing', () => {
     expect(t.inputs.map((p) => p.name)).toEqual(['TRK', 'IN']);
     expect(() => applyOp(f, { op: 'addPort', file: LAG, list: 'outputs', port: { name: 'IN', type: 'REAL' } })).toThrow(/already exists/);
     f = run(f, { op: 'removePort', file: LAG, list: 'inputs', name: 'TRK' });
-    expect(loadProject(f).diags).toEqual([]);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info')).toEqual([]);
   });
   it('renames composite interface ports including internal links and $refs', () => {
     let f = run(demo, { op: 'updatePort', file: AI2, list: 'outputs', name: 'PV', patch: { name: 'MEAS' } });
@@ -60,7 +60,7 @@ describe('block type editing', () => {
     const p = loadProject(f);
     expect(p.diagsByFile.get(AI2)).toBeUndefined();
     // strategies using the type follow the rename
-    expect(p.diags).toEqual([]);
+    expect(p.diags.filter((d) => d.severity !== 'info')).toEqual([]);
     expect(f[`${U100}/LIC100.yaml`]).toContain('LT100.MEAS -> LIC100.PV');
   });
   it('propagates port renames to strategies and cross references', () => {
@@ -71,7 +71,7 @@ describe('block type editing', () => {
     expect(f[FIC]).toContain('from: LIC100:LIC100.OUT');
     f = run(f, { op: 'updatePort', file: 'library/std/PID@1.0.0.yaml', list: 'inputs', name: 'SP_EXT', patch: { name: 'RSP' } });
     expect(f[FIC]).toContain('to: FIC101.RSP');
-    expect(loadProject(f).diags).toEqual([]);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info')).toEqual([]);
   });
   it('edits header fields and implementation', () => {
     let f = run(demo, { op: 'setTypeField', file: LAG, field: 'description', value: 'Filter' });
@@ -88,7 +88,7 @@ describe('block type editing', () => {
     expect(f['library/std/PIDC@1.0.0.yaml']).toContain('type: PIDC');
     expect(f['library/std/PID@1.0.0.yaml']).toBeUndefined();
     expect(f[FIC]).toContain('type: PIDC@1.0.0');
-    expect(loadProject(f).diags).toEqual([]);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info')).toEqual([]);
   });
 });
 
@@ -166,12 +166,12 @@ describe('canvas engineering features', () => {
     f = run(f, { op: 'setLinkField', file: P101, index: 3, field: 'label', value: 'P101_ILK' });
     expect(f[P101]).toContain('  - from: HEALTHY.OUT\n    to: P101.INTLK\n    label: P101_ILK\n    category: interlock');
     const p = loadProject(f);
-    expect(p.diags).toEqual([]);
+    expect(p.diags.filter((d) => d.severity !== 'info')).toEqual([]);
     const w = layoutDiagram(p.strategyByName.get('P101')!)[0].wires.find((x) => x.link === 3)!;
     expect(w.category).toBe('interlock');
     expect(w.label?.name).toBe('P101_ILK');
     f = run(f, { op: 'setSignalCategory', name: 'interlock' });
-    expect(loadProject(f).diags.map((d) => d.code)).toEqual(['unknown-category']);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info').map((d) => d.code)).toEqual(['unknown-category']);
   });
   it('marks the demo readback tracking as previous-cycle value', () => {
     const s = loadProject(demo).strategyByName.get('FIC101')!;
@@ -181,9 +181,9 @@ describe('canvas engineering features', () => {
   });
   it('renames hierarchy folders', () => {
     const r = applyOp(demo, { op: 'renameFolder', from: 'ACME/Brno/WaterTreatment', to: 'ACME/Brno/RawWater' });
-    expect(Object.keys(r.files).filter((k) => k.includes('/RawWater/')).length).toBe(6);
+    expect(Object.keys(r.files).filter((k) => k.includes('/RawWater/')).length).toBe(8);
     expect(Object.keys(r.files).some((k) => k.includes('/WaterTreatment/'))).toBe(false);
-    expect(loadProject(r.files).diags).toEqual([]);
+    expect(loadProject(r.files).diags.filter((d) => d.severity !== 'info')).toEqual([]);
     expect(() => applyOp(demo, { op: 'renameFolder', from: 'ACME', to: 'ACME/X' })).toThrow(/itself/);
   });
 });
@@ -197,7 +197,7 @@ describe('drawing style and block display', () => {
     expect(f['project.yaml']).toContain('drawing:\n  signals:\n    bool: { color: "#00aa00", style: dashed }');
     const m = loadProject(f).meta.drawing;
     expect(m).toMatchObject({ signals: { bool: { color: '#00aa00', style: 'dashed' } }, feedback: { mark: false, style: 'dashdot' }, params: 'hide' });
-    expect(loadProject(f).diags).toEqual([]);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info')).toEqual([]);
     f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'color'] });
     f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'style'] });
     expect(f['project.yaml']).not.toContain('bool:');

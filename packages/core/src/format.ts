@@ -6,13 +6,14 @@
 import type { Document } from 'yaml';
 import type { Diag } from './types';
 
-export type DocKind = 'project' | 'library' | 'blocktype' | 'strategy';
+export type DocKind = 'project' | 'library' | 'blocktype' | 'strategy' | 'sequence';
 
 export const CURRENT_FORMAT: Record<DocKind, number> = {
   project: 1,
   library: 1,
   blocktype: 1,
   strategy: 1,
+  sequence: 1,
 };
 
 export function formatTag(kind: DocKind): string {

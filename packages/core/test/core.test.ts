@@ -27,7 +27,7 @@ const diagsOf = (files: Files, file = 'strategies/T/TEST.yaml') => loadProject(f
 describe('demo project', () => {
   const p = loadProject(demo);
   it('loads without diagnostics', () => {
-    expect(p.diags).toEqual([]);
+    expect(p.diags.filter((d) => d.severity !== 'info')).toEqual([]);
     expect(p.strategies.map((s) => s.name)).toEqual(['FIC101', 'LIC100', 'P101']);
     expect(p.meta.name).toBe('Water Treatment Brno');
   });
@@ -149,7 +149,7 @@ describe('operations', () => {
     const text = out[FIC] as string;
     expect(text).toContain('# my note');
     expect(text).toContain('  LAH101:\n    type: LIM_ALM\n    pos: [ 400, 300 ]');
-    expect(codes(loadProject(out).diags)).toEqual(['missing-order']);
+    expect(codes(loadProject(out).diags.filter((d) => d.severity !== 'info'))).toEqual(['missing-order']);
     const out2 = run(out, { op: 'setBlockField', file: FIC, id: 'LAH101', field: 'order', value: 40 });
     expect(out2[FIC]).toContain('    type: LIM_ALM\n    order: 40\n    pos: [ 400, 300 ]');
   });
@@ -178,14 +178,14 @@ describe('operations', () => {
     const f = run(demo, { op: 'renameBlock', file: LIC, from: 'LAL100', to: 'LA100' });
     expect(f[LIC]).toContain('  LA100:');
     expect(f[P101]).toContain('LIC100:LA100.QL -> DRY_RUN.IN2');
-    expect(loadProject(f).diags).toEqual([]);
+    expect(loadProject(f).diags.filter((d) => d.severity !== 'info')).toEqual([]);
   });
   it('renames strategies, their docs and references', () => {
     const r = applyOp(demo, { op: 'renameStrategy', file: LIC, name: 'LIC200' });
     expect(r.files[`${U100}/LIC200.yaml`]).toContain('strategy: LIC200');
     expect(r.files[LIC]).toBeUndefined();
     expect(r.files[FIC]).toContain('from: LIC200:LIC100.MV');
-    expect(loadProject(r.files).diags).toEqual([]);
+    expect(loadProject(r.files).diags.filter((d) => d.severity !== 'info')).toEqual([]);
     const r2 = applyOp(demo, { op: 'renameStrategy', file: FIC, name: 'FIC102' });
     expect(r2.files[`${U100}/FIC102.md`]).toBeDefined();
     expect(() => applyOp(demo, { op: 'renameStrategy', file: FIC, name: 'P101' })).toThrow(/already used/);
@@ -193,7 +193,9 @@ describe('operations', () => {
   it('removes blocks together with their links', () => {
     const f = run(demo, { op: 'removeBlock', file: FIC, id: 'FIC101' });
     expect(f[FIC]).not.toMatch(/FIC101\.(PV|MV|SP_EXT)/);
-    expect(loadProject(f).diags).toEqual([]);
+    const diags = loadProject(f).diags.filter((d) => d.severity !== 'info');
+    // only the sequence that writes to FIC101 reports the missing block
+    expect(diags.map((d) => `${d.code}@${d.file?.split('/').pop()}`)).toEqual(['unknown-block@FILL_T100.seq.yaml', 'unknown-block@FILL_T100.seq.yaml']);
   });
   it('sets and clears params, positions and fields', () => {
     let f = run(demo, { op: 'setParam', file: FIC, id: 'FV101', name: 'OUT_HI', value: 80 });
@@ -230,7 +232,7 @@ describe('operations', () => {
     f = run(f, { op: 'setBlockField', file: FIC, id: 'FV101', field: 'sheet', value: 2 });
     expect(() => applyOp(f, { op: 'removeSheet', file: FIC, id: 2 })).toThrow(/not empty/);
     const p = loadProject(f);
-    expect(p.diags).toEqual([]);
+    expect(p.diags.filter((d) => d.severity !== 'info')).toEqual([]);
     const sheets = layoutDiagram(p.strategyByName.get('FIC101')!);
     expect(sheets[0].connectors.some((c) => c.kind === 'sheet-out' && c.label === '→ 2 / FV101.IN')).toBe(true);
     expect(sheets[1].connectors.some((c) => c.kind === 'sheet-in')).toBe(true);
@@ -240,7 +242,7 @@ describe('operations', () => {
     f = run(f, { op: 'createBlockType', lib: 'plant', type: 'DOSING', category: 'Devices' });
     f = run(f, { op: 'newTypeVersion', file: 'library/plant/DOSING@1.0.0.yaml', part: 'major' });
     const p = loadProject(f);
-    expect(p.diags).toEqual([]);
+    expect(p.diags.filter((d) => d.severity !== 'info')).toEqual([]);
     expect(p.types.versions('DOSING').map((t) => t.version)).toEqual(['2.0.0', '1.0.0']);
   });
   it('suggests unique block ids', () => {

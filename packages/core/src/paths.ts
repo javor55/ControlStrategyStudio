@@ -6,7 +6,8 @@
 //   library/<lib>/library.yaml          library header
 //   library/<lib>/<Type>@<ver>.yaml     one version of one block type
 //   strategies/<folders…>/<Name>.yaml   strategy
-//   strategies/<folders…>/<Name>.md     strategy function description
+//   strategies/<folders…>/<Name>.seq.yaml sequence (SFC)
+//   strategies/<folders…>/<Name>.md     strategy / sequence function description
 //   strategies/<folders…>/README.md     description of a hierarchy level
 //   assets/…                            images, logo, attachments
 //
@@ -16,6 +17,8 @@ export const PROJECT_FILE = 'project.yaml';
 export const LIB_DIR = 'library/';
 export const STRATEGY_DIR = 'strategies/';
 export const ASSET_DIR = 'assets/';
+/** Sequences (SFC) live next to strategies as `<NAME>.seq.yaml`. */
+export const SEQUENCE_EXT = '.seq.yaml';
 
 export type FileRole =
   | { kind: 'project' }
@@ -23,6 +26,7 @@ export type FileRole =
   | { kind: 'library'; lib: string }
   | { kind: 'blocktype'; lib: string }
   | { kind: 'strategy'; folder: string; name: string }
+  | { kind: 'sequence'; folder: string; name: string }
   | { kind: 'strategy-doc'; folder: string; name: string }
   | { kind: 'asset' }
   | { kind: 'other' };
@@ -62,6 +66,7 @@ export function classify(path: string): FileRole {
     const folder = dirname(rel);
     const file = basename(rel);
     if (file === 'README.md') return { kind: 'readme', folder };
+    if (file.endsWith(SEQUENCE_EXT)) return { kind: 'sequence', folder, name: file.slice(0, -SEQUENCE_EXT.length) };
     if (file.endsWith('.yaml')) return { kind: 'strategy', folder, name: stem(file) };
     if (file.endsWith('.md')) return { kind: 'strategy-doc', folder, name: stem(file) };
   }
@@ -72,8 +77,13 @@ export function strategyFile(folder: string, name: string): string {
   return joinPath('strategies', folder, `${name}.yaml`);
 }
 
+/** Function description of a strategy or sequence: `NAME.md` next to it. */
 export function strategyDocFile(strategyPath: string): string {
-  return strategyPath.replace(/\.yaml$/, '.md');
+  return strategyPath.replace(/(\.seq)?\.yaml$/, '.md');
+}
+
+export function sequenceFile(folder: string, name: string): string {
+  return joinPath('strategies', folder, `${name}${SEQUENCE_EXT}`);
 }
 
 export function folderReadme(folder: string): string {

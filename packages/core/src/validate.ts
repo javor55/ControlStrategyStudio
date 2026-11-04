@@ -1,7 +1,8 @@
 // Semantic validation of a diagram (strategy or composite internals).
 import { IFACE_IN, IFACE_OUT, formatEndpoint } from './diagram';
 import { checkValue, compatible, parseDuration } from './signals';
-import type { BlockInst, BlockTypeDef, Diag, Diagram, Endpoint, PortDef, Strategy } from './types';
+import { sequenceSignalType } from './sequence';
+import type { BlockInst, BlockTypeDef, Diag, Diagram, Endpoint, PortDef, Sequence, Strategy } from './types';
 import { lineAt, type ParsedYaml, type YamlPath } from './yamlutil';
 
 export interface ValidateContext {
@@ -12,6 +13,8 @@ export interface ValidateContext {
   composite?: BlockTypeDef;
   /** Other strategies by name, for cross-strategy references. */
   strategies?: ReadonlyMap<string, Strategy>;
+  /** Sequences by name: strategies may read their step / sequence signals. */
+  sequences?: ReadonlyMap<string, Sequence>;
 }
 
 export function findPort(def: BlockTypeDef | undefined, dir: 'in' | 'out', name: string): PortDef | undefined {
@@ -22,6 +25,8 @@ export function findPort(def: BlockTypeDef | undefined, dir: 'in' | 'out', name:
 /** Type of the signal at a link source, or undefined when unresolved. */
 function sourceType(ep: Endpoint, diagram: Diagram, ctx: ValidateContext): string | undefined {
   if (ep.strategy) {
+    const q = ctx.sequences?.get(ep.strategy);
+    if (q) return sequenceSignalType(q, ep.block, ep.port);
     const s = ctx.strategies?.get(ep.strategy);
     return findPort(s?.blocks.find((b) => b.id === ep.block)?.def, 'out', ep.port)?.type;
   }
@@ -89,6 +94,12 @@ export function validateDiagram(diagram: Diagram, ctx: ValidateContext): Diag[] 
       if (ctx.composite) {
         bad('ext-in-composite', 'composite blocks cannot reference strategies');
         srcOk = false;
+      } else if (ctx.sequences?.has(l.from.strategy)) {
+        const q = ctx.sequences.get(l.from.strategy)!;
+        if (!sequenceSignalType(q, l.from.block, l.from.port)) {
+          bad('unknown-port', `sequence ${q.name} has no signal "${l.from.block}.${l.from.port}" (use STEP.X, STEP.T or SEQ.RUNNING / DONE / ALARM / STEP)`);
+          srcOk = false;
+        }
       } else {
         const s = ctx.strategies?.get(l.from.strategy);
         const sb = s?.blocks.find((b) => b.id === l.from.block);

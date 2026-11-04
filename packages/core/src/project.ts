@@ -5,7 +5,8 @@ import { classify, PROJECT_FILE, strategyDocFile } from './paths';
 import { validateSchema } from './schema';
 import { parseDiagram } from './diagram';
 import { validateDiagram } from './validate';
-import { DEFAULT_DRAWING, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Strategy, type WireStyle } from './types';
+import { parseSequence, sequenceRefs, validateSequence, type SequenceRef } from './sequence';
+import { DEFAULT_DRAWING, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
 import { isObj, lineAt, parseYaml, pickExt, str } from './yamlutil';
 
 export const DEFAULT_LEVELS = ['Enterprise', 'Site', 'Area', 'Unit', 'Equipment Module', 'Control Module'];
@@ -24,6 +25,12 @@ export interface ProjectModel {
   strategies: Strategy[];
   strategyByName: ReadonlyMap<string, Strategy>;
   strategyByFile: ReadonlyMap<string, Strategy>;
+  /** Sequences (SFC), sharing the name space of strategies. */
+  sequences: Sequence[];
+  sequenceByName: ReadonlyMap<string, Sequence>;
+  sequenceByFile: ReadonlyMap<string, Sequence>;
+  /** Signals of a strategy read (conditions) or written (actions) by sequences. */
+  sequenceRefs(strategy: string, block?: string): SequenceRef[];
   /** Hierarchy tree of `strategies/`. */
   root: FolderNode;
   /** Markdown files (READMEs and strategy descriptions). */
@@ -97,8 +104,8 @@ function parseDrawing(v: unknown): DrawingStyle {
   };
 }
 
-function buildTree(folders: Iterable<string>, strategies: Strategy[], readmes: Map<string, string>, levels: string[]): FolderNode {
-  const root: FolderNode = { path: '', name: '', depth: 0, folders: [], strategies: [], readme: readmes.get('') };
+function buildTree(folders: Iterable<string>, strategies: Strategy[], sequences: Sequence[], readmes: Map<string, string>, levels: string[]): FolderNode {
+  const root: FolderNode = { path: '', name: '', depth: 0, folders: [], strategies: [], sequences: [], readme: readmes.get('') };
   const nodes = new Map<string, FolderNode>([['', root]]);
   const ensure = (path: string): FolderNode => {
     const hit = nodes.get(path);
@@ -114,6 +121,7 @@ function buildTree(folders: Iterable<string>, strategies: Strategy[], readmes: M
       readme: readmes.get(path),
       folders: [],
       strategies: [],
+      sequences: [],
     };
     parent.folders.push(node);
     nodes.set(path, node);
@@ -121,9 +129,11 @@ function buildTree(folders: Iterable<string>, strategies: Strategy[], readmes: M
   };
   for (const f of folders) ensure(f);
   for (const s of strategies) ensure(s.folder).strategies.push(s.file);
+  for (const s of sequences) ensure(s.folder).sequences.push(s.file);
   const sort = (n: FolderNode) => {
     n.folders.sort((a, b) => a.name.localeCompare(b.name));
     n.strategies.sort();
+    n.sequences.sort();
     n.folders.forEach(sort);
   };
   sort(root);
@@ -137,6 +147,7 @@ export function loadProject(files: Files): ProjectModel {
   diags.push(...lib.diags);
 
   const strategies: Strategy[] = [];
+  const sequences: Sequence[] = [];
   const readmes = new Map<string, string>();
   const folders = new Set<string>();
   const docs: string[] = [];
@@ -154,6 +165,24 @@ export function loadProject(files: Files): ProjectModel {
       }
     }
     if (role.kind === 'strategy-doc') docs.push(file);
+    if (role.kind === 'sequence' && typeof content === 'string') {
+      const p = parseYaml(content);
+      parsedByFile.set(file, p);
+      const doc = typeof files[strategyDocFile(file)] === 'string' ? strategyDocFile(file) : undefined;
+      if (p.error) {
+        diags.push({ severity: 'error', code: 'yaml-syntax', message: p.error.message, file, line: p.error.line });
+        sequences.push({ file, name: role.name, folder: role.folder, sheets: [{ id: 1 }], steps: [], transitions: [], inputs: [], notes: [], ext: {}, docFile: doc });
+        continue;
+      }
+      diags.push(...migrateDocument(p.doc, 'sequence', file).diags, ...validateSchema('sequence', p, file));
+      const r = parseSequence(file, role.name, role.folder, p);
+      diags.push(...r.diags);
+      if (r.sequence.name !== role.name) {
+        diags.push({ severity: 'warning', code: 'name-mismatch', message: `Sequence "${r.sequence.name}" is stored in ${role.name}.seq.yaml`, file, line: lineAt(p, ['sequence']) });
+      }
+      sequences.push({ ...r.sequence, docFile: doc });
+      continue;
+    }
     if (role.kind !== 'strategy' || typeof content !== 'string') continue;
 
     const p = parseYaml(content);
@@ -196,26 +225,38 @@ export function loadProject(files: Files): ProjectModel {
     });
   }
   strategies.sort((a, b) => a.file.localeCompare(b.file));
+  sequences.sort((a, b) => a.file.localeCompare(b.file));
 
+  // Strategies and sequences share one name space (references `NAME:…`).
   const byName = new Map<string, Strategy>();
-  for (const s of strategies) {
-    const other = byName.get(s.name);
+  const seqByName = new Map<string, Sequence>();
+  const owner = new Map<string, string>();
+  for (const s of [...strategies, ...sequences]) {
+    const other = owner.get(s.name);
     if (other) {
-      diags.push({ severity: 'error', code: 'duplicate-strategy', message: `Strategy name "${s.name}" is also used by ${other.file}`, file: s.file });
+      diags.push({ severity: 'error', code: 'duplicate-strategy', message: `Name "${s.name}" is also used by ${other}`, file: s.file });
       continue;
     }
-    byName.set(s.name, s);
+    owner.set(s.name, s.file);
+    if ('blocks' in s) byName.set(s.name, s);
+    else seqByName.set(s.name, s);
   }
 
   for (const s of strategies) {
     const p = parsedByFile.get(s.file);
     if (!p || p.error) continue;
-    diags.push(...validateDiagram(s, { file: s.file, parsed: p, base: [], strategies: byName }));
+    diags.push(...validateDiagram(s, { file: s.file, parsed: p, base: [], strategies: byName, sequences: seqByName }));
     for (const l of s.links) {
       if (l.category && !meta.signalCategories[l.category]) {
         diags.push({ severity: 'warning', code: 'unknown-category', message: `Link ${l.index + 1}: signal category "${l.category}" is not defined in project.yaml`, file: s.file, line: lineAt(p, ['links', l.index, 'category']), link: l.index });
       }
     }
+  }
+  const seqRefs = new Map<string, SequenceRef[]>();
+  for (const q of sequences) {
+    const p = parsedByFile.get(q.file);
+    if (p && !p.error) diags.push(...validateSequence(q, p, { strategies: byName, sequences: seqByName }));
+    for (const r of sequenceRefs(q)) seqRefs.set(r.strategy, [...(seqRefs.get(r.strategy) ?? []), r]);
   }
   for (const t of lib.index.all) {
     if (!t.diagram) continue;
@@ -248,7 +289,13 @@ export function loadProject(files: Files): ProjectModel {
     strategies,
     strategyByName: byName,
     strategyByFile: new Map(strategies.map((s) => [s.file, s])),
-    root: buildTree(folders, strategies, readmes, meta.levels),
+    root: buildTree(folders, strategies, sequences, readmes, meta.levels),
+    sequences,
+    sequenceByName: seqByName,
+    sequenceByFile: new Map(sequences.map((s) => [s.file, s])),
+    sequenceRefs(strategy, block) {
+      return (seqRefs.get(strategy) ?? []).filter((r) => !block || r.block === block);
+    },
     docs: docs.sort(),
     assets: assets.sort(),
     diags,

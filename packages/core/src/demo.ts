@@ -178,6 +178,53 @@ links:
   - LT100.PV -> LIC100.PV
   - LT100.PV -> LAL100.IN
 `,
+    [`${U100}/FILL_T100.seq.yaml`]: `format: csd-sequence/1
+uid: 5d2e8c41-7a90-4b3f-9e16-0c4f2a8b6d17
+sequence: FILL_T100
+title: First filling of tank T100
+description: Fills T100 from empty to the operating level, then starts the feed pump.
+scan: 1s
+
+inputs:
+  - { name: START_CMD, type: BOOL, description: Operator start from the HMI }
+
+steps:
+  S0:
+    initial: true
+    description: Idle
+  S10:
+    description: Open inlet valve in manual
+    actions:
+      - { q: N, set: FIC101:FIC101.MAN_ON, value: true }
+      - { q: N, set: FIC101:FIC101.MAN_VAL, value: 30 }
+    time: { max: 2min }
+  S20:
+    description: Fill to operating level
+    actions:
+      - { q: N, text: Inlet flow controller in cascade with LIC100 }
+    time: { max: 2h }
+  S25:
+    description: Watch dry-run protection
+    actions:
+      - { q: N, text: Alarm to operator if LSL100 is active }
+  S30:
+    description: Start feed pump
+    actions:
+      - { q: S, set: P101:P101.START, value: true }
+    time: { max: 30s }
+
+transitions:
+  - { from: S0, to: S10, condition: START_CMD and not LIC100:LAL100.QH }
+  - { from: S10, to: [S20, S25], condition: FIC101:FT101.PV > 5, comment: Flow established }
+  - { from: [S20, S25], to: S30, condition: LIC100:LT100.PV >= 2.5, comment: Operating level }
+  - { from: S30, to: S0, condition: P101:P101.RUNNING }
+`,
+    [`${U100}/FILL_T100.md`]: `## Function
+
+First filling of tank T100 after maintenance. The inlet valve is opened in
+manual until flow is established, then the level controller takes over. When
+the operating level is reached the feed pump P101 is started.
+`,
     [`${U100}/P101.yaml`]: `format: csd-strategy/1
 uid: c2b7f4e9-1a3d-4e6b-8f0c-9d2a5b7e1f30
 strategy: P101
