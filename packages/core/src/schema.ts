@@ -23,6 +23,7 @@ const portDef = {
     default: {},
     unit: text,
     values: { type: 'array', items: { type: 'string' } },
+    visibility: { enum: ['always', 'connected'] },
   },
   ...ext,
   additionalProperties: false,
@@ -51,7 +52,7 @@ const link = {
   if: { type: 'object' },
   then: {
     required: ['from', 'to'],
-    properties: { from: text, to: text, comment: text },
+    properties: { from: text, to: text, comment: text, label: text, category: { type: 'string', pattern: TAG } },
     ...ext,
     additionalProperties: false,
   },
@@ -92,6 +93,21 @@ export const SCHEMAS: Record<DocKind, object> = {
       description: text,
       author: text,
       levels: { type: 'array', items: { type: 'string' } },
+      signal_categories: {
+        type: 'object',
+        propertyNames: { pattern: TAG },
+        additionalProperties: {
+          type: 'object',
+          properties: {
+            color: text,
+            style: { enum: ['solid', 'dashed', 'dotted'] },
+            width: { type: 'number', minimum: 0.5, maximum: 6 },
+            description: text,
+          },
+          ...ext,
+          additionalProperties: false,
+        },
+      },
       title_block: {
         type: 'object',
         properties: { logo: text, drawn: text, checked: text, approved: text },

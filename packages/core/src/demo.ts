@@ -23,6 +23,9 @@ title_block:
   drawn: Process Engineering
   checked: ""
   approved: ""
+signal_categories:
+  interlock: { color: "#b3261e", style: dashed, description: Safety and process interlocks }
+  tracking: { color: "#6b7280", style: dotted, description: Output tracking and readbacks }
 `,
     'README.md': `# Water Treatment Brno
 
@@ -125,6 +128,10 @@ links:
     to: FIC101.SP_EXT
     comment: Cascade SP
   - FIC101.MV -> FV101.IN
+  - from: FV101.OUT_RB
+    to: FIC101.TRK_VAL
+    category: tracking
+    comment: Bumpless return from manual
 
 notes:
   - text: Valve fails closed on loss of air (ATC).
@@ -219,7 +226,10 @@ links:
   - LSL100.OUT -> DRY_RUN.IN1
   - LIC100:LAL100.QL -> DRY_RUN.IN2
   - DRY_RUN.OUT -> HEALTHY.IN
-  - HEALTHY.OUT -> P101.INTLK
+  - from: HEALTHY.OUT
+    to: P101.INTLK
+    label: P101_ILK
+    category: interlock
   - P101_FB.OUT -> P101.FB_RUN
   - P101.CMD -> P101_CMD.IN
 

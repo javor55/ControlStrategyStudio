@@ -35,6 +35,12 @@ export interface DisplayOptions {
   params?: boolean;
   /** Ports that are neither linked nor set to a constant (like hidden pins in CFC). */
   unusedPorts?: boolean;
+  /**
+   * Which ports to draw: `all`; `auto` (default) = all except unused pins whose type
+   * definition says `visibility: connected`; `used` = only linked or constant ports.
+   * Takes precedence over `unusedPorts` (false = `used`).
+   */
+  ports?: 'all' | 'auto' | 'used';
   /** Block comments under the block. */
   comments?: boolean;
 }
@@ -108,7 +114,13 @@ export interface WireGeom {
   /** Derived, not stored (used-by). */
   derived: boolean;
   points: [number, number][];
-  label?: { x: number; y: number; text: string };
+  /** Text along the longest horizontal segment: signal `name` and/or `comment`. */
+  label?: { x: number; y: number; text: string; name?: string; comment?: string; delayed?: boolean };
+  /** Source port key; wires with the same source form one signal (junction dots). */
+  source?: string;
+  category?: string;
+  /** Value from the previous cycle: the source runs at or after the target (`z⁻¹`). */
+  feedback?: { sourceOrder: number; targetOrder: number; tick: [number, number] };
 }
 
 export interface NoteGeom {
@@ -127,6 +139,8 @@ export interface SheetLayout {
   wires: WireGeom[];
   connectors: ConnectorGeom[];
   notes: NoteGeom[];
+  /** Branch points of one signal (filled dots). */
+  junctions: [number, number][];
   bounds: { x: number; y: number; w: number; h: number };
 }
 
@@ -202,7 +216,21 @@ function ifaceBlocks(t: BlockTypeDef): BlockInst[] {
   return out;
 }
 
+/** A link reads a value of the previous cycle when its source runs at or after its target. */
+export function feedbackOrders(diagram: Diagram, l: LinkInst): { sourceOrder: number; targetOrder: number } | undefined {
+  if (l.from.strategy) return undefined;
+  const s = diagram.blocks.find((b) => b.id === l.from.block)?.order;
+  const t = diagram.blocks.find((b) => b.id === l.to.block)?.order;
+  return s !== undefined && t !== undefined && s >= t ? { sourceOrder: s, targetOrder: t } : undefined;
+}
+
 export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext = {}): SheetLayout {
+  const orderOf = new Map(diagram.blocks.map((b) => [b.id, b.order]));
+  const isFeedback = (l: LinkInst) => {
+    const s = orderOf.get(l.from.block);
+    const t = orderOf.get(l.to.block);
+    return !l.from.strategy && s !== undefined && t !== undefined && s >= t;
+  };
   const firstSheet = diagram.sheets[0]?.id ?? 1;
   const iface = ctx.composite && sheet === firstSheet ? ifaceBlocks(ctx.composite) : [];
   const onSheet = [...iface, ...diagram.blocks.filter((b) => sheetOf(diagram, b) === sheet)];
@@ -213,7 +241,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     (dir === 'in' ? b?.def?.inputs : b?.def?.outputs)?.find((p) => p.name === port)?.type;
 
   // --- per-block geometry ---------------------------------------------------
-  const show = { params: ctx.display?.params !== false, unusedPorts: ctx.display?.unusedPorts !== false, comments: ctx.display?.comments !== false };
+  const show = { params: ctx.display?.params !== false, comments: ctx.display?.comments !== false };
+  const portMode = ctx.display?.ports ?? (ctx.display?.unusedPorts === false ? 'used' : 'auto');
   const usedIn = new Set<string>();
   const usedOut = new Set<string>();
   for (const l of diagram.links) {
@@ -235,10 +264,11 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       inputs = [...ins].map((name) => ({ name, type: 'ANY', ext: {} }));
       outputs = [...outs].map((name) => ({ name, type: 'ANY', ext: {} }));
     }
-    if (!show.unusedPorts && !isIface(b)) {
+    if (portMode !== 'all' && !isIface(b)) {
       const usedBy = (port: string) => (ctx.usedBy ? ctx.usedBy(b.id, port).length > 0 : false);
-      inputs = inputs.filter((p) => usedIn.has(`${b.id}.${p.name}`) || p.name in b.params);
-      outputs = outputs.filter((p) => usedOut.has(`${b.id}.${p.name}`) || usedBy(p.name));
+      const keep = (p: PortDef, used: boolean) => used || (portMode === 'auto' && p.visibility !== 'connected');
+      inputs = inputs.filter((p) => keep(p, usedIn.has(`${b.id}.${p.name}`) || p.name in b.params));
+      outputs = outputs.filter((p) => keep(p, usedOut.has(`${b.id}.${p.name}`) || usedBy(p.name)));
     }
     const params: string[] = [];
     if (show.params) for (const [k, v] of Object.entries(b.params)) {
@@ -304,8 +334,9 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     p.leftNeed = Math.max(
       p.constNeed,
       ...p.left.map((c) => {
-        const comment = c.link === undefined ? undefined : diagram.links.find((l) => l.index === c.link)?.comment;
-        return connW(c.label) + M.CONN_GAP + (comment ? comment.length * M.CH_TEXT + 8 : 0);
+        const lk = c.link === undefined ? undefined : diagram.links.find((l) => l.index === c.link);
+        const text = [lk?.label, lk?.comment].filter(Boolean).join(' · ');
+        return connW(c.label) + M.CONN_GAP + (text ? text.length * M.CH_TEXT + 8 : 0);
       }),
     );
     p.rightNeed = Math.max(0, ...p.right.map((c) => connW(c.label) + M.CONN_GAP));
@@ -318,9 +349,10 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   const succ = new Map<string, Set<string>>(ids.map((id) => [id, new Set()]));
   for (const l of diagram.links) {
     if (l.from.strategy || !here.has(l.from.block) || !here.has(l.to.block) || l.from.block === l.to.block) continue;
+    if (isFeedback(l)) continue; // previous-cycle value: does not pull the target to the right
     succ.get(l.from.block)!.add(l.to.block);
   }
-  // DFS to drop back edges
+  // DFS to drop remaining back edges (cycles without execution order)
   const state = new Map<string, number>();
   const dag = new Map<string, string[]>(ids.map((id) => [id, []]));
   const dfs = (u: string) => {
@@ -488,14 +520,18 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       const cx = port.x - M.CONN_GAP - w;
       connectors.push({ kind: c.kind, side: 'left', label: c.label, x: cx, y: port.y, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
       const comment = commentOf(c.link);
+      const lk = c.link === undefined ? undefined : diagram.links.find((l) => l.index === c.link);
+      const text = [lk?.label, comment].filter(Boolean).join(' · ');
       wires.push({
         link: c.link,
         kind: c.signal,
         external: c.kind === 'ext-in',
         derived: false,
         points: [[cx + w, port.y], [port.x, port.y]],
-        // Comment sits left of the connector, on its centre line.
-        label: comment ? { x: cx - 6 - comment.length * M.CH_TEXT, y: port.y + 3.5, text: comment } : undefined,
+        source: `conn:${c.label}`,
+        category: lk?.category,
+        // Signal name / comment sit left of the connector, on its centre line.
+        label: text ? { x: cx - 6 - text.length * M.CH_TEXT, y: port.y + 3.5, text, name: lk?.label, comment } : undefined,
       });
     }
     const stack = new Map<string, number>();
@@ -509,7 +545,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       const cx = port.x + M.CONN_GAP;
       connectors.push({ kind: c.kind, side: 'right', label: c.label, x: cx, y: cy, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
       const pts: [number, number][] = k === 0 ? [[port.x, port.y], [cx, cy]] : [[port.x, port.y], [port.x + 10, port.y], [port.x + 10, cy], [cx, cy]];
-      wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by', points: pts });
+      wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by', points: pts, source: `${g.id}.${c.port}` });
     }
   }
 
@@ -531,14 +567,30 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   }
   for (const [tx, ls] of columns) {
     const constNeed = Math.max(0, ...ls.map((l) => pre.get(l.to.block)!.constNeed));
-    const sources = [...new Set(ls.map((l) => `${l.from.block}.${l.from.port}`))].sort(
-      (a, b) => (portAt.get(`${b.replace('.', '.out.')}`)?.y ?? 0) - (portAt.get(`${a.replace('.', '.out.')}`)?.y ?? 0),
-    );
+    const srcY = (key: string) => portAt.get(key.replace('.', '.out.'))?.y ?? 0;
+    const initial = [...new Set(ls.map((l) => `${l.from.block}.${l.from.port}`))].sort((a, b) => srcY(b) - srcY(a));
+    // A signal entering a target at the height of another source's outgoing line
+    // must turn closer to the target than that source, or the two lines would
+    // share a stretch. Order lanes by these constraints (Kahn), nearest first.
+    const before = new Map(initial.map((k) => [k, new Set<string>()]));
+    for (const l of ls) {
+      const a = `${l.from.block}.${l.from.port}`;
+      const ty = portAt.get(`${l.to.block}.in.${l.to.port}`)?.y;
+      for (const b of initial) if (b !== a && ty !== undefined && Math.abs(srcY(b) - ty) < 0.5) before.get(b)!.add(a);
+    }
+    const sources: string[] = [];
+    const left = new Set(initial);
+    while (left.size) {
+      const next = initial.find((k) => left.has(k) && [...before.get(k)!].every((d) => !left.has(d))) ?? initial.find((k) => left.has(k))!;
+      sources.push(next);
+      left.delete(next);
+    }
     sources.forEach((src, k) => laneOf.set(`${tx}|${src}`, tx - constNeed - 12 - k * 8));
   }
   let feedbackLane = 0;
   for (const l of internal) {
     const tid = l.to.block;
+    const tp = pre.get(tid)!;
     {
       const s = portAt.get(`${l.from.block}.out.${l.from.port}`);
       const t = portAt.get(`${tid}.in.${l.to.port}`);
@@ -554,22 +606,27 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
         }
       } else {
         const off = feedbackLane++ * 7;
-        const yb = Math.max(bottomOf(l.from.block), bottomOf(tid)) + 14 + off;
-        points = [[s.x, s.y], [s.x + 12 + off, s.y], [s.x + 12 + off, yb], [t.x - 12 - off, yb], [t.x - 12 - off, t.y], [t.x, t.y]];
+        const yb = Math.max(bottomOf(l.from.block), bottomOf(tid)) + 22 + off;
+        const tin = t.x - 22 - tp.constNeed - off;
+        points = [[s.x, s.y], [s.x + 12 + off, s.y], [s.x + 12 + off, yb], [tin, yb], [tin, t.y], [t.x, t.y]];
       }
-      let label: WireGeom['label'];
-      if (l.comment) {
-        let best = 0;
-        let seg = 0;
-        for (let k = 0; k < points.length - 1; k++) {
-          const len = Math.abs(points[k + 1][0] - points[k][0]);
-          if (points[k][1] === points[k + 1][1] && len > best) ((best = len), (seg = k));
-        }
-        label = { x: Math.min(points[seg][0], points[seg + 1][0]) + 6, y: points[seg][1] - 4, text: l.comment };
-      }
-      wires.push({ link: l.index, kind, external: false, derived: false, points, label });
+      const fb = isFeedback(l) ? { sourceOrder: orderOf.get(l.from.block)!, targetOrder: orderOf.get(l.to.block)! } : undefined;
+      wires.push({
+        link: l.index,
+        kind,
+        external: false,
+        derived: false,
+        points,
+        source: `${l.from.block}.${l.from.port}`,
+        category: l.category,
+        label: wireLabel(points, l.label, l.comment, !!fb),
+        feedback: fb ? { ...fb, tick: [Math.max(points[points.length - 2][0] + 4, t.x - 12), t.y] } : undefined,
+      });
     }
   }
+
+  nudgeParallelSegments(wires);
+  const junctions = junctionPoints(wires);
 
   // --- notes ----------------------------------------------------------------------
   const contentBottom = Math.max(M.MARGIN, ...blocks.map((b) => b.y + b.h + b.comment.length * M.COMMENT_LINE));
@@ -602,7 +659,86 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   const y0 = ys.length ? Math.min(...ys) - pad : 0;
   const x1 = xs.length ? Math.max(...xs) + pad : 400;
   const y1 = ys.length ? Math.max(...ys) + pad : 300;
-  return { sheet, blocks, wires, connectors, notes, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  return { sheet, blocks, wires, connectors, notes, junctions, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
+function wireLabel(points: [number, number][], name?: string, comment?: string, delayed = false): WireGeom['label'] {
+  if (!name && !comment && !delayed) return undefined;
+  let best = -1;
+  let seg = 0;
+  for (let k = 0; k < points.length - 1; k++) {
+    const len = Math.abs(points[k + 1][0] - points[k][0]);
+    if (points[k][1] === points[k + 1][1] && len > best) ((best = len), (seg = k));
+  }
+  const text = [delayed ? 'z⁻¹' : '', name, comment].filter(Boolean).join(' · ');
+  return { x: Math.min(points[seg][0], points[seg + 1][0]) + 6, y: points[seg][1] - 4, text, name, comment, delayed };
+}
+
+const NUDGE = 6;
+
+/**
+ * Line nudging: inner segments that would run on top of a segment of another
+ * signal are shifted sideways, so parallel lines never merge visually. Lines of
+ * the same signal may share a track (that is a branch, marked by a junction dot).
+ */
+function nudgeParallelSegments(wires: WireGeom[]): void {
+  type Seg = { vertical: boolean; at: number; a: number; b: number; source?: string };
+  const placed: Seg[] = [];
+  const segOf = (p: [number, number], q: [number, number], source?: string): Seg | undefined => {
+    if (p[0] === q[0] && p[1] !== q[1]) return { vertical: true, at: p[0], a: Math.min(p[1], q[1]), b: Math.max(p[1], q[1]), source };
+    if (p[1] === q[1] && p[0] !== q[0]) return { vertical: false, at: p[1], a: Math.min(p[0], q[0]), b: Math.max(p[0], q[0]), source };
+    return undefined;
+  };
+  const clash = (s: Seg) =>
+    placed.some((o) => o.vertical === s.vertical && o.source !== s.source && Math.abs(o.at - s.at) < NUDGE - 0.5 && Math.min(o.b, s.b) - Math.max(o.a, s.a) > 2);
+  for (const w of wires) {
+    const pts = w.points;
+    for (let i = 1; i < pts.length - 2; i++) {
+      // Only inner segments move; the first and last attach to ports / connectors.
+      for (let tries = 0; tries < 8; tries++) {
+        const s = segOf(pts[i], pts[i + 1], w.source);
+        if (!s || !clash(s)) break;
+        const d = tries % 2 === 0 ? NUDGE * (tries / 2 + 1) : -NUDGE * ((tries + 1) / 2);
+        const base = s.at;
+        if (s.vertical) pts[i][0] = pts[i + 1][0] = base + d;
+        else pts[i][1] = pts[i + 1][1] = base + d;
+        const again = segOf(pts[i], pts[i + 1], w.source)!;
+        if (!clash(again)) break;
+        if (s.vertical) pts[i][0] = pts[i + 1][0] = base;
+        else pts[i][1] = pts[i + 1][1] = base;
+      }
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const s = segOf(pts[i], pts[i + 1], w.source);
+      if (s) placed.push(s);
+    }
+  }
+}
+
+/** Points where one signal splits into three or more directions. */
+function junctionPoints(wires: WireGeom[]): [number, number][] {
+  const bySource = new Map<string, WireGeom[]>();
+  for (const w of wires) if (w.source && !w.derived) bySource.set(w.source, [...(bySource.get(w.source) ?? []), w]);
+  const out: [number, number][] = [];
+  for (const ws of bySource.values()) {
+    if (ws.length < 2) continue;
+    const segs: [[number, number], [number, number]][] = [];
+    for (const w of ws) for (let i = 0; i < w.points.length - 1; i++) segs.push([w.points[i], w.points[i + 1]]);
+    const cands = new Map<string, [number, number]>();
+    for (const [p, q] of segs) for (const v of [p, q]) cands.set(`${v[0]},${v[1]}`, v);
+    for (const v of cands.values()) {
+      const dirs = new Set<string>();
+      for (const [p, q] of segs) {
+        const dir = (a: [number, number], b: [number, number]) => (a[0] === b[0] ? (b[1] > a[1] ? 'S' : 'N') : b[0] > a[0] ? 'E' : 'W');
+        if (p[0] === v[0] && p[1] === v[1]) dirs.add(dir(p, q));
+        else if (q[0] === v[0] && q[1] === v[1]) dirs.add(dir(q, p));
+        else if (p[0] === q[0] && p[0] === v[0] && v[1] > Math.min(p[1], q[1]) && v[1] < Math.max(p[1], q[1])) (dirs.add('N'), dirs.add('S'));
+        else if (p[1] === q[1] && p[1] === v[1] && v[0] > Math.min(p[0], q[0]) && v[0] < Math.max(p[0], q[0])) (dirs.add('E'), dirs.add('W'));
+      }
+      if (dirs.size >= 3) out.push(v);
+    }
+  }
+  return out;
 }
 
 /** Lays out every sheet of a diagram. */

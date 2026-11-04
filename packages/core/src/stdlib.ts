@@ -261,6 +261,36 @@ const DEFS: Def[] = [
   },
 ];
 
+/**
+ * Pins drawn only when linked or set to a constant (`visibility: connected`),
+ * so everyday blocks stay compact. Everything stays available in the inspector.
+ */
+const CONNECTED_ONLY: Record<string, string[]> = {
+  AI: ['SIM_ON', 'SIM_PV', 'BAD', 'HH', 'H', 'L', 'LL'],
+  AO: ['SIM_ON', 'OUT_RB', 'BAD'],
+  DI: ['SIM_ON', 'SIM_VAL', 'BAD'],
+  DO: ['FB', 'BAD'],
+  AND: ['IN3', 'IN4'],
+  OR: ['IN3', 'IN4'],
+  ADD: ['IN3', 'IN4'],
+  MUL: ['IN3', 'IN4'],
+  AVG: ['IN3', 'IN4'],
+  MAX: ['IDX'],
+  MIN: ['IDX'],
+  DIV: ['ERR'],
+  CMP: ['GE', 'EQ', 'LE'],
+  TON: ['ET'],
+  TOF: ['ET'],
+  TP: ['ET'],
+  LIMIT: ['QH', 'QL'],
+  RAMP: ['TRK_ON', 'ACTIVE'],
+  TOTAL: ['HOLD'],
+  PID: ['MAN_ON', 'MAN_VAL', 'TRK_ON', 'TRK_VAL', 'FF', 'SP', 'ER', 'QH', 'QL'],
+  MOTOR: ['RESET'],
+  VALVE: ['RESET'],
+  INTLK: ['IN3', 'IN4', 'FIRST_OUT'],
+};
+
 export const STD_LIBRARY = 'std';
 export const STD_VERSION = '1.0.0';
 
@@ -277,6 +307,8 @@ export function stdLibraryFiles(): Record<string, string> {
     }),
   );
   DEFS.forEach((d, i) => {
+    const hide = new Set(CONNECTED_ONLY[d.type] ?? []);
+    const vis = (ports: P[] | undefined) => (ports ?? []).map((p) => (hide.has(p.name) ? { ...p, visibility: 'connected' } : p));
     const data: Record<string, unknown> = {
       format: formatTag('blocktype'),
       uid: `a1d6c0de-0000-4000-8001-${String(i + 1).padStart(12, '0')}`,
@@ -284,8 +316,8 @@ export function stdLibraryFiles(): Record<string, string> {
       version: STD_VERSION,
       category: d.category,
       description: d.description,
-      inputs: d.inputs ?? [],
-      outputs: d.outputs ?? [],
+      inputs: vis(d.inputs),
+      outputs: vis(d.outputs),
       params: d.params ?? [],
     };
     if (d.implementation) data.implementation = d.implementation;

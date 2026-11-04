@@ -12,7 +12,7 @@ for (const s of project.strategies) {
   const sheets = layoutDiagram(s, { defaultScan: s.scan, usedBy: (b, p) => project.usedBy(s.name).filter((r) => r.link.from.block === b && r.link.from.port === p).map((r) => r.strategy.name) });
   for (const l of sheets) {
     const name = `${s.name}-sheet${l.sheet}`;
-    const svg = renderSheetSvg(l, { width: l.bounds.w, height: l.bounds.h });
+    const svg = renderSheetSvg(l, { width: l.bounds.w, height: l.bounds.h, categories: project.meta.signalCategories });
     writeFileSync(`out/${name}.svg`, svg);
     const title = s.sheets.find((x) => x.id === l.sheet)?.title ?? '';
     parts.push(`<h2>${s.name} — ${s.title ?? ''} · sheet ${l.sheet} ${title}</h2>${svg}`);

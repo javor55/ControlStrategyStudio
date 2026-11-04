@@ -108,13 +108,82 @@ describe('composite interface layout', () => {
 describe('display options', () => {
   it('hides unused ports, params and comments', () => {
     const s = loadProject(demo).strategyByName.get('FIC101')!;
-    const [full] = layoutDiagram(s);
+    const [full] = layoutDiagram(s, { display: { ports: 'all' } });
+    const [auto] = layoutDiagram(s);
     const [compact] = layoutDiagram(s, { display: { unusedPorts: false, params: false, comments: false } });
     const pid = (l: typeof full) => l.blocks.find((b) => b.id === 'FIC101')!;
     expect(pid(full).ports.length).toBe(13);
-    expect(pid(compact).ports.map((p) => p.name)).toEqual(['PV', 'SP_EXT', 'SP_EXT_ON', 'MV']);
+    // auto: pins marked `visibility: connected` (MAN_ON, TRK_ON, FF …) are hidden until used
+    expect(pid(auto).ports.map((p) => p.name)).toEqual(['PV', 'SP_EXT', 'SP_EXT_ON', 'TRK_VAL', 'MV']);
+    expect(pid(compact).ports.map((p) => p.name)).toEqual(['PV', 'SP_EXT', 'SP_EXT_ON', 'TRK_VAL', 'MV']);
     expect(pid(compact).params).toEqual([]);
     expect(pid(compact).comment).toEqual([]);
     expect(pid(compact).h).toBeLessThan(pid(full).h / 2);
+  });
+});
+
+describe('canvas engineering features', () => {
+  const P101 = `${U100}/P101.yaml`;
+  it('marks previous-cycle links (z⁻¹) and lays them out as feedback', () => {
+    // HEALTHY (#30) feeds P101 (#50) normally; make the motor run first → feedback
+    const f = run(demo, { op: 'setOrders', file: P101, orders: { P101: 5 } });
+    const s = loadProject(f).strategyByName.get('P101')!;
+    const [sheet1] = layoutDiagram(s);
+    const fb = sheet1.wires.find((w) => w.feedback);
+    expect(fb?.feedback).toMatchObject({ sourceOrder: 40, targetOrder: 5 }); // P101_FB.OUT -> P101.FB_RUN
+  });
+  it('draws junction dots where one signal branches', () => {
+    const t = loadProject(demo).types.resolve('acme/AI_2OO3').def!;
+    const [sheet] = layoutDiagram(t.diagram!, { composite: t });
+    // TT_A.PV, TT_B.PV and TT_C.PV each fan out to MED, HI and LO
+    expect(sheet.junctions.length).toBeGreaterThanOrEqual(3);
+  });
+  it('keeps segments of different signals apart', () => {
+    const t = loadProject(demo).types.resolve('acme/AI_2OO3').def!;
+    const [sheet] = layoutDiagram(t.diagram!, { composite: t });
+    const segs = sheet.wires.flatMap((w) =>
+      w.points.slice(0, -1).map((p, i) => ({ src: w.source, p, q: w.points[i + 1] })),
+    );
+    for (const a of segs)
+      for (const b of segs) {
+        if (a.src === b.src) continue;
+        const vert = (s: typeof a) => s.p[0] === s.q[0];
+        if (vert(a) !== vert(b)) continue;
+        const k = vert(a) ? 0 : 1;
+        const o = 1 - k;
+        if (a.p[k] !== b.p[k]) continue;
+        const overlap = Math.min(Math.max(a.p[o], a.q[o]), Math.max(b.p[o], b.q[o])) - Math.max(Math.min(a.p[o], a.q[o]), Math.min(b.p[o], b.q[o]));
+        expect(overlap, `${a.src} / ${b.src}`).toBeLessThanOrEqual(2);
+      }
+  });
+  it('edits link label and category and defines categories', () => {
+    let f = run(demo, { op: 'setSignalCategory', name: 'alarm', category: { color: '#a35a00', style: 'dashed' } });
+    expect(f['project.yaml']).toContain('  alarm: { color: "#a35a00", style: dashed }');
+    f = run(f, { op: 'setLinkField', file: P101, index: 3, field: 'label', value: undefined });
+    f = run(f, { op: 'setLinkField', file: P101, index: 3, field: 'category', value: undefined });
+    expect(f[P101]).toContain('  - HEALTHY.OUT -> P101.INTLK');
+    f = run(f, { op: 'setLinkField', file: P101, index: 3, field: 'category', value: 'interlock' });
+    f = run(f, { op: 'setLinkField', file: P101, index: 3, field: 'label', value: 'P101_ILK' });
+    expect(f[P101]).toContain('  - from: HEALTHY.OUT\n    to: P101.INTLK\n    label: P101_ILK\n    category: interlock');
+    const p = loadProject(f);
+    expect(p.diags).toEqual([]);
+    const w = layoutDiagram(p.strategyByName.get('P101')!)[0].wires.find((x) => x.link === 3)!;
+    expect(w.category).toBe('interlock');
+    expect(w.label?.name).toBe('P101_ILK');
+    f = run(f, { op: 'setSignalCategory', name: 'interlock' });
+    expect(loadProject(f).diags.map((d) => d.code)).toEqual(['unknown-category']);
+  });
+  it('marks the demo readback tracking as previous-cycle value', () => {
+    const s = loadProject(demo).strategyByName.get('FIC101')!;
+    const w = layoutDiagram(s)[0].wires.find((x) => x.feedback)!;
+    expect(w.feedback).toMatchObject({ sourceOrder: 30, targetOrder: 20 });
+    expect(w.category).toBe('tracking');
+  });
+  it('renames hierarchy folders', () => {
+    const r = applyOp(demo, { op: 'renameFolder', from: 'ACME/Brno/WaterTreatment', to: 'ACME/Brno/RawWater' });
+    expect(Object.keys(r.files).filter((k) => k.includes('/RawWater/')).length).toBe(6);
+    expect(Object.keys(r.files).some((k) => k.includes('/WaterTreatment/'))).toBe(false);
+    expect(loadProject(r.files).diags).toEqual([]);
+    expect(() => applyOp(demo, { op: 'renameFolder', from: 'ACME', to: 'ACME/X' })).toThrow(/itself/);
   });
 });

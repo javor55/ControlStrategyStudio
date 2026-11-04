@@ -68,6 +68,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "visibility": {
+            "enum": [
+              "always",
+              "connected"
+            ]
           }
         },
         "patternProperties": {
@@ -108,6 +114,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "visibility": {
+            "enum": [
+              "always",
+              "connected"
+            ]
           }
         },
         "patternProperties": {
@@ -148,6 +160,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "visibility": {
+            "enum": [
+              "always",
+              "connected"
+            ]
           }
         },
         "patternProperties": {
@@ -283,6 +301,13 @@
                 },
                 "comment": {
                   "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
                 }
               },
               "patternProperties": {

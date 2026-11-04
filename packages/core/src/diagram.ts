@@ -106,6 +106,8 @@ export function parseDiagram(
       let from: Endpoint | undefined;
       let to: Endpoint | undefined;
       let comment: string | undefined;
+      let label: string | undefined;
+      let category: string | undefined;
       let ext = {};
       if (typeof raw === 'string') {
         ({ from, to } = parseLinkString(raw));
@@ -113,6 +115,8 @@ export function parseDiagram(
         from = typeof raw.from === 'string' ? parseEndpoint(raw.from) : undefined;
         to = typeof raw.to === 'string' ? parseEndpoint(raw.to) : undefined;
         comment = str(raw.comment);
+        label = str(raw.label);
+        category = str(raw.category);
         ext = pickExt(raw);
       }
       if (!from || !to) {
@@ -126,7 +130,7 @@ export function parseDiagram(
         });
         return;
       }
-      links.push({ index, from, to, comment, ext });
+      links.push({ index, from, to, comment, label, category, ext });
     });
   }
 

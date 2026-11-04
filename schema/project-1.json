@@ -27,6 +27,39 @@
         "type": "string"
       }
     },
+    "signal_categories": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "style": {
+            "enum": [
+              "solid",
+              "dashed",
+              "dotted"
+            ]
+          },
+          "width": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 6
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "patternProperties": {
+          "^x-": {}
+        },
+        "additionalProperties": false
+      }
+    },
     "title_block": {
       "type": "object",
       "properties": {

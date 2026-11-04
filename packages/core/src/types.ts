@@ -45,6 +45,8 @@ export interface PortDef {
   unit?: string;
   /** Allowed values for ENUM. */
   values?: string[];
+  /** Pin on the drawing: `always` (default) or only when `connected` (linked or set to a constant). */
+  visibility?: 'always' | 'connected';
   ext: Ext;
 }
 
@@ -123,6 +125,10 @@ export interface LinkInst {
   from: Endpoint;
   to: Endpoint;
   comment?: string;
+  /** Signal name drawn along the line. */
+  label?: string;
+  /** Signal category (styled by the project's `signal_categories`). */
+  category?: string;
   ext: Ext;
 }
 
@@ -168,6 +174,13 @@ export interface TitleBlock {
   approved?: string;
 }
 
+export interface SignalCategory {
+  color?: string;
+  style?: 'solid' | 'dashed' | 'dotted';
+  width?: number;
+  description?: string;
+}
+
 export interface ProjectMeta {
   uid?: string;
   name: string;
@@ -175,6 +188,8 @@ export interface ProjectMeta {
   author?: string;
   levels: string[];
   titleBlock: TitleBlock;
+  /** Line styles for link categories, e.g. interlock / tracking. */
+  signalCategories: Record<string, SignalCategory>;
   ext: Ext;
 }
 

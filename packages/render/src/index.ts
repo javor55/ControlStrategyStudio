@@ -71,8 +71,18 @@ export type RenderSelection =
   | { kind: 'note'; index: number }
   | null;
 
+export interface CategoryStyle {
+  color?: string;
+  style?: 'solid' | 'dashed' | 'dotted';
+  width?: number;
+}
+
 export interface RenderOptions {
   theme?: Theme;
+  /** Styles of link categories (project `signal_categories`). */
+  categories?: Readonly<Record<string, CategoryStyle>>;
+  /** Mark previous-cycle links with z⁻¹ (default true). */
+  showFeedback?: boolean;
   /** Adds data-* attributes and hit areas for editors. */
   interactive?: boolean;
   selection?: RenderSelection;
@@ -107,24 +117,42 @@ function wireColor(w: WireGeom, t: Theme): string {
   return w.kind === 'bool' ? t.bool : w.kind === 'real' ? t.real : t.other;
 }
 
+const DASH = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5' } as const;
+
 function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const d = 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L');
   const selected = o.selection?.kind === 'link' && w.link !== undefined && o.selection.index === w.link;
   const error = w.link !== undefined && o.errorLinks?.has(w.link);
-  const dash = w.derived ? '3 3' : w.kind === 'bool' ? '6 3' : undefined;
+  const cat = w.category ? o.categories?.[w.category] : undefined;
+  const fb = o.showFeedback !== false ? w.feedback : undefined;
+  const dash = w.derived ? '3 3' : fb ? '8 3 2 3' : cat?.style ? DASH[cat.style] : w.kind === 'bool' ? '6 3' : undefined;
+  const color = error ? t.error : cat?.color ?? wireColor(w, t);
+  const width = (cat?.width ?? 1.5) + (selected ? 0.7 : 0);
   let s = '';
-  if (selected) s += `<path${attrs({ d, fill: 'none', stroke: t.accent, 'stroke-width': 5, 'stroke-opacity': 0.25, 'stroke-linejoin': 'round' })}/>`;
-  s += `<path${attrs({
-    d,
-    fill: 'none',
-    stroke: error ? t.error : wireColor(w, t),
-    'stroke-width': selected ? 2.2 : 1.5,
-    'stroke-dasharray': dash,
-    'stroke-linejoin': 'round',
-  })}/>`;
-  if (w.label) s += text(w.label.x, w.label.y, w.label.text, { 'font-family': t.fontSans, 'font-size': 10, 'font-style': 'italic', fill: w.external ? t.ext : t.ink2 });
+  if (selected) s += `<path${attrs({ d, fill: 'none', stroke: t.accent, 'stroke-width': width + 4, 'stroke-opacity': 0.25, 'stroke-linejoin': 'round' })}/>`;
+  s += `<path${attrs({ d, fill: 'none', stroke: color, 'stroke-width': width, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' })}>`;
+  if (fb) s += `<title>${esc(`Value from the previous cycle: the source block (#${fb.sourceOrder}) runs after the target block (#${fb.targetOrder}).`)}</title>`;
+  s += '</path>';
+  if (fb) {
+    const [x, y] = fb.tick;
+    // Delay mark as in CFC: a bar across the line before the input, labelled z⁻¹.
+    s += `<line${attrs({ x1: x, y1: y - 5, x2: x, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
+    s += `<line${attrs({ x1: x + 3, y1: y - 5, x2: x + 3, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
+  }
+  if (w.label) {
+    const fill = w.external ? t.ext : t.ink2;
+    const parts: string[] = [];
+    const delayed = w.label.delayed && fb;
+    if (delayed) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-weight': 'bold', 'font-style': 'normal', fill: color })}>z⁻¹</tspan>`);
+    if (w.label.name) parts.push(`<tspan${attrs({ 'font-family': t.fontMono, 'font-weight': 'bold', 'font-style': 'normal', fill: cat?.color ?? t.ink })}>${esc(w.label.name)}</tspan>`);
+    if (w.label.comment) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-style': 'italic', fill })}>${esc(w.label.comment)}</tspan>`);
+    if (!parts.length && !w.label.delayed) parts.push(esc(w.label.text));
+    if (parts.length) s += `<text${attrs({ x: w.label.x, y: w.label.y, 'font-size': 10, fill })}>${parts.join(`<tspan${attrs({ fill: t.ink3 })}> · </tspan>`)}</text>`;
+  }
   if (o.interactive && w.link !== undefined && !w.derived) {
-    s += `<path${attrs({ d, fill: 'none', stroke: 'transparent', 'stroke-width': 10, 'data-link': w.link, style: 'cursor:pointer' })}/>`;
+    s += `<path${attrs({ d, fill: 'none', stroke: 'transparent', 'stroke-width': 10, 'data-link': w.link, style: 'cursor:pointer' })}>`;
+    if (fb) s += `<title>${esc(`z⁻¹ — value from the previous cycle: the source block (#${fb.sourceOrder}) runs after the target block (#${fb.targetOrder}).`)}</title>`;
+    s += '</path>';
   }
   return s;
 }
@@ -243,6 +271,7 @@ export function renderSheetSvg(layout: SheetLayout, opts: RenderOptions = {}): s
     s += `<path${attrs({ d, stroke: t.grid, 'stroke-width': 0.6, fill: 'none' })}/>`;
   }
   for (const w of layout.wires) s += renderWire(w, t, opts);
+  for (const [x, y] of layout.junctions) s += `<circle${attrs({ cx: x, cy: y, r: 2.8, fill: t.ink })}/>`;
   for (const c of layout.connectors) s += renderConnector(c, t, opts);
   for (const b of layout.blocks) s += renderBlock(b, t, opts);
   for (const nt of layout.notes) s += renderNote(nt, t, opts);

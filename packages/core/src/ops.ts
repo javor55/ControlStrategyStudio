@@ -53,6 +53,9 @@ export type Op =
   | ({ op: 'connect'; from: string; to: string; comment?: string; replace?: boolean } & DiagramTarget)
   | ({ op: 'disconnect'; index: number } & DiagramTarget)
   | ({ op: 'setLinkComment'; index: number; comment?: string } & DiagramTarget)
+  | ({ op: 'setLinkField'; index: number; field: 'comment' | 'label' | 'category'; value?: string } & DiagramTarget)
+  | { op: 'renameFolder'; from: string; to: string }
+  | { op: 'setSignalCategory'; name: string; category?: { color?: string; style?: 'solid' | 'dashed' | 'dotted'; width?: number; description?: string } }
   | ({ op: 'addNote'; text: string; sheet?: number; pos?: [number, number] } & DiagramTarget)
   | ({ op: 'setNote'; index: number; text?: string; sheet?: number; pos?: [number, number] | null; width?: number } & DiagramTarget)
   | ({ op: 'removeNote'; index: number } & DiagramTarget)
@@ -83,6 +86,8 @@ export interface PortSpec {
   default?: unknown;
   unit?: string;
   values?: string[];
+  /** `connected` = drawn only when linked or set to a constant. */
+  visibility?: 'always' | 'connected';
   description?: string;
 }
 
@@ -107,10 +112,10 @@ export class OpError extends Error {
 
 const BLOCK_KEYS = ['type', 'description', 'doc', 'sheet', 'order', 'scan', 'params', 'comment', 'pos'];
 const STRATEGY_KEYS = ['format', 'uid', 'strategy', 'title', 'description', 'revision', 'author', 'scan', 'sheets', 'blocks', 'links', 'notes'];
-const LINK_KEYS = ['from', 'to', 'comment'];
+const LINK_KEYS = ['from', 'to', 'label', 'category', 'comment'];
 const NOTE_KEYS = ['text', 'sheet', 'pos', 'width'];
 const TYPE_KEYS = ['format', 'uid', 'type', 'version', 'category', 'kind', 'description', 'color', 'inputs', 'outputs', 'params', 'implementation', 'diagram'];
-const PORT_KEYS = ['name', 'type', 'default', 'unit', 'values', 'description'];
+const PORT_KEYS = ['name', 'type', 'default', 'unit', 'values', 'visibility', 'description'];
 const PORT_LISTS: PortList[] = ['inputs', 'outputs', 'params'];
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -703,6 +708,10 @@ function run(tx: Tx, op: Op): void {
       });
       return;
     case 'setLinkComment':
+    case 'setLinkField': {
+      const field = op.op === 'setLinkComment' ? 'comment' : op.field;
+      const value = op.op === 'setLinkComment' ? op.comment : op.value;
+      if (field === 'category' && value && !TAG_RE.test(value)) throw new OpError(`Invalid category name "${value}"`);
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'links']);
         const item = isSeq(seq) ? seq.items[op.index] : undefined;
@@ -710,16 +719,55 @@ function run(tx: Tx, op: Op): void {
         const { from, to } = linkEndpoints(item);
         if (!from || !to) throw new OpError('Link is not valid');
         if (isMap(item)) {
-          setOrDelete(doc, item, 'comment', op.comment, LINK_KEYS);
+          setOrDelete(doc, item, field, value, LINK_KEYS);
+          // Back to the short `A.X -> B.Y` form when nothing else is left.
           const onlyEnds = item.items.every((p) => keyOf(p) === 'from' || keyOf(p) === 'to');
           if (onlyEnds) (seq as YAMLSeq).items[op.index] = new Scalar(formatLink(from, to));
-        } else if (op.comment) {
+        } else if (value) {
           const m = new YAMLMap();
           setOrdered(m, 'from', formatEndpoint(from), LINK_KEYS, doc);
           setOrdered(m, 'to', formatEndpoint(to), LINK_KEYS, doc);
-          setOrdered(m, 'comment', op.comment, LINK_KEYS, doc);
+          setOrdered(m, field, value, LINK_KEYS, doc);
           (seq as YAMLSeq).items[op.index] = m;
         }
+      });
+      return;
+    }
+    case 'renameFolder': {
+      const norm = (f: string) => f.replace(/^\/+|\/+$/g, '');
+      const from = norm(op.from);
+      const to = norm(op.to);
+      if (!from) throw new OpError('Choose a folder to rename');
+      to.split('/').forEach((p) => {
+        if (!p || p === '.' || p === '..' || /[\\:*?"<>|]/.test(p)) throw new OpError(`Invalid folder name "${p}"`);
+      });
+      if (from === to) return;
+      if (to.startsWith(from + '/')) throw new OpError('A folder cannot be moved into itself');
+      const src = `strategies/${from}/`;
+      const dst = `strategies/${to}/`;
+      const moving = Object.keys(tx.files).filter((f) => f.startsWith(src));
+      if (!moving.length) throw new OpError(`Folder "${from}" does not exist`);
+      if (Object.keys(tx.files).some((f) => f.startsWith(dst))) throw new OpError(`Folder "${to}" already exists`);
+      for (const f of moving) {
+        tx.write(dst + f.slice(src.length), tx.files[f]);
+        tx.remove(f);
+      }
+      return;
+    }
+    case 'setSignalCategory':
+      if (!TAG_RE.test(op.name)) throw new OpError(`Invalid category name "${op.name}"`);
+      tx.edit('project.yaml', (doc) => {
+        const m = ensureMap(doc, [], ['format', 'uid', 'name', 'description', 'author', 'levels', 'title_block', 'signal_categories']);
+        const cats = ensureMap(doc, ['signal_categories'], ['format', 'uid', 'name', 'description', 'author', 'levels', 'title_block', 'signal_categories']);
+        if (!op.category) {
+          cats.delete(op.name);
+          if (!cats.items.length) m.delete('signal_categories');
+          return;
+        }
+        const c = new YAMLMap();
+        c.flow = true;
+        for (const k of ['color', 'style', 'width', 'description'] as const) if (op.category[k] !== undefined && op.category[k] !== '') c.set(k, op.category[k]);
+        cats.set(op.name, c);
       });
       return;
     case 'addNote':

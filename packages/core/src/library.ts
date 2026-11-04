@@ -109,6 +109,7 @@ function parsePorts(v: unknown): PortDef[] {
       default: p.default,
       unit: str(p.unit),
       values: Array.isArray(p.values) ? p.values.map(String) : undefined,
+      visibility: p.visibility === 'connected' ? ('connected' as const) : undefined,
       ext: pickExt(p),
     }));
 }

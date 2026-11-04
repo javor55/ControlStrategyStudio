@@ -36,7 +36,7 @@ export interface ProjectModel {
 }
 
 function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
-  const meta: ProjectMeta = { name: 'Untitled project', levels: DEFAULT_LEVELS, titleBlock: {}, ext: {} };
+  const meta: ProjectMeta = { name: 'Untitled project', levels: DEFAULT_LEVELS, titleBlock: {}, signalCategories: {}, ext: {} };
   const text = files[PROJECT_FILE];
   if (typeof text !== 'string') {
     diags.push({ severity: 'warning', code: 'missing-project-file', message: `${PROJECT_FILE} is missing`, file: PROJECT_FILE });
@@ -57,6 +57,15 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
     author: str(d.author),
     levels: Array.isArray(d.levels) && d.levels.length ? d.levels.map(String) : DEFAULT_LEVELS,
     titleBlock: { logo: str(tb.logo), drawn: str(tb.drawn), checked: str(tb.checked), approved: str(tb.approved) },
+    signalCategories: isObj(d.signal_categories)
+      ? Object.fromEntries(
+          Object.entries(d.signal_categories).map(([k, v]) => {
+            const c = isObj(v) ? v : {};
+            const style = c.style === 'dashed' || c.style === 'dotted' || c.style === 'solid' ? c.style : undefined;
+            return [k, { color: str(c.color), style, width: typeof c.width === 'number' ? c.width : undefined, description: str(c.description) }];
+          }),
+        )
+      : {},
     ext: pickExt(d),
   };
 }
@@ -175,6 +184,11 @@ export function loadProject(files: Files): ProjectModel {
     const p = parsedByFile.get(s.file);
     if (!p || p.error) continue;
     diags.push(...validateDiagram(s, { file: s.file, parsed: p, base: [], strategies: byName }));
+    for (const l of s.links) {
+      if (l.category && !meta.signalCategories[l.category]) {
+        diags.push({ severity: 'warning', code: 'unknown-category', message: `Link ${l.index + 1}: signal category "${l.category}" is not defined in project.yaml`, file: s.file, line: lineAt(p, ['links', l.index, 'category']), link: l.index });
+      }
+    }
   }
   for (const t of lib.index.all) {
     if (!t.diagram) continue;
