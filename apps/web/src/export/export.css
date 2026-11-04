@@ -1,0 +1,28 @@
+.dialog.xp { width: min(1040px, calc(100vw - 32px)); max-height: calc(100vh - 48px); display: flex; flex-direction: column; gap: 12px; }
+.xp-formats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.xp-format { display: grid; gap: 2px; text-align: left; padding: 9px 11px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--sheet); cursor: pointer; }
+.xp-format b { font-size: 13px; }
+.xp-format span { font-size: 11.5px; color: var(--ink-3); line-height: 1.3; }
+.xp-format:hover { background: var(--hover); }
+.xp-format.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.xp-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; min-height: 0; overflow: auto; }
+.xp-col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.xp-h { display: flex; align-items: center; gap: 4px; margin: 8px 0 3px; font: 600 10.5px var(--f-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+.xp-h:first-child { margin-top: 0; }
+.xp-h .spacer { flex: 1; }
+.xp-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; font-size: 12.5px; cursor: pointer; min-width: 0; }
+.xp-row input { margin: 0; flex: none; }
+.xp-field { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12.5px; margin: 2px 0; }
+.xp-field > span { color: var(--ink-3); }
+.xp-seg { display: flex; gap: 6px; }
+.xp-tree, .xp-tree ul { list-style: none; margin: 0; padding: 0; }
+.xp-tree ul { padding-left: 16px; }
+.xp-tree { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); padding: 6px 8px; max-height: 340px; overflow: auto; }
+.xp-folder { font-weight: 500; }
+.xp-level { font: 500 9px var(--f-ui); text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); border: 1px solid var(--rule); border-radius: 2px; padding: 0 3px; }
+.xp-warn { padding: 7px 10px; border-radius: var(--radius); background: var(--warning-soft); color: var(--warning); font-size: 12.5px; }
+.xp-busy { margin-right: auto; color: var(--ink-2); font-size: 12.5px; }
+@media (max-width: 860px) {
+  .xp-formats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .xp-body { grid-template-columns: minmax(0, 1fr); }
+}

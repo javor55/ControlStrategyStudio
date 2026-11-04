@@ -18,6 +18,7 @@ import { BlockTypeView } from './views/BlockTypeView';
 import { ProjectView } from './views/ProjectView';
 import { AssetView } from './views/AssetView';
 import './editor/workspace.css';
+import { ExportDialog } from './export/ExportDialog';
 
 export function emptyProjectFiles(name: string): Files {
   const project = stringifyDoc(
@@ -172,6 +173,17 @@ function PanelIcon({ side, open }: { side: 'left' | 'right'; open: boolean }) {
 
 function TopBar({ panels }: { panels: PanelsApi }) {
   const name = useEditor((s) => s.model.meta.name);
+  const [exporting, setExporting] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        setExporting(true);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   const canUndo = useEditor((s) => s.undoStack.length > 0);
   const canRedo = useEditor((s) => s.redoStack.length > 0);
   const unsaved = useEditor((s) => s.unsaved);
@@ -274,9 +286,10 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       <button className="btn" onClick={() => saveZip()}>
         Save ZIP
       </button>
-      <button className="btn primary" disabled title="PDF export arrives in phase 3">
-        Export PDF
+      <button className="btn primary" title="Export PDF, interactive HTML, JSON or TOML (Ctrl+E)" onClick={() => setExporting(true)}>
+        Export…
       </button>
+      {exporting && <ExportDialog onClose={() => setExporting(false)} />}
       <input
         ref={fileInput}
         type="file"
