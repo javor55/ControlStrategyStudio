@@ -176,7 +176,9 @@ schema/     JSON Schemas (generated)
 | Phase | Content | State |
 |---|---|---|
 | 1 · Core | format & schemas, libraries, composite blocks, validation, operations, layout, renderer | done |
-| 2 · Editor | canvas, inspector, text editor, project tree, palette, autosave, ZIP | done, being refined |
-| 3 · Hand-over | PDF: cover & contents, function description (Markdown, images, charts), diagram sheets with title block, block settings, cross references | next |
-| 4 · Versions | git history inside the project (commits, revisions, diff, restore) | planned |
-| Later | CLI, local folder, shared server and multiple users, Excel tag list import | ideas |
+| 2 · Editor | canvas, inspector, text editor (completion, hover), project tree, palette, settings, autosave, ZIP | done |
+| 3 · Hand-over | configurable export: PDF, interactive read-only HTML, JSON / TOML | done |
+| 4 · Versions | git in the project: commits, revisions, branches, text and visual diff, restore | done |
+| 5 · Sequences | SFC / Grafcet diagrams next to continuous strategies — [design brief](docs/design/sequences.md) | proposed |
+
+More ideas and known gaps: [docs/ROADMAP.md](docs/ROADMAP.md).
