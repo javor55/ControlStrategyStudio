@@ -136,6 +136,36 @@ export function ProjectPage() {
           </ul>
         </Section>
       )}
+      {plan.history.length > 0 && (
+        <Section title="Revision history" count={plan.history.length}>
+          {plan.uncommitted && <p className="muted">Exported with uncommitted changes.</p>}
+          <table className="v-table">
+            <thead>
+              <tr>
+                <th>Revision</th>
+                <th>Date</th>
+                <th>Author</th>
+                <th>Change</th>
+                <th>Commit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.history.map((h) => (
+                <tr key={h.oid}>
+                  <td>{h.tags.map((t) => t.replace(/^rev-/, 'Rev ')).join(', ')}</td>
+                  <td className="mono">{h.date}</td>
+                  <td>{h.author}</td>
+                  <td>
+                    <b>{h.summary}</b>
+                    {h.message !== h.summary && <div className="muted">{h.message.split('\n').slice(1).join(' ').trim()}</div>}
+                  </td>
+                  <td className="mono">{h.oid.slice(0, 7)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
+      )}
       <Section title="Problems">
         <Problems />
       </Section>

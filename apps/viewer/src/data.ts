@@ -53,7 +53,7 @@ export function loadViewerData(): ViewerData {
   const files = payload ? payloadFiles(payload) : demoProjectFiles();
   const config = payload ? normalizeExportConfig(payload.config, 'html') : defaultExportConfig('html');
   const model = loadProject(files);
-  const plan = planExport(model, config, { date: payload?.generatedAt?.slice(0, 10), revision: payload?.revision });
+  const plan = planExport(model, config, { date: payload?.generatedAt?.slice(0, 10), revision: payload?.revision, history: payload?.history, uncommitted: payload?.uncommitted });
   return {
     demo: !payload,
     projectName: payload?.projectName || model.meta.name,

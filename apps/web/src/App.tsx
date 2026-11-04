@@ -20,6 +20,7 @@ import { ProjectView } from './views/ProjectView';
 import { AssetView } from './views/AssetView';
 import './editor/workspace.css';
 import { ExportDialog } from './export/ExportDialog';
+import { HistoryDialogs, HistoryDrawer, VcsStatus } from './history/VcsStatus';
 
 export function emptyProjectFiles(name: string): Files {
   const project = stringifyDoc(
@@ -255,6 +256,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       <button className="btn ghost icon" title="Redo (Ctrl+Y)" disabled={!canRedo} onClick={() => store().redo()}>
         ↷
       </button>
+      <VcsStatus />
       <span className="spacer" />
       <button
         className={`btn ghost icon${panels.leftOpen ? '' : ' off'}`}
@@ -491,7 +493,10 @@ export function App() {
         {panels.leftOpen && <PanelResizer side="left" width={panels.leftW} onWidth={(w, done) => (panels.update({ leftW: w }), done && store().requestFit())} />}
       </aside>
       <main className="center">
-        <Workspace />
+        <div className="hx-dock">
+          <Workspace />
+          <HistoryDrawer />
+        </div>
       </main>
       <aside className={`right${panels.rightOpen ? '' : ' collapsed'}`} aria-label="Properties" aria-hidden={!panels.rightOpen || undefined} style={{ position: 'relative' }}>
         <Inspector />
@@ -501,6 +506,7 @@ export function App() {
         <ProblemsBar />
       </footer>
       <Toasts />
+      <HistoryDialogs />
       <DialogHost />
     </div>
   );

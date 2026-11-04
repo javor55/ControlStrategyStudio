@@ -60,7 +60,7 @@ export async function runExport(
     case 'html': {
       if (!viewerAvailable()) throw new Error('The HTML viewer is not part of this build. Run "npm run build" (it builds the viewer first).');
       const v = await versionInfo();
-      const payload = viewerPayload(files, config, { projectName: model.meta.name, revision: config.titleBlock.revision || v.revision });
+      const payload = viewerPayload(files, config, { projectName: model.meta.name, revision: config.titleBlock.revision || v.revision, history: v.history, uncommitted: v.uncommitted });
       const html = injectViewerData(viewerTemplate, payload, `${model.meta.name} — Control Strategy Studio`);
       return { blob: new Blob([html], { type: 'text/html' }), fileName: `${base}.html` };
     }

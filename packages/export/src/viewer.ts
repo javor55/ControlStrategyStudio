@@ -2,6 +2,7 @@
 // with the project data embedded as JSON. No network, works from disk.
 import { classify, strategyDocFile, type Files } from '@csd/core';
 import type { ExportConfig } from './config';
+import type { HistoryEntry } from './plan';
 
 export const VIEWER_DATA_ID = 'css-export-data';
 export const VIEWER_FORMAT = 'css-viewer/1';
@@ -12,6 +13,9 @@ export interface ViewerPayload {
   projectName: string;
   config: ExportConfig;
   revision?: string;
+  /** Commits, newest first (revision history). */
+  history?: HistoryEntry[];
+  uncommitted?: boolean;
   /** Text files as strings, binary assets as base64. */
   files: Record<string, string | { base64: string }>;
 }
@@ -70,7 +74,11 @@ export function filesInScope(files: Files, config: ExportConfig): Files {
   return out;
 }
 
-export function viewerPayload(files: Files, config: ExportConfig, meta: { projectName: string; revision?: string; generatedAt?: string }): ViewerPayload {
+export function viewerPayload(
+  files: Files,
+  config: ExportConfig,
+  meta: { projectName: string; revision?: string; generatedAt?: string; history?: HistoryEntry[]; uncommitted?: boolean },
+): ViewerPayload {
   const out: ViewerPayload['files'] = {};
   for (const [f, c] of Object.entries(filesInScope(files, config))) out[f] = typeof c === 'string' ? c : { base64: toBase64(c) };
   return {
@@ -79,6 +87,8 @@ export function viewerPayload(files: Files, config: ExportConfig, meta: { projec
     projectName: meta.projectName,
     config,
     revision: meta.revision,
+    history: config.sections.history ? meta.history : undefined,
+    uncommitted: meta.uncommitted,
     files: out,
   };
 }

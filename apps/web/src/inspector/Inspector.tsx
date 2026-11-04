@@ -31,6 +31,7 @@ import { Field, Row, SectionHeader, SeverityBadge } from '../ui/kit';
 import { confirmDialog } from '../ui/dialogs';
 import { askCategoryName, defaultCategoryColor } from '../project/actions';
 import { parseParamText, refParts, sameValue, typeRefFor, valueText } from './values';
+import { CompareDetails } from '../history/DiffDetails';
 import './inspector.css';
 
 /** Dispatches an op on the active diagram; `root` is filled in. */
@@ -44,6 +45,7 @@ const orUndef = (v: string) => (v.trim() === '' ? undefined : v.trim());
 export function Inspector() {
   return (
     <div className="insp" aria-label="Properties">
+      <CompareDetails />
       <InspectorBody />
     </div>
   );

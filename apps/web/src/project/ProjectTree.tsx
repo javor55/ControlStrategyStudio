@@ -4,6 +4,7 @@ import { basename, libraryFile, PROJECT_FILE, strategyDocFile, type BlockTypeDef
 import { store, useEditor } from '../state/store';
 import { diagsOf } from '../state/selectors';
 import { SeverityBadge, useMenu, type MenuEntry } from '../ui/kit';
+import { ChangeDot } from '../history/DiffDetails';
 import { Icon } from './icons';
 import {
   addAsset,
@@ -264,6 +265,7 @@ export function ProjectTree() {
         trailing={
           <>
             {s?.title && <span className="tree-sub">{s.title}</span>}
+            <ChangeDot file={file} />
             <SeverityBadge diags={diags} />
           </>
         }

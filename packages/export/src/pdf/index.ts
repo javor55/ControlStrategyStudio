@@ -64,6 +64,12 @@ export async function exportPdf(plan: ExportPlan, opts: PdfOptions): Promise<Blo
   progress();
 
   // 2. Content (contents pages are inserted afterwards) -------------------
+  // Revision history comes first, so it directly follows the cover and contents.
+  if (plan.history.length) {
+    w.newPage({ section: 'history', document: plan.meta.name, title: 'Revision history' });
+    entries.push({ depth: 0, text: 'Revision history', page: w.page, bold: true, key: 'history' });
+    revisionHistory(w, plan);
+  }
   if (plan.projectReadme) {
     w.newPage({ section: 'project', document: plan.meta.name, title: 'Project description' });
     entries.push({ depth: 0, text: 'Project description', page: w.page, bold: true, key: 'project' });
@@ -234,7 +240,44 @@ const SECTION_NAMES: Record<string, string> = {
   links: 'links',
   library: 'library appendix',
   librarySource: 'implementation source',
+  history: 'revision history',
 };
+
+// ---------------------------------------------------------------------------
+// Revision history
+// ---------------------------------------------------------------------------
+
+function revisionHistory(w: Writer, plan: ExportPlan) {
+  const ctx = w.fullCtx;
+  w.heading('Revision history', 1, ctx);
+  const revisions = plan.history.filter((h) => h.tags.length).length;
+  w.para(
+    `${plan.history.length} ${plan.history.length === 1 ? 'commit' : 'commits'}${revisions ? `, ${revisions} marked as ${revisions === 1 ? 'revision' : 'revisions'}` : ''}, newest first.`,
+    w.ctx(),
+    { size: 9, color: C.muted },
+  );
+  if (plan.uncommitted) {
+    w.para('Exported with uncommitted changes: the content of this document is newer than the last commit listed below.', w.ctx(), { size: 9.5, style: 'bold', color: C.warning, gapAfter: 3 });
+  }
+  const revLabel = (t: string) => t.replace(/^rev-/i, '');
+  w.table({
+    ctx,
+    head: [['Revision', 'Date', 'Author', 'Summary', 'Commit']],
+    body: plan.history.map((h) => [h.tags.map(revLabel).join(', '), h.date, h.author, h.message.split('\n').filter((l, i) => i === 0 || l.trim()).join('\n'), h.oid.slice(0, 7)]),
+    columnStyles: {
+      0: { cellWidth: 22, fontStyle: 'bold' },
+      1: { cellWidth: 22 },
+      2: { cellWidth: ctx.width * 0.16 },
+      4: { cellWidth: 18, font: MONO, textColor: rgb(C.muted) },
+    },
+    keep: 20,
+    cellHook: (d) => {
+      if (d.section !== 'body') return;
+      const h = plan.history[d.row.index];
+      if (d.column.index === 0 && h.tags.length) d.cell.styles.textColor = rgb(C.accent);
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Strategy

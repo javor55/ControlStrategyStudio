@@ -30,8 +30,8 @@ import {
   type SheetLayout,
   type YamlPath,
 } from '@csd/core';
-import { renderSheetSvg } from '@csd/render';
-import { store, useEditor } from '../state/store';
+import { renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
+import { store, useEditor, type EditorState } from '../state/store';
 import { activeDiagramOf, diagsOf, layoutActiveSheet, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
 import { confirmDialog, promptDialog } from '../ui/dialogs';
@@ -39,6 +39,8 @@ import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
 import { QuickInsert } from './QuickInsert';
 import { InlineEdit, parseParamValue } from './InlineEdit';
 import { ShortcutHelp } from './ShortcutHelp';
+import { strategyDiffOf, useCompare } from '../history/compare';
+import { CompareBanner } from '../history/CompareBanner';
 import './canvas.css';
 
 const DND_TYPE = 'application/x-csd-type';
@@ -238,10 +240,50 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   // --- layout & render -----------------------------------------------------------
   // While a wire is dragged, every port is shown so hidden inputs can be targeted.
   const effDisplay = useMemo<DisplayOptions>(() => (wire ? { ...display, ports: 'all' } : display), [display, wire !== null]); // eslint-disable-line react-hooks/exhaustive-deps
-  const layout = useMemo(
+  const baseLayout = useMemo(
     () => layoutActiveSheet(ad, activeSheet, { overrides, noteOverrides, display: effDisplay }),
     [ad, activeSheet, overrides, noteOverrides, effDisplay],
   );
+  // Comparison mode: highlight what changed since the compared version; removed
+  // items are drawn as ghosts from the older version's layout of the same sheet.
+  const compare = useCompare();
+  const strategyDiff = ad.strategy ? strategyDiffOf(compare.diff, ad.file) : undefined;
+  const beforeLayout = useMemo(() => {
+    const before = compare.before;
+    const file = strategyDiff?.beforeFile;
+    if (!before || !file) return undefined;
+    const bd = activeDiagramOf({ model: before, activeFile: file, files: before.files } as EditorState);
+    return bd && bd.diagram.sheets.some((x) => x.id === baseLayout.sheet) ? layoutActiveSheet(bd, baseLayout.sheet, { display: effDisplay }) : undefined;
+  }, [compare.before, strategyDiff?.beforeFile, baseLayout.sheet, effDisplay]);
+  const renderDiff = useMemo<RenderDiff | undefined>(
+    () => (strategyDiff ? renderDiffFor(strategyDiff, baseLayout, beforeLayout) : undefined),
+    [strategyDiff, baseLayout, beforeLayout],
+  );
+  // Ghosts may lie outside the current drawing: grow the bounds to include them.
+  const layout = useMemo<SheetLayout>(() => {
+    const g = renderDiff?.ghosts;
+    if (!g || (!g.blocks.length && !g.wires.length)) return baseLayout;
+    const b = baseLayout.bounds;
+    let x0 = b.x;
+    let y0 = b.y;
+    let x1 = b.x + b.w;
+    let y1 = b.y + b.h;
+    const PAD = 30;
+    for (const k of g.blocks) {
+      x0 = Math.min(x0, k.x - PAD);
+      y0 = Math.min(y0, k.y - PAD);
+      x1 = Math.max(x1, k.x + k.w + PAD);
+      y1 = Math.max(y1, k.y + k.h + PAD);
+    }
+    for (const w of g.wires)
+      for (const [x, y] of w.points) {
+        x0 = Math.min(x0, x - PAD);
+        y0 = Math.min(y0, y - PAD);
+        x1 = Math.max(x1, x + PAD);
+        y1 = Math.max(y1, y + PAD);
+      }
+    return { ...baseLayout, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  }, [baseLayout, renderDiff]);
   const sheet = layout.sheet;
   const layoutRef = useRef<SheetLayout>(layout);
   layoutRef.current = layout;
@@ -271,8 +313,9 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         errorLinks: errors.links,
         width: layout.bounds.w,
         height: layout.bounds.h,
+        diff: renderDiff,
       }),
-    [layout, selection, errors, model.meta.signalCategories, reconnecting],
+    [layout, selection, errors, model.meta.signalCategories, reconnecting, renderDiff],
   );
 
   // --- view transform ----------------------------------------------------------------
@@ -1337,6 +1380,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   return (
     <div className="cv">
       <CanvasHeader ad={ad} />
+      {compare.target && ad.strategy && <CompareBanner diff={strategyDiff} />}
       <div className="cv-main">
         <div
           ref={hostRef}
