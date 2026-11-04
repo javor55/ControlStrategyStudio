@@ -87,3 +87,22 @@
 .stat.bad b { color: var(--error); }
 .stat.warn b { color: var(--warning); }
 .stat.good b { color: var(--ok); }
+
+/* signal categories */
+.v-cats td { vertical-align: middle; padding: 3px 4px; }
+.v-cats .input, .v-cats .select { border-color: transparent; background: transparent; }
+.v-cats tr:hover .input, .v-cats tr:hover .select, .v-cats .input:focus, .v-cats .select:focus { border-color: var(--rule-strong); background: var(--sheet); }
+.v-cat-sample { vertical-align: middle; margin-right: 6px; }
+.v-cats td:first-child { padding-left: 8px; }
+.v-color { width: 36px; height: 22px; padding: 0 2px; border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--sheet); cursor: pointer; vertical-align: middle; }
+.v-cat-undef { margin-top: 6px !important; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.v-cats { table-layout: fixed; }
+.v-cats th { padding: 5px 4px; overflow: hidden; text-overflow: ellipsis; }
+.v-cats .input, .v-cats .select { width: 100%; }
+.v-cats td:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v-cats .c-name { width: 22%; }
+.v-cats .c-color { width: 52px; }
+.v-cats .c-style { width: 86px; }
+.v-cats .c-width { width: 54px; }
+.v-cats .c-used { width: 74px; }
+.v-cats .c-act { width: 32px; }

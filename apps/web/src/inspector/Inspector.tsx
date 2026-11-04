@@ -5,7 +5,9 @@
 import type { ReactNode } from 'react';
 import {
   compatible,
+  feedbackOrders,
   formatEndpoint,
+  TAG_RE,
   formatValue,
   IFACE_IN,
   IFACE_OUT,
@@ -27,6 +29,7 @@ import { activeView, diagsOf, useActiveDiagram, type ActiveDiagram } from '../st
 import { BlockTypeEditor } from './BlockTypeEditor';
 import { Field, Row, SectionHeader, SeverityBadge } from '../ui/kit';
 import { confirmDialog } from '../ui/dialogs';
+import { askCategoryName, defaultCategoryColor } from '../project/actions';
 import { parseParamText, refParts, sameValue, typeRefFor, valueText } from './values';
 import './inspector.css';
 
@@ -551,9 +554,110 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
           {mismatch && <span className="badge warning">type mismatch</span>}
         </span>
       </Row>
+      <Row label="Label" title="Signal name drawn along the line">
+        <Field
+          mono
+          value={link.label}
+          placeholder="Signal name"
+          onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'label', value: orUndef(v) }, 'Edit link label')}
+        />
+      </Row>
+      <Row label="Category" title="Line style from the project's signal categories">
+        <CategorySelect d={d} link={link} model={model} />
+      </Row>
       <Row label="Comment">
         <Field value={link.comment} placeholder="Shown on the wire" onCommit={(v) => run(d, { op: 'setLinkComment', file: d.file, index: link.index, comment: orUndef(v) }, 'Edit link comment')} />
       </Row>
+      <FeedbackNote d={d} link={link} />
+    </div>
+  );
+}
+
+const NEW_CATEGORY = '\u0000new';
+
+function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model: ProjectModel }) {
+  const cats = model.meta.signalCategories;
+  const names = Object.keys(cats);
+  const value = link.category ?? '';
+  const unknown = value && !(value in cats);
+  const assign = (category: string | undefined) =>
+    run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'category', value: category }, category ? `Link category ${category}` : 'Clear link category');
+  return (
+    <span className="insp-cat">
+      {value && <span className="insp-swatch" style={{ background: cats[value]?.color ?? 'transparent' }} aria-hidden="true" />}
+      <select
+        className="select"
+        aria-label="Category"
+        value={value}
+        onChange={async (e) => {
+          const v = e.target.value;
+          if (v !== NEW_CATEGORY) return void assign(v || undefined);
+          const name = await askCategoryName();
+          if (!name || !TAG_RE.test(name)) return;
+          const target = { file: d.file, ...(d.root.length ? { root: d.root } : {}) };
+          store().dispatch(
+            {
+              op: 'batch',
+              ops: [
+                { op: 'setSignalCategory', name, category: { color: defaultCategoryColor(), style: 'solid' } },
+                { op: 'setLinkField', index: link.index, field: 'category', value: name, ...target },
+              ],
+            },
+            { label: `New category ${name}` },
+          );
+        }}
+      >
+        <option value="">(none)</option>
+        {names.map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+        {unknown && <option value={value}>{value} (not defined)</option>}
+        <option value={NEW_CATEGORY}>New category…</option>
+      </select>
+    </span>
+  );
+}
+
+/** Explains a z⁻¹ link (source runs after target) and offers to fix the execution order. */
+function FeedbackNote({ d, link }: { d: ActiveDiagram; link: LinkInst }) {
+  const fb = feedbackOrders(d.diagram, link);
+  if (!fb) return null;
+  const src = link.from.block;
+  const dst = link.to.block;
+  const self = src === dst;
+  const taken = new Set(d.diagram.blocks.filter((b) => b.id !== src && b.order !== undefined).map((b) => b.order!));
+  // Just below the target, if that order is still free.
+  const preferred = fb.targetOrder - 1;
+  const ok = !self && preferred >= 1 && !taken.has(preferred);
+  const proposal = preferred;
+  return (
+    <div className="insp-msg insp-fb" data-testid="feedback-note">
+      <p>
+        <b>z⁻¹</b> value from the previous cycle (source <span className="mono">#{fb.sourceOrder}</span> runs after target <span className="mono">#{fb.targetOrder}</span>).
+      </p>
+      {self ? (
+        <p className="insp-muted">The block reads its own output, so this link is always a feedback.</p>
+      ) : ok ? (
+        <p>
+          <button
+            className="btn small"
+            title={`Set the order of ${src} to ${proposal} so it runs just before ${dst}`}
+            onClick={() => run(d, { op: 'setBlockField', file: d.file, id: src, field: 'order', value: proposal }, `Order of ${src} → ${proposal}`)}
+          >
+            Fix order
+          </button>{' '}
+          <span className="insp-muted">
+            sets {src} to #{proposal}
+          </span>
+        </p>
+      ) : (
+        <p className="insp-muted">
+          Order #{preferred} is {preferred < 1 ? 'not available' : 'already used'}, so {src} cannot be placed just before {dst} without renumbering. Use <b>Auto order</b> on the
+          canvas, or set the orders by hand. If the delay is intended (a loop), keep it.
+        </p>
+      )}
     </div>
   );
 }

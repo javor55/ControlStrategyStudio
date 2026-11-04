@@ -168,7 +168,7 @@ const LIST_INFO: Record<PortList, { title: string; one: string; prefix: string }
 };
 
 function columnsOf(list: PortList) {
-  return { def: list !== 'outputs', values: list === 'params' };
+  return { def: list !== 'outputs', values: list === 'params', pin: list !== 'params' };
 }
 
 function TypeSelect({ value, list, onChange }: { value: string; list: PortList; onChange: (t: string) => void }) {
@@ -290,6 +290,20 @@ function PortRow(props: { file: string; list: PortList; port: PortDef; index: nu
       <span className="bte-muted">—</span>
     );
   const desc = <Field value={port.description} placeholder="—" title="Description" onCommit={(v) => update({ description: v.trim() || undefined }, `Description of ${port.name}`)} />;
+  const pin = (
+    <select
+      className="select"
+      aria-label="Pin visibility"
+      title="Always: the pin is always drawn. When used: drawn only when linked or set to a constant (with View ▸ Pins: Normal)."
+      value={port.visibility === 'connected' ? 'connected' : 'always'}
+      onChange={(e) =>
+        update({ visibility: e.target.value === 'connected' ? 'connected' : undefined }, e.target.value === 'connected' ? `Hide ${port.name} when unused` : `Always show ${port.name}`)
+      }
+    >
+      <option value="always">Always</option>
+      <option value="connected">When used</option>
+    </select>
+  );
   const actions = (
     <span className="bte-actions">
       {compact && (
@@ -322,6 +336,12 @@ function PortRow(props: { file: string; list: PortList; port: PortDef; index: nu
           <div className="bte-port-more">
             <label>Unit</label>
             {unit}
+            {cols.pin && (
+              <>
+                <label>Pin</label>
+                {pin}
+              </>
+            )}
             {cols.values && (
               <>
                 <label>Values</label>
@@ -341,6 +361,7 @@ function PortRow(props: { file: string; list: PortList; port: PortDef; index: nu
       <td>{type}</td>
       {cols.def && <td>{dflt}</td>}
       <td>{unit}</td>
+      {cols.pin && <td>{pin}</td>}
       {cols.values && <td>{values}</td>}
       <td>{desc}</td>
       <td className="bte-act">{actions}</td>
@@ -394,6 +415,11 @@ function PortTable({ def, list, compact }: { def: BlockTypeDef; list: PortList; 
               <th className="c-type">Type</th>
               {cols.def && <th className="c-def">Default</th>}
               <th className="c-unit">Unit</th>
+              {cols.pin && (
+                <th className="c-pin" title="When the pin is drawn on the block">
+                  Pin
+                </th>
+              )}
               {cols.values && <th className="c-values">Values (ENUM)</th>}
               <th>Description</th>
               <th className="c-act" />

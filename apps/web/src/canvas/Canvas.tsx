@@ -9,10 +9,13 @@
 // Both are updated directly on the DOM on wheel / drag, without re-rendering.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  applyOp,
   autoOrder,
   compatible,
   extractFragment,
+  formatEndpoint,
   M,
+  parseYaml,
   parseFragment,
   renameMap,
   strategyDocFile,
@@ -20,9 +23,12 @@ import {
   type BlockGeom,
   type BlockTypeDef,
   type DisplayOptions,
+  type Endpoint,
+  type LinkInst,
   type Op,
   type Selection,
   type SheetLayout,
+  type YamlPath,
 } from '@csd/core';
 import { renderSheetSvg } from '@csd/render';
 import { store, useEditor } from '../state/store';
@@ -42,6 +48,10 @@ const CLICK_SLOP = 3; // px of movement before a press becomes a drag
 const FIT_TOP = 44; // px reserved for the toolbar when fitting
 const PASTE_STEP = 30;
 const DISPLAY_KEY = 'css:canvas-display';
+/** Screen px within which a dragged wire end snaps to a pin. */
+const SNAP_PX = 15;
+/** Screen px from a link's end (at a pin) where a press grabs that end for reconnecting. */
+const LINK_END_PX = 22;
 
 const snap = (v: number) => Math.round(v / 10) * 10;
 
@@ -71,7 +81,9 @@ type Gesture =
       collapse: boolean;
     }
   | { kind: 'note'; index: number; sx: number; sy: number; ox: number; oy: number; moved: boolean }
-  | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string }
+  | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string; reconnect?: Reconnect }
+  /** Press on a link near one of its ends: becomes a reconnect once the pointer moves. */
+  | { kind: 'linkEnd'; index: number; end: 'from' | 'to'; sx: number; sy: number }
   | { kind: 'conn'; target: { sheet?: number; strategy?: string; block?: string }; sx: number; sy: number };
 
 interface WireSource {
@@ -79,6 +91,43 @@ interface WireSource {
   port: string;
   dir: 'in' | 'out';
   type: string;
+}
+
+/** An existing link whose `end` is being moved; the wire source is its fixed end. */
+interface Reconnect {
+  index: number;
+  end: 'from' | 'to';
+  link: LinkInst;
+  /** Fixed end as written in the link (may be `STRATEGY:BLOCK.PORT`). */
+  fixed: string;
+}
+
+/** Pin under the dragged wire end (magnetic snap). */
+interface SnapTarget {
+  owner: string;
+  port: string;
+  dir: 'in' | 'out';
+  type: string;
+  x: number;
+  y: number;
+  ok: boolean;
+  reason?: string;
+  /** Dropping here changes nothing (the link's current pin). */
+  same?: boolean;
+}
+
+type PinsMode = NonNullable<DisplayOptions['ports']>;
+
+const PINS_MODES: [PinsMode, string, string][] = [
+  ['all', 'All', 'Draw every pin of every block'],
+  ['auto', 'Normal', 'Hide unused pins that the block type marks "when used"'],
+  ['used', 'Used only', 'Draw only linked pins and pins set to a constant'],
+];
+
+interface Display {
+  params: boolean;
+  ports: PinsMode;
+  comments: boolean;
 }
 
 type Inline =
@@ -114,15 +163,34 @@ function typeRefFor(def: BlockTypeDef, all: readonly BlockTypeDef[]): string {
   return libs.size > 1 ? `${def.library}/${def.type}` : def.type;
 }
 
-function readDisplay(): { params: boolean; unusedPorts: boolean; comments: boolean } {
-  const d = { params: true, unusedPorts: true, comments: true };
+function readDisplay(): Display {
+  const d: Display = { params: true, ports: 'auto', comments: true };
   try {
     const v = JSON.parse(localStorage.getItem(DISPLAY_KEY) ?? '{}');
-    for (const k of Object.keys(d) as (keyof typeof d)[]) if (typeof v[k] === 'boolean') d[k] = v[k];
+    if (typeof v.params === 'boolean') d.params = v.params;
+    if (typeof v.comments === 'boolean') d.comments = v.comments;
+    if (v.ports === 'all' || v.ports === 'auto' || v.ports === 'used') d.ports = v.ports;
+    // Older versions stored a "Show unused ports" checkbox.
+    else if (v.unusedPorts === false) d.ports = 'used';
   } catch {
     /* ignore */
   }
   return d;
+}
+
+function writeDisplay(d: Display) {
+  try {
+    localStorage.setItem(DISPLAY_KEY, JSON.stringify(d));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Number of items in the `links` list of a diagram file (after a dry-run edit). */
+function linkCount(text: string, root: YamlPath): number {
+  let n: unknown = parseYaml(text).data;
+  for (const k of [...root, 'links']) n = n && typeof n === 'object' ? (n as Record<string | number, unknown>)[k] : undefined;
+  return Array.isArray(n) ? n.length : 0;
 }
 
 export function Canvas() {
@@ -140,7 +208,10 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
 
   const [overrides, setOverrides] = useState<Record<string, [number, number]> | undefined>();
   const [noteOverrides, setNoteOverrides] = useState<Record<number, [number, number]> | undefined>();
-  const [wire, setWire] = useState<{ src: WireSource; x1: number; y1: number } | null>(null);
+  const [wire, setWire] = useState<{ src: WireSource; x1: number; y1: number; reconnect?: Reconnect; snap?: SnapTarget } | null>(null);
+  /** Pointer over a grabbable link end (cursor hint). */
+  const [endHover, setEndHover] = useState(false);
+  const endHoverRef = useRef(false);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [zoomPct, setZoomPct] = useState(100);
   const [display, setDisplay] = useState(readDisplay);
@@ -187,10 +258,13 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     return { blocks, links };
   }, [model, ad.file]);
 
+  const reconnecting = wire?.reconnect?.index;
   const svg = useMemo(
     () =>
-      renderSheetSvg(layout, {
+      // While a link end is dragged, the link itself is hidden; the overlay draws it.
+      renderSheetSvg(reconnecting === undefined ? layout : { ...layout, wires: layout.wires.filter((w) => w.link !== reconnecting) }, {
         interactive: true,
+        categories: model.meta.signalCategories,
         grid: true,
         selection,
         errorBlocks: errors.blocks,
@@ -198,7 +272,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         width: layout.bounds.w,
         height: layout.bounds.h,
       }),
-    [layout, selection, errors],
+    [layout, selection, errors, model.meta.signalCategories, reconnecting],
   );
 
   // --- view transform ----------------------------------------------------------------
@@ -473,6 +547,149 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     if (ok && existing) store().toast(`Replaced existing link to ${to}`);
   };
 
+  // --- reconnect & snap -------------------------------------------------------------------
+  /** Signal type of a link endpoint (`from` = an output, `to` = an input). */
+  const endpointType = (ep: Endpoint, side: 'from' | 'to'): string => {
+    if (ep.strategy) {
+      const st = model.strategyByName.get(ep.strategy);
+      return st?.blocks.find((b) => b.id === ep.block)?.def?.outputs.find((p) => p.name === ep.port)?.type ?? 'ANY';
+    }
+    const dir = side === 'from' ? 'out' : 'in';
+    const g = geomOf(ep.block)?.ports.find((p) => p.name === ep.port && p.dir === dir);
+    if (g) return g.type;
+    if (ad.composite && (ep.block === 'in' || ep.block === 'out')) {
+      return (ep.block === 'in' ? ad.composite.inputs : ad.composite.outputs).find((p) => p.name === ep.port)?.type ?? 'ANY';
+    }
+    const def = ad.diagram.blocks.find((b) => b.id === ep.block)?.def;
+    return (side === 'from' ? def?.outputs : def?.inputs)?.find((p) => p.name === ep.port)?.type ?? 'ANY';
+  };
+
+  /** Which end of link `index` a press at client (x, y) grabs: only ends that sit at a pin of this sheet. */
+  const linkEndAt = (index: number, clientX: number, clientY: number): 'from' | 'to' | undefined => {
+    const link = ad.diagram.links.find((l) => l.index === index);
+    if (!link) return undefined;
+    const [x, y] = toDrawing(clientX, clientY);
+    const r = LINK_END_PX / view.current.k;
+    let best: { end: 'from' | 'to'; d: number } | undefined;
+    for (const w of layoutRef.current.wires) {
+      if (w.link !== index || w.derived || w.points.length < 2) continue;
+      const ends: ['from' | 'to', [number, number], Endpoint, 'in' | 'out'][] = [
+        ['to', w.points[w.points.length - 1], link.to, 'in'],
+        ['from', w.points[0], link.from, 'out'],
+      ];
+      for (const [end, [px, py], ep, dir] of ends) {
+        if (ep.strategy) continue;
+        const pin = geomOf(ep.block)?.ports.find((p) => p.name === ep.port && p.dir === dir);
+        if (!pin || Math.abs(pin.x - px) > 1 || Math.abs(pin.y - py) > 1) continue; // ends at a sheet connector
+        const d = Math.hypot(x - px, y - py);
+        if (d <= r && (!best || d < best.d)) best = { end, d };
+      }
+    }
+    return best?.end;
+  };
+
+  const startReconnect = (index: number, end: 'from' | 'to', clientX: number, clientY: number) => {
+    const link = ad.diagram.links.find((l) => l.index === index);
+    if (!link) return;
+    const fixedEp = end === 'to' ? link.from : link.to;
+    const fixedSide = end === 'to' ? 'from' : 'to';
+    const src: WireSource = { owner: fixedEp.strategy ? `${fixedEp.strategy}:${fixedEp.block}` : fixedEp.block, port: fixedEp.port, dir: end === 'to' ? 'out' : 'in', type: endpointType(fixedEp, fixedSide) };
+    const reconnect: Reconnect = { index, end, link, fixed: formatEndpoint(fixedEp) };
+    gesture.current = { kind: 'wire', ...src, reconnect };
+    const [x1, y1] = toDrawing(clientX, clientY);
+    setWire({ src, x1, y1, reconnect });
+  };
+
+  /** Nearest pin within SNAP_PX of the pointer; pins of the opposite direction win. */
+  const findSnap = (clientX: number, clientY: number, src: WireSource, rc?: Reconnect): SnapTarget | undefined => {
+    const [x, y] = toDrawing(clientX, clientY);
+    const r = SNAP_PX / view.current.k;
+    let opp: { p: SnapTarget; d: number } | undefined;
+    let same: { p: SnapTarget; d: number } | undefined;
+    let self = Infinity;
+    for (const b of layoutRef.current.blocks) {
+      if (x < b.x - r - M.STUB - 4 || x > b.x + b.w + r + M.STUB + 4 || y < b.y - r || y > b.y + b.h + r) continue;
+      for (const p of b.ports) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d > r) continue;
+        if (b.id === src.owner && p.name === src.port && p.dir === src.dir) {
+          self = d;
+          continue;
+        }
+        const t: SnapTarget = { owner: b.id, port: p.name, dir: p.dir, type: p.type, x: p.x, y: p.y, ok: true };
+        if (p.dir !== src.dir) {
+          if (!opp || d < opp.d) opp = { p: t, d };
+        } else if (!same || d < same.d) same = { p: t, d };
+      }
+    }
+    const best = opp ?? same;
+    // Still over the pin the wire starts from: no target yet.
+    if (!best || self <= best.d) return undefined;
+    const hit = best.p;
+    if (hit.dir === src.dir) {
+      hit.ok = false;
+      hit.reason = src.dir === 'out' ? 'Cannot connect an output to an output' : 'Cannot connect an input to an input';
+      return hit;
+    }
+    const [outType, inType] = src.dir === 'out' ? [src.type, hit.type] : [hit.type, src.type];
+    if (compatible(outType, inType) === 'mismatch') {
+      hit.ok = false;
+      hit.reason = `Signal types do not match: ${outType} → ${inType}`;
+    }
+    if (rc) {
+      const cur = rc.end === 'to' ? rc.link.to : rc.link.from;
+      if (!cur.strategy && cur.block === hit.owner && cur.port === hit.port) {
+        hit.same = true;
+        hit.ok = true;
+        hit.reason = undefined;
+      }
+    }
+    return hit;
+  };
+
+  /** Moves one end of an existing link to pin `t`: one undo step, label / category / comment kept. */
+  const reconnect = (rc: Reconnect, t: SnapTarget) => {
+    if (t.same) return;
+    const link = rc.link;
+    const from = rc.end === 'from' ? `${t.owner}.${t.port}` : rc.fixed;
+    const to = rc.end === 'to' ? `${t.owner}.${t.port}` : rc.fixed;
+    const toEp = rc.end === 'to' ? { block: t.owner, port: t.port } : link.to;
+    const others = ad.diagram.links.filter((l) => l.index !== link.index && !l.to.strategy && l.to.block === toEp.block && l.to.port === toEp.port);
+    if (others.some((l) => formatEndpoint(l.from) === from)) {
+      store().toast(`${from} → ${to} is already connected`);
+      return;
+    }
+    const ops: Op[] = [
+      { op: 'disconnect', index: link.index, ...target },
+      { op: 'connect', from, to, comment: link.comment, replace: others.length ? true : undefined, ...target },
+    ];
+    const extra: Op[] = [];
+    const fields = [
+      ['label', link.label],
+      ['category', link.category],
+    ] as const;
+    if (fields.some(([, v]) => v)) {
+      // The new link is appended to `links`; disconnect / replace shift the indices, so count after a dry run.
+      let index = -1;
+      try {
+        const text = applyOp(store().getState().files, { op: 'batch', ops }).files[ad.file];
+        if (typeof text === 'string') index = linkCount(text, ad.root) - 1;
+      } catch {
+        /* dispatch reports the error */
+      }
+      if (index >= 0) for (const [field, value] of fields) if (value) extra.push({ op: 'setLinkField', index, field, value, ...target });
+    }
+    const label = `Reconnect ${from} → ${to}`;
+    const ok = dispatch({ op: 'batch', label, ops: [...ops, ...extra] }, { label, select: null });
+    if (ok) {
+      // Select the moved link (appended at the end of the list).
+      const d = activeDiagramOf(store().getState());
+      const moved = d?.diagram.links.find((l) => formatEndpoint(l.from) === from && formatEndpoint(l.to) === to);
+      if (moved) store().select({ kind: 'link', index: moved.index });
+      if (others.length) store().toast(`Replaced existing link to ${to}`);
+    }
+  };
+
   // --- quick insert ---------------------------------------------------------------------
   const allTypes = useMemo(() => model.types.latest(), [model]);
   const quickTypes = useMemo(() => {
@@ -659,8 +876,12 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       s.select({ kind: 'note', index });
       gesture.current = { kind: 'note', index, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y, moved: false };
     } else if (el.closest('[data-link]')) {
-      s.select({ kind: 'link', index: Number(el.closest('[data-link]')!.getAttribute('data-link')) });
-      return;
+      const index = Number(el.closest('[data-link]')!.getAttribute('data-link'));
+      s.select({ kind: 'link', index });
+      const end = linkEndAt(index, e.clientX, e.clientY);
+      if (!end) return;
+      // Dragging from here moves that end of the link.
+      gesture.current = { kind: 'linkEnd', index, end, sx: e.clientX, sy: e.clientY };
     } else if (el.closest('[data-conn]')?.getAttribute('data-conn')) {
       const t = JSON.parse(el.closest('[data-conn]')!.getAttribute('data-conn')!);
       gesture.current = { kind: 'conn', target: t, sx: e.clientX, sy: e.clientY };
@@ -674,7 +895,10 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     mouse.current = { x: e.clientX, y: e.clientY };
     const g = gesture.current;
-    if (!g) return;
+    if (!g) {
+      if (e.buttons === 0) updateEndHover(e);
+      return;
+    }
     const k = view.current.k;
     const far = () => 'sx' in g && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) >= CLICK_SLOP;
     switch (g.kind) {
@@ -725,11 +949,27 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         setNoteOverrides((o) => (o?.[g.index]?.[0] === pos[0] && o[g.index][1] === pos[1] ? o : { [g.index]: pos }));
         return;
       }
-      case 'wire': {
-        const [x1, y1] = toDrawing(e.clientX, e.clientY);
-        setWire((w) => (w ? { ...w, x1, y1 } : w));
+      case 'linkEnd': {
+        if (!far()) return;
+        startReconnect(g.index, g.end, e.clientX, e.clientY);
         return;
       }
+      case 'wire': {
+        const [x1, y1] = toDrawing(e.clientX, e.clientY);
+        const snapTo = findSnap(e.clientX, e.clientY, g, g.reconnect);
+        setWire((w) => (w ? { ...w, x1, y1, snap: snapTo } : w));
+        return;
+      }
+    }
+  };
+
+  /** Cursor hint over a link end that can be dragged to another pin. */
+  const updateEndHover = (e: React.PointerEvent) => {
+    const linkEl = (e.target as Element).closest?.('[data-link]');
+    const on = !!linkEl && !!linkEndAt(Number(linkEl.getAttribute('data-link')), e.clientX, e.clientY);
+    if (on !== endHoverRef.current) {
+      endHoverRef.current = on;
+      setEndHover(on);
     }
   };
 
@@ -761,6 +1001,20 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         break;
       case 'wire': {
         setWire(null);
+        const snapTo = findSnap(e.clientX, e.clientY, g, g.reconnect);
+        if (snapTo && !snapTo.ok) {
+          store().toast(snapTo.reason ?? 'These pins cannot be connected', 'error');
+          break;
+        }
+        if (g.reconnect) {
+          // Dropped on a pin: move the link end. Anywhere else: cancel (the link is unchanged).
+          if (snapTo) reconnect(g.reconnect, snapTo);
+          break;
+        }
+        if (snapTo) {
+          connect(g, snapTo);
+          break;
+        }
         const el = document.elementFromPoint(e.clientX, e.clientY);
         if (!el || !hostRef.current?.contains(el)) break;
         const hit = el.closest('[data-port]');
@@ -1036,25 +1290,46 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       return;
     dispatch({ op: 'unpinAll', ...target }, { label: 'Reset layout' });
   };
-  const toggleDisplay = (k: 'params' | 'unusedPorts' | 'comments') =>
+  const alignByOrder = async () => {
+    if (
+      !(await confirmDialog({
+        title: 'Align by order?',
+        message: 'Reset manual positions and arrange blocks by execution order?',
+        okLabel: 'Align',
+      }))
+    )
+      return;
+    const ops: Op[] = [];
+    const real = ad.diagram.blocks;
+    // Blocks without an order would be placed arbitrarily: number all blocks from the signal flow first.
+    if (real.some((b) => b.order === undefined)) ops.push({ op: 'setOrders', orders: Object.fromEntries(autoOrder(ad.diagram)), ...target });
+    ops.push({ op: 'unpinAll', ...target });
+    dispatch({ op: 'batch', label: 'Align by order', ops }, { label: 'Align by order' });
+  };
+  const setDisplayOpt = (patch: Partial<Display>) =>
     setDisplay((d) => {
-      const next = { ...d, [k]: !d[k] };
-      try {
-        localStorage.setItem(DISPLAY_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore */
-      }
+      const next = { ...d, ...patch };
+      writeDisplay(next);
       return next;
     });
 
   // --- overlays (canvas-area px) ------------------------------------------------------------
   let wireLine: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  let ring: { x: number; y: number; ok: boolean; title?: string } | null = null;
   if (wire) {
     const p = geomById.get(wire.src.owner)?.ports.find((q) => q.name === wire.src.port && q.dir === wire.src.dir);
-    if (p) {
-      const [x0, y0] = toScreen(p.x, p.y);
-      const [x1, y1] = toScreen(wire.x1, wire.y1);
+    // A link from another strategy starts at its connector flag.
+    const conn = !p && wire.reconnect ? layout.connectors.find((c) => c.link === wire.reconnect!.index && c.side === 'left') : undefined;
+    const start = p ? [p.x, p.y] : conn ? [conn.x + conn.w, conn.y] : undefined;
+    if (start) {
+      const [x0, y0] = toScreen(start[0], start[1]);
+      const snapTo = wire.snap;
+      const [x1, y1] = snapTo ? toScreen(snapTo.x, snapTo.y) : toScreen(wire.x1, wire.y1);
       wireLine = { x0, y0, x1, y1 };
+    }
+    if (wire.snap) {
+      const [x, y] = toScreen(wire.snap.x, wire.snap.y);
+      ring = { x, y, ok: wire.snap.ok, title: wire.snap.reason };
     }
   }
   const inlineP = inline ? inlineProps(inline) : null;
@@ -1065,7 +1340,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       <div className="cv-main">
         <div
           ref={hostRef}
-          className={`cv-host${spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}`}
+          className={`cv-host${spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}${endHover || wire?.reconnect ? ' link-end' : ''}${wire ? ' wiring' : ''}`}
           tabIndex={0}
           aria-label="Diagram canvas"
           onPointerDown={onPointerDown}
@@ -1096,7 +1371,21 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
           </div>
           {(wireLine || marquee) && (
             <svg className="cv-overlay">
-              {wireLine && <line x1={wireLine.x0} y1={wireLine.y0} x2={wireLine.x1} y2={wireLine.y1} />}
+              {wireLine && (
+                <line
+                  className={`${wire?.reconnect ? 'reconnect' : ''}${ring ? (ring.ok ? ' ok' : ' bad') : ''}`}
+                  x1={wireLine.x0}
+                  y1={wireLine.y0}
+                  x2={wireLine.x1}
+                  y2={wireLine.y1}
+                />
+              )}
+              {ring && (
+                <g className={`cv-snap ${ring.ok ? 'ok' : 'bad'}`} data-testid={`snap-${ring.ok ? 'ok' : 'bad'}`}>
+                  <circle cx={ring.x} cy={ring.y} r={8} />
+                  <circle className="dot" cx={ring.x} cy={ring.y} r={2.5} />
+                </g>
+              )}
               {marquee && <rect className="cv-marquee" x={marquee.x + 0.5} y={marquee.y + 0.5} width={marquee.w} height={marquee.h} />}
             </svg>
           )}
@@ -1155,14 +1444,19 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             {showView && (
               <div className="cv-dd-panel" role="menu">
                 <label>
-                  <input type="checkbox" checked={display.params} onChange={() => toggleDisplay('params')} /> Show parameters
+                  <input type="checkbox" checked={display.params} onChange={() => setDisplayOpt({ params: !display.params })} /> Show parameters
                 </label>
                 <label>
-                  <input type="checkbox" checked={display.unusedPorts} onChange={() => toggleDisplay('unusedPorts')} /> Show unused ports
+                  <input type="checkbox" checked={display.comments} onChange={() => setDisplayOpt({ comments: !display.comments })} /> Show comments
                 </label>
-                <label>
-                  <input type="checkbox" checked={display.comments} onChange={() => toggleDisplay('comments')} /> Show comments
-                </label>
+                <div className="cv-dd-group" role="radiogroup" aria-label="Pins">
+                  <span className="cv-dd-h">Pins</span>
+                  {PINS_MODES.map(([mode, label, title]) => (
+                    <label key={mode} title={title}>
+                      <input type="radio" name="cv-pins" checked={display.ports === mode} onChange={() => setDisplayOpt({ ports: mode })} /> {label}
+                    </label>
+                  ))}
+                </div>
               </div>
             )}
           </span>
@@ -1174,6 +1468,9 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
           </button>
           <button className="btn small" title="Remove all hand-placed positions" onClick={resetLayout}>
             Reset layout
+          </button>
+          <button className="btn small" title="Reset manual positions and arrange blocks by execution order (fills missing orders first)" onClick={alignByOrder}>
+            Align by order
           </button>
           <button className="btn small" title="Add a note in the centre of the view" onClick={addNote}>
             Add note

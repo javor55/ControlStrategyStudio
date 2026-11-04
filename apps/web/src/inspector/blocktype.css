@@ -46,6 +46,7 @@
 .bte-table .c-def { width: 12%; }
 .bte-table .c-unit { width: 8%; }
 .bte-table .c-values { width: 16%; }
+.bte-table .c-pin { width: 122px; }
 .bte-table .c-act { width: 84px; }
 .bte-table td.bte-act { white-space: nowrap; text-align: right; }
 .bte-actions { display: inline-flex; gap: 0; }

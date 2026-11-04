@@ -20,6 +20,7 @@ import {
   newStrategy,
   newTypeVersion,
   openFunctionDescription,
+  renameFolder,
   renameStrategy,
 } from './actions';
 import './project.css';
@@ -42,6 +43,8 @@ interface TreeRowProps {
   trailing?: ReactNode;
   className?: string;
   testId?: string;
+  /** F2 / double-click on the label. */
+  onRename?: () => void;
 }
 
 function TreeRow(p: TreeRowProps) {
@@ -57,6 +60,9 @@ function TreeRow(p: TreeRowProps) {
       const rows = [...document.querySelectorAll<HTMLElement>('.tree .tree-row')];
       const i = rows.indexOf(e.currentTarget as HTMLElement);
       rows[i + (e.key === 'ArrowDown' ? 1 : -1)]?.focus();
+    } else if (e.key === 'F2' && p.onRename) {
+      e.preventDefault();
+      p.onRename();
     } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -93,7 +99,19 @@ function TreeRow(p: TreeRowProps) {
         {p.expanded !== undefined && Icon.chevron(p.expanded)}
       </span>
       {p.icon && <span className="tree-ico">{p.icon}</span>}
-      <span className="tree-label">{p.label}</span>
+      <span
+        className="tree-label"
+        onDoubleClick={
+          p.onRename
+            ? (e) => {
+                e.stopPropagation();
+                p.onRename!();
+              }
+            : undefined
+        }
+      >
+        {p.label}
+      </span>
       {p.trailing}
       <span className="acts" onClick={(e) => e.stopPropagation()}>
         {p.actions}
@@ -172,6 +190,26 @@ export function ProjectTree() {
   const open = (file: string) => store().open(file);
 
   // --- hierarchy ---------------------------------------------------------------------
+  const doRenameFolder = async (node: FolderNode) => {
+    const to = await renameFolder(node);
+    if (to === undefined) return;
+    // Carry the open / closed state of the folder and its subfolders over to the new path.
+    setToggled((t) => {
+      const next = { ...t };
+      const from = `f:${node.path}`;
+      for (const [k, v] of Object.entries(t)) {
+        if (k === from || k.startsWith(from + '/')) {
+          delete next[k];
+          next[`f:${to}${k.slice(from.length)}`] = v;
+        }
+      }
+      next[`f:${to}`] = true;
+      return next;
+    });
+    // Focus the renamed folder row again (keyboard users keep their place).
+    requestAnimationFrame(() => treeRef.current?.querySelector<HTMLElement>(`[data-testid="folder-${CSS.escape(to)}"]`)?.focus());
+  };
+
   const folderMenu = (node: FolderNode): MenuEntry[] => [
     { section: node.level ? `${node.level} · ${node.name}` : node.name },
     { label: 'New strategy…', onClick: () => newStrategy(node.path) },
@@ -185,6 +223,7 @@ export function ProjectTree() {
     },
     { label: node.readme ? 'Edit description' : 'Add description', onClick: () => editFolderDescription(node) },
     'separator',
+    { label: 'Rename…', hint: 'F2', onClick: () => doRenameFolder(node) },
     { label: 'Delete folder…', danger: true, onClick: () => deleteFolder(node) },
   ];
 
@@ -271,6 +310,7 @@ export function ProjectTree() {
             } else toggle(key, true);
           }}
           menu={() => folderMenu(node)}
+          onRename={() => doRenameFolder(node)}
           openMenu={menu.open}
           trailing={
             <>

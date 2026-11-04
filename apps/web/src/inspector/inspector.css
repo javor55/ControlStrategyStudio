@@ -49,3 +49,8 @@
 .insp-multi li:last-child { border-bottom: 0; }
 .insp-multi .insp-ep { font-weight: 600; flex: 0 0 auto; }
 .insp-multi-desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insp-fb { display: grid; gap: 6px; }
+.insp-fb p { margin: 0; }
+.insp-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--rule-strong); flex: none; }
+.insp-cat { display: flex; align-items: center; gap: 6px; }
+.insp-cat .select { flex: 1; min-width: 0; }

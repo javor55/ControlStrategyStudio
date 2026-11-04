@@ -59,3 +59,21 @@
 .cv-tab.active { background: var(--sheet); color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
 .cv-tab.doc { font-style: italic; margin-right: 6px; border-right: 1px solid var(--rule); }
 .cv-tab.add { font-weight: 600; }
+
+/* Wire drawing / reconnecting: magnetic snap ring on the target pin. */
+.cv-overlay line.reconnect { stroke-dasharray: none; stroke-width: 2; opacity: .85; }
+.cv-overlay line.ok { stroke: #1e8a46; }
+.cv-overlay line.bad { stroke: #c62828; }
+.cv-snap circle { fill: none; stroke-width: 2.5; }
+.cv-snap circle.dot { stroke: none; }
+.cv-snap.ok circle { stroke: #1e8a46; }
+.cv-snap.ok circle.dot { fill: #1e8a46; }
+.cv-snap.bad circle { stroke: #c62828; }
+.cv-snap.bad circle.dot { fill: #c62828; }
+.cv-host.link-end, .cv-host.link-end * { cursor: crosshair !important; }
+.cv-host.wiring, .cv-host.wiring * { cursor: crosshair !important; }
+
+.cv-dd-panel .cv-dd-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; margin-top: 2px; border-top: 1px solid var(--rule); }
+.cv-dd-panel .cv-dd-h { padding: 2px 6px; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.cv-dd-panel .cv-seg { display: flex; gap: 2px; padding: 0 6px 2px; }
+.cv-dd-panel .cv-seg .btn { flex: 1; }

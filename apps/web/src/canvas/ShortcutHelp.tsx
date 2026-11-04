@@ -17,6 +17,8 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['Drag a selected block', 'Move all selected blocks'],
       ['Drag from a port to a port', 'Connect'],
       ['Drag from a port to empty paper', 'Add a matching block and connect it'],
+      ['Drag the end of a link to another pin', 'Reconnect (label, category and comment are kept)'],
+      ['Green / red ring while wiring', 'Valid target / types or directions do not match'],
       ['Double-click empty paper', 'Quick insert a block'],
       ['Double-click block name', 'Rename in place'],
       ['Double-click parameter / constant', 'Edit value in place'],

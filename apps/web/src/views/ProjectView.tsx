@@ -6,6 +6,7 @@ import { diagsOf } from '../state/selectors';
 import { SeverityBadge } from '../ui/kit';
 import { newBlockType } from '../project/actions';
 import { MarkdownView } from './MarkdownView';
+import { SignalCategoriesSection } from './SignalCategories';
 import './views.css';
 
 function LibraryPage({ lib }: { lib: LibraryDef }) {
@@ -119,6 +120,8 @@ function ProjectPage({ onProjectFile }: { onProjectFile: boolean }) {
           ))}
         </div>
       </section>
+
+      {onProjectFile && <SignalCategoriesSection />}
 
       <section className="v-stats">
         <div className="stat">

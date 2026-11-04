@@ -319,3 +319,77 @@ export async function addAsset(file: File) {
     store().toast(`Added ${path}`);
   }
 }
+
+// --- signal categories -----------------------------------------------------------------
+
+/** Colours offered to new signal categories (first one not yet used). */
+const CATEGORY_COLORS = ['#b3261e', '#6b7280', '#8a5a12', '#6a3fa0', '#0f766e', '#c2410c', '#1d4ed8', '#be185d'];
+
+export function defaultCategoryColor(): string {
+  const used = new Set(Object.values(st().model.meta.signalCategories).map((c) => c.color?.toLowerCase()));
+  return CATEGORY_COLORS.find((c) => !used.has(c)) ?? CATEGORY_COLORS[Object.keys(st().model.meta.signalCategories).length % CATEGORY_COLORS.length];
+}
+
+/** Number of links (strategies and composite internals) per signal category. */
+export function categoryUsage(): Map<string, number> {
+  const m = st().model;
+  const out = new Map<string, number>();
+  const count = (links: readonly { category?: string }[]) => {
+    for (const l of links) if (l.category) out.set(l.category, (out.get(l.category) ?? 0) + 1);
+  };
+  for (const s of m.strategies) count(s.links);
+  for (const t of m.types.all) if (t.diagram) count(t.diagram.links);
+  return out;
+}
+
+/** Asks for the name of a new signal category; null = cancelled. Does not create it. */
+export function askCategoryName(): Promise<string | null> {
+  return promptDialog({
+    title: 'New signal category',
+    message: 'Links of a category share a line style (colour, dash, width), defined in project.yaml.',
+    label: 'Name',
+    placeholder: 'e.g. interlock',
+    okLabel: 'Create',
+    validate: (v) =>
+      !v ? 'Enter a name' : !TAG.test(v) ? 'Use letters, digits, "_" or "-", starting with a letter or "_"' : v in st().model.meta.signalCategories ? 'This category already exists' : undefined,
+  });
+}
+
+/** Renames a hierarchy folder (keeps its parent). Returns the new path, or undefined. */
+export async function renameFolder(node: FolderNode): Promise<string | undefined> {
+  if (!node.path) return undefined;
+  const slash = node.path.lastIndexOf('/');
+  const parent = slash < 0 ? '' : node.path.slice(0, slash);
+  const name = await promptDialog({
+    title: `Rename folder ${node.name}`,
+    message: parent ? `In ${parent}` : 'Top-level folder',
+    label: 'New name',
+    value: node.name,
+    okLabel: 'Rename',
+    validate: (v) => {
+      if (v.includes('/')) return 'The name cannot contain "/" — use Move for strategies';
+      const e = validateFolderSegment(v);
+      if (e) return e;
+      if (v === node.name) return undefined;
+      const to = joinPath(parent, v);
+      if (Object.keys(st().files).some((f) => f.startsWith(`strategies/${to}/`))) return 'A folder with this name already exists';
+      return undefined;
+    },
+  });
+  if (!name || name === node.name) return undefined;
+  const to = joinPath(parent, name);
+  const s = store();
+  const active = s.getState().activeFile;
+  const sheet = s.getState().activeSheet;
+  const selection = s.getState().selection;
+  const src = `strategies/${node.path}/`;
+  if (!s.dispatch({ op: 'renameFolder', from: node.path, to }, { label: `Rename folder ${node.name} → ${name}` })) return undefined;
+  // The store follows a moved active file only for single moves: re-open it at its new path.
+  if (active && active.startsWith(src)) {
+    const moved = `strategies/${to}/${active.slice(src.length)}`;
+    if (moved in s.getState().files) {
+      s.open(moved, { sheet, select: selection ?? undefined });
+    }
+  }
+  return to;
+}
