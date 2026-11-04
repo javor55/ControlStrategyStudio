@@ -1,10 +1,10 @@
 // Centre pages: project, hierarchy folder, strategy (tabs), library, block type.
 import { useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import type { PortDef } from '@csd/core';
-import type { StrategyPlan } from '@csd/export';
+import type { SequencePlan, StrategyPlan } from '@csd/export';
 import { useData } from './context';
 import { exportRenderOptions } from '@csd/export';
-import { sheetOfBlock, sheetOfLink, strategyCtx, typeCtx, type DiagramCtx } from './data';
+import { refRoute, seqSelRoute, sheetOfBlock, sheetOfLink, strategyCtx, typeCtx, type DiagramCtx } from './data';
 import { go, routeHash, type Route, type Sel, type Tab } from './route';
 import { Markdown } from './Markdown';
 import { Canvas, type ConnTarget } from './Canvas';
@@ -88,6 +88,44 @@ function StrategyTable({ list }: { list: StrategyPlan[] }) {
   );
 }
 
+export function SequenceTable({ list }: { list: SequencePlan[] }) {
+  return (
+    <div className="tbl-wrap">
+      <table className="v-table">
+        <thead>
+          <tr>
+            <th>Sequence</th>
+            <th>Title</th>
+            <th>Location</th>
+            <th>Steps</th>
+            <th>Problems</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((s) => {
+            const e = s.diags.filter((x) => x.severity === 'error').length;
+            const w = s.diags.filter((x) => x.severity === 'warning').length;
+            return (
+              <tr key={s.file}>
+                <td className="mono">
+                  <a href={routeHash({ page: 'sequence', name: s.name, sel: null })}>{s.name}</a>
+                </td>
+                <td>{s.title}</td>
+                <td className="muted">{s.hierarchy.map((h) => h.name).join(' / ')}</td>
+                <td className="mono">{s.steps.length}</td>
+                <td>
+                  {e > 0 && <span className="badge error">{e}</span>} {w > 0 && <span className="badge warning">{w}</span>}
+                  {!e && !w && <span className="muted">—</span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ProjectPage() {
   const d = useData();
   const { plan } = d;
@@ -125,6 +163,11 @@ export function ProjectPage() {
       <Section title="Strategies" count={plan.strategies.length}>
         <StrategyTable list={plan.strategies} />
       </Section>
+      {plan.sequences.length > 0 && (
+        <Section title="Sequences" count={plan.sequences.length}>
+          <SequenceTable list={plan.sequences} />
+        </Section>
+      )}
       {cats.length > 0 && (
         <Section title="Signal categories">
           <ul className="legend">
@@ -178,6 +221,7 @@ export function FolderPage({ path }: { path: string }) {
   const f = d.plan.folders.find((x) => x.path === path);
   if (!f) return <NotFound what={`Folder “${path}”`} />;
   const below = d.plan.strategies.filter((s) => s.file.startsWith(`strategies/${path}/`));
+  const seqBelow = d.plan.sequences.filter((s) => s.file.startsWith(`strategies/${path}/`));
   return (
     <div className="v-page">
       <header className="v-title">
@@ -198,11 +242,16 @@ export function FolderPage({ path }: { path: string }) {
       <Section title="Strategies" count={below.length}>
         {below.length ? <StrategyTable list={below} /> : <p className="muted">None.</p>}
       </Section>
+      {seqBelow.length > 0 && (
+        <Section title="Sequences" count={seqBelow.length}>
+          <SequenceTable list={seqBelow} />
+        </Section>
+      )}
     </div>
   );
 }
 
-function Breadcrumb({ path, last }: { path: string; last?: string }) {
+export function Breadcrumb({ path, last }: { path: string; last?: string }) {
   const d = useData();
   const parts = path ? path.split('/') : [];
   return (
@@ -230,7 +279,7 @@ function Breadcrumb({ path, last }: { path: string; last?: string }) {
   );
 }
 
-function NotFound({ what }: { what: string }) {
+export function NotFound({ what }: { what: string }) {
   return (
     <div className="v-page">
       <h1>Not found</h1>
@@ -247,9 +296,18 @@ export function useConnectorNav(ctx: DiagramCtx | undefined, sheet: number) {
   const d = useData();
   return (t: ConnTarget, label: string) => {
     if (!ctx) return;
+    const q = t.strategy ? d.sequenceByName.get(t.strategy) : undefined;
+    if (q) {
+      // Sequence: "written by" (step with the action), "used by" (transition reading the signal) or a step signal (FILL_T100:S20.X).
+      if (t.block) return go(seqSelRoute(q, q.steps.some((s) => s.step === t.block) ? { kind: 'step', id: t.block } : null));
+      const refs = ctx.kind === 'strategy' ? d.model.sequenceRefs(ctx.key).filter((r) => r.sequence === q.name) : [];
+      const kind = label.trim().startsWith('←') ? 'writes' : label.trim().startsWith('→') ? 'reads' : undefined;
+      const r = refs.find((x) => !kind || x.kind === kind) ?? refs[0];
+      return go(seqSelRoute(q, r?.step ? { kind: 'step', id: r.step } : r?.transition !== undefined ? { kind: 'transition', index: r.transition } : null));
+    }
     if (t.strategy && !(ctx.kind === 'strategy' && t.strategy === ctx.key)) {
       if (!d.strategyByName.has(t.strategy)) {
-        alert(`${label.trim()}: strategy ${t.strategy} is not part of this export.`);
+        alert(`${label.trim()}: ${d.model.sequenceByName.has(t.strategy) ? 'sequence' : 'strategy'} ${t.strategy} is not part of this export.`);
         return;
       }
       let sel: Sel = t.block ? { kind: 'block', id: t.block } : null;
@@ -295,7 +353,7 @@ interface TabDef {
   sheet?: number;
 }
 
-function Tabs({ tabs, current, onPick }: { tabs: TabDef[]; current: string; onPick(t: TabDef): void }) {
+export function Tabs<T extends { id: string; label: string }>({ tabs, current, onPick }: { tabs: T[]; current: string; onPick(t: T): void }) {
   const ref = useRef<HTMLDivElement>(null);
   const onKey = (e: KeyboardEvent) => {
     const i = tabs.findIndex((t) => t.id === current);
@@ -506,8 +564,8 @@ function LinksTab({ ctx }: { ctx: DiagramCtx }) {
                     </a>
                   </td>
                   <td className="mono">
-                    {l.external && d.strategyByName.has(l.from.split(':')[0]) ? (
-                      <a className="ext" href={routeHash({ page: 'strategy', name: l.from.split(':')[0], tab: 'sheet', sel: { kind: 'block', id: l.from.split(':')[1].split('.')[0] } })}>
+                    {l.external && refRoute(d, l.from.split(':')[0], l.from.split(':')[1].split('.')[0]) ? (
+                      <a className="ext" href={routeHash(refRoute(d, l.from.split(':')[0], l.from.split(':')[1].split('.')[0])!)}>
                         {l.from}
                       </a>
                     ) : (
@@ -572,6 +630,40 @@ function LinksTab({ ctx }: { ctx: DiagramCtx }) {
           <p className="muted">No other strategy reads signals of {s.name}.</p>
         )}
       </Section>
+      {s.sequenceRefs.length > 0 && (
+        <Section title="Sequences" count={s.sequenceRefs.length}>
+          <div className="tbl-wrap">
+            <table className="v-table">
+              <thead>
+                <tr>
+                  <th>Signal</th>
+                  <th>Sequence</th>
+                  <th>Access</th>
+                  <th>Where</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.sequenceRefs.map((r, i) => {
+                  const q = d.sequenceByName.get(r.sequence);
+                  const where = q ? routeHash(seqSelRoute(q, r.step ? { kind: 'step', id: r.step } : r.transition !== undefined ? { kind: 'transition', index: r.transition } : null)) : undefined;
+                  return (
+                    <tr key={i}>
+                      <td className="mono">
+                        <a href={blockHref(ctx, r.block)}>
+                          {r.block}.{r.port}
+                        </a>
+                      </td>
+                      <td className="mono">{q ? <a href={routeHash({ page: 'sequence', name: q.name, sel: null })}>{r.sequence}</a> : r.sequence}</td>
+                      <td>{r.kind === 'writes' ? 'written by an action' : 'read by a condition'}</td>
+                      <td className="mono">{where ? <a href={where}>{r.where}</a> : r.where}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
     </div>
   );
 }

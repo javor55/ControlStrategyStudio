@@ -401,7 +401,7 @@ function CommitView(props: { c: CommitInfo; commits: CommitInfo[]; branches: Bra
     };
   }, [other, c]);
 
-  const strategies = useMemo(() => (det ? [...det.after.strategies].sort((a, b) => a.name.localeCompare(b.name)) : []), [det]);
+  const strategies = useMemo(() => (det ? [...det.after.strategies, ...det.after.sequences].sort((a, b) => a.name.localeCompare(b.name)) : []), [det]);
 
   const compareWithWorking = async () => {
     try {
@@ -450,7 +450,7 @@ function CommitView(props: { c: CommitInfo; commits: CommitInfo[]; branches: Bra
   const takeMenu = (el: HTMLElement) => {
     const items: MenuEntry[] = [
       { section: 'Replace in working copy (undoable)' },
-      ...(strategies.length ? strategies.map((s): MenuEntry => ({ label: s.name, hint: s.title, onClick: () => void take(s.file, s.name) })) : [{ label: 'No strategies in this version', disabled: true }]),
+      ...(strategies.length ? strategies.map((s): MenuEntry => ({ label: s.name, hint: 'steps' in s ? `sequence${s.title ? ` · ${s.title}` : ''}` : s.title, onClick: () => void take(s.file, s.name) })) : [{ label: 'No strategies or sequences in this version', disabled: true }]),
     ];
     menu.openBelow(el, items);
   };

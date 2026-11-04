@@ -1,7 +1,7 @@
 // Right panel: details of the selected block or signal of the diagram shown.
 import { formatEndpoint, formatValue, typeLabel, type Endpoint, type LinkInst, type SignalCategory } from '@csd/core';
 import { useData } from './context';
-import { blockParams, feedbackOf, linkSignalType, sheetOfBlock, signalLinks, typeKey, type DiagramCtx } from './data';
+import { blockParams, feedbackOf, linkSignalType, refRoute, seqSelRoute, sheetOfBlock, signalLinks, typeKey, type DiagramCtx } from './data';
 import { go, routeHash, type Route, type Sel } from './route';
 import { Markdown } from './Markdown';
 
@@ -112,10 +112,10 @@ function EndpointLink({ ctx, e, onSelect }: { ctx: DiagramCtx; e: Endpoint; onSe
   const d = useData();
   const text = formatEndpoint(e);
   if (e.strategy) {
-    const there = d.strategyByName.has(e.strategy);
-    if (!there) return <span className="mono" title="Strategy not part of this export">{text}</span>;
+    const r = refRoute(d, e.strategy, e.block);
+    if (!r) return <span className="mono" title="Not part of this export">{text}</span>;
     return (
-      <a className="mono ext" href={routeHash({ page: 'strategy', name: e.strategy, tab: 'sheet', sel: { kind: 'block', id: e.block } })}>
+      <a className="mono ext" href={routeHash(r)}>
         {text}
       </a>
     );
@@ -158,6 +158,7 @@ function BlockDetails({ ctx, id, sheet, onSelect }: { ctx: DiagramCtx; id: strin
   const ins = ctx.diagram.links.filter((l) => l.to.block === id);
   const outs = ctx.diagram.links.filter((l) => l.from.block === id && !l.from.strategy);
   const usedBy = ctx.kind === 'strategy' ? d.model.usedBy(ctx.key, id).filter((r) => d.strategyByName.has(r.strategy.name)) : [];
+  const seqRefs = ctx.kind === 'strategy' ? (ctx.splan?.sequenceRefs ?? []).filter((r) => r.block === id) : [];
   const tkey = def && d.typeByKey.has(typeKey(def)) && d.plan.config.sections.library ? typeKey(def) : undefined;
   const sheetTitle = ctx.diagram.sheets.find((s) => s.id === b.sheet)?.title;
   const scan = b.scan ?? (ctx.kind === 'strategy' ? ctx.strategy?.scan : undefined);
@@ -302,6 +303,33 @@ function BlockDetails({ ctx, id, sheet, onSelect }: { ctx: DiagramCtx; id: strin
       ) : (
         <p className="muted">None.</p>
       )}
+      {seqRefs.length > 0 && (
+        <>
+          <h4>
+            Sequences <span className="count">{seqRefs.length}</span>
+          </h4>
+          <ul className="link-list">
+            {seqRefs.map((r, i) => {
+              const q = d.sequenceByName.get(r.sequence);
+              const text = `${r.port} ${r.kind === 'writes' ? '←' : '→'} ${r.sequence} ${r.where}`;
+              return (
+                <li key={i}>
+                  {q ? (
+                    <a className="mono ext" href={routeHash(seqSelRoute(q, r.step ? { kind: 'step', id: r.step } : r.transition !== undefined ? { kind: 'transition', index: r.transition } : null))}>
+                      {text}
+                    </a>
+                  ) : (
+                    <span className="mono" title="Sequence not part of this export">
+                      {text}
+                    </span>
+                  )}
+                  <span className="muted"> {r.kind === 'writes' ? 'written by an action' : 'read by a condition'}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -371,11 +399,11 @@ function LinkDetails({ ctx, link, sheet, onSelect }: { ctx: DiagramCtx; link: Li
       )}
       {link.from.strategy && (
         <div className="note-box ext">
-          The signal comes from strategy <b>{link.from.strategy}</b>.{' '}
-          {d.strategyByName.has(link.from.strategy) ? (
-            <a href={routeHash({ page: 'strategy', name: link.from.strategy, tab: 'sheet', sel: { kind: 'block', id: link.from.block } })}>Open the source</a>
+          The signal comes from {d.model.sequenceByName.has(link.from.strategy) ? 'sequence' : 'strategy'} <b>{link.from.strategy}</b>.{' '}
+          {refRoute(d, link.from.strategy, link.from.block) ? (
+            <a href={routeHash(refRoute(d, link.from.strategy, link.from.block)!)}>Open the source</a>
           ) : (
-            <span className="muted">That strategy is not part of this export.</span>
+            <span className="muted">It is not part of this export.</span>
           )}
         </div>
       )}

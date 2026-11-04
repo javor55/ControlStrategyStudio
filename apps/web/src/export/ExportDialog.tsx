@@ -19,9 +19,9 @@ const SECTIONS: { key: keyof ExportSections; label: string; formats: ExportForma
   { key: 'contents', label: 'Table of contents', formats: ['pdf'] },
   { key: 'projectReadme', label: 'Project introduction (README)', formats: ['pdf', 'html'] },
   { key: 'folderReadmes', label: 'Descriptions of hierarchy levels', formats: ['pdf', 'html'] },
-  { key: 'functionDescription', label: 'Function descriptions and block purposes', formats: ['pdf', 'html'] },
+  { key: 'functionDescription', label: 'Function descriptions, block purposes and step lists', formats: ['pdf', 'html'] },
   { key: 'diagrams', label: 'Diagram sheets', formats: ['pdf', 'html'] },
-  { key: 'blockSettings', label: 'Block settings (parameters)', formats: ['pdf', 'html'] },
+  { key: 'blockSettings', label: 'Block settings (parameters), steps and transitions', formats: ['pdf', 'html'] },
   { key: 'links', label: 'Links and cross references', formats: ['pdf', 'html'] },
   { key: 'library', label: 'Library appendix (block types used)', formats: ['pdf', 'html'] },
   { key: 'librarySource', label: 'Implementation source code', formats: ['pdf', 'html'] },
@@ -47,8 +47,29 @@ function save(projectId: string, c: ExportConfig) {
   }
 }
 
+const SEQ_ICON = (
+  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence" role="img">
+    <title>Sequence (SFC)</title>
+    <rect x="3" y="0.5" width="6" height="3.5" fill="none" stroke="currentColor" />
+    <path d="M6 4 V8 M3.5 6 H8.5" stroke="currentColor" />
+    <rect x="3" y="8" width="6" height="3.5" fill="none" stroke="currentColor" />
+  </svg>
+);
+const STRATEGY_ICON = (
+  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Strategy" role="img">
+    <title>Strategy (function blocks)</title>
+    <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
+    <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
+    <path d="M5 6 H7" stroke="currentColor" />
+  </svg>
+);
+
+const fileName = (f: string) => (f.split('/').pop() ?? f).replace(/(\.seq)?\.yaml$/, '');
+/** Strategies and sequences of a folder, by name. */
+const folderItems = (n: FolderNode) => [...n.strategies, ...(n.sequences ?? [])].sort((a, b) => fileName(a).localeCompare(fileName(b)) || a.localeCompare(b));
+
 function collect(n: FolderNode, out: string[] = []): string[] {
-  out.push(...n.strategies);
+  out.push(...folderItems(n));
   n.folders.forEach((f) => collect(f, out));
   return out;
 }
@@ -75,10 +96,11 @@ function ScopeTree(props: { node: FolderNode; selected: Set<string>; toggle: (fi
         {node.folders.map((f) => (
           <ScopeTree key={f.path} {...props} node={f} />
         ))}
-        {node.strategies.map((f) => (
+        {folderItems(node).map((f) => (
           <li key={f}>
             <label className="xp-row">
               <input type="checkbox" checked={selected.has(f)} onChange={(e) => toggle([f], e.target.checked)} />
+              {f.endsWith('.seq.yaml') ? SEQ_ICON : STRATEGY_ICON}
               <span className="mono">{props.names.get(f) ?? f}</span>
             </label>
           </li>
@@ -97,8 +119,9 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const allFiles = useMemo(() => model.strategies.map((s) => s.file), [model]);
-  const names = useMemo(() => new Map(model.strategies.map((s) => [s.file, s.title ? `${s.name} — ${s.title}` : s.name])), [model]);
+  const allFiles = useMemo(() => [...model.strategies, ...model.sequences].map((s) => s.file), [model]);
+  const names = useMemo(() => new Map([...model.strategies, ...model.sequences].map((s) => [s.file, s.title ? `${s.name} — ${s.title}` : s.name])), [model]);
+  const seqCount = (list: Iterable<string>) => [...list].filter((f) => f.endsWith('.seq.yaml')).length;
   const selected = useMemo(() => new Set(config.strategies.length ? config.strategies.filter((f) => allFiles.includes(f)) : allFiles), [config.strategies, allFiles]);
   const fmt = config.format;
   const isDoc = fmt === 'pdf' || fmt === 'html';
@@ -122,7 +145,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
   };
 
   const start = async () => {
-    if (!selected.size) return setError('Select at least one strategy.');
+    if (!selected.size) return setError('Select at least one strategy or sequence.');
     setError(null);
     setBusy('Preparing…');
     save(projectId, config);
@@ -159,7 +182,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
         <div className="xp-body">
           <section className="xp-col">
             <div className="xp-h">
-              Scope · {selected.size} / {allFiles.length} strategies
+              Scope · {selected.size} / {allFiles.length}
               <span className="spacer" />
               <button type="button" className="btn small ghost" onClick={() => update({ strategies: [] })}>
                 All
@@ -173,6 +196,10 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
             <ul className="xp-tree">
               <ScopeTree node={model.root} selected={selected} toggle={toggle} names={names} />
             </ul>
+            <p className="xp-note">
+              {selected.size - seqCount(selected)} / {allFiles.length - seqCount(allFiles)} strategies
+              {seqCount(allFiles) > 0 && `, ${seqCount(selected)} / ${seqCount(allFiles)} sequences`} selected
+            </p>
           </section>
 
           {isDoc && (
@@ -248,7 +275,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
           )}
         </div>
 
-        {errors > 0 && <div className="xp-warn">The selected strategies have {errors} error{errors > 1 ? 's' : ''}. They are listed in the export.</div>}
+        {errors > 0 && <div className="xp-warn">The selection has {errors} error{errors > 1 ? 's' : ''}. They are listed in the export.</div>}
         {error && <div className="error-text">{error}</div>}
         <div className="actions">
           {busy && <span className="xp-busy">{busy}</span>}

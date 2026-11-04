@@ -68,6 +68,10 @@ export function routeForFile(file: string, strategyFiles: Map<string, string>, t
     const name = strategyFiles.get(file.replace(/\.md$/, '.yaml'));
     if (name) return { page: 'strategy', name, tab: role.kind === 'strategy-doc' ? 'doc' : undefined, sel: null };
   }
+  if (role.kind === 'sequence' || role.kind === 'strategy-doc') {
+    const name = strategyFiles.get(file.replace(/\.md$/, '.seq.yaml'));
+    if (name) return { page: 'sequence', name, tab: role.kind === 'strategy-doc' ? 'doc' : undefined, sel: null };
+  }
   if (role.kind === 'blocktype') {
     const key = typeKeyOfFile.get(file);
     if (key) return { page: 'type', key, sel: null };
@@ -106,7 +110,7 @@ export function Markdown({ file, text, className }: { file: string; text: string
   const d = useData();
   const ref = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderMarkdown(text), [text]);
-  const strategyFiles = useMemo(() => new Map(d.plan.strategies.map((s) => [s.file, s.name])), [d]);
+  const strategyFiles = useMemo(() => new Map(d.plan.items.map((s) => [s.file, s.name])), [d]);
   const typeKeyOfFile = useMemo(() => new Map([...d.typeByKey].map(([k, t]) => [t.def.file, k])), [d]);
 
   useLayoutEffect(() => {
@@ -160,7 +164,7 @@ export function Markdown({ file, text, className }: { file: string; text: string
         // In-document anchors must not replace the viewer route.
         const a = (e.target as HTMLElement).closest('a');
         const href = a?.getAttribute('href') ?? '';
-        if (!href.startsWith('#') || /^#(s|f|t)=|^#(lib|project)\b/.test(href)) return;
+        if (!href.startsWith('#') || /^#(s|q|f|t)=|^#(lib|project)\b/.test(href)) return;
         e.preventDefault();
         const id = decodeURIComponent(href.slice(1));
         (document.getElementById(id) ?? document.getElementsByName(id)[0])?.scrollIntoView({ block: 'start' });

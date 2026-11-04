@@ -49,7 +49,7 @@ function renderStep(g: SfcStepGeom, t: Theme, o: SequenceRenderOptions): string 
   if (g.initial) s += `<rect${attrs({ x: g.x + 4, y: g.y + 4, width: g.w - 8, height: g.h - 8, fill: 'none', stroke, 'stroke-width': 1.1 })}/>`;
   s += text(cx, g.y + (g.descLines.length ? 17 : g.h / 2 + 5), g.id, { 'font-family': t.fontSans, 'font-size': 13, 'font-weight': 'bold', fill: t.ink, 'text-anchor': 'middle' });
   g.descLines.forEach((l, i) => (s += text(cx, g.y + 30 + i * 11, l, { 'font-family': t.fontSans, 'font-size': 9.5, fill: t.ink2, 'text-anchor': 'middle' })));
-  if (g.time) s += text(g.x, g.y + g.h + 12, `⏱ ${g.time}`, { 'font-family': t.fontSans, 'font-size': 9.5, fill: t.ink3 });
+  if (g.time) s += text(g.x, g.y + g.h + 12, g.time, { 'font-family': t.fontSans, 'font-size': 9.5, fill: t.ink3 });
   s += '</g>';
   // jumps into the step
   if (g.jumpsIn.length) {

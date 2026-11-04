@@ -15,15 +15,18 @@ export interface ProjectData {
   /** Hierarchy folder descriptions by folder path. */
   folders: Record<string, { readme: string }>;
   libraries: Record<string, { library?: unknown; types: Record<string, unknown> }>;
-  /** Strategies by file path (relative to `strategies/`). */
+  /** Strategies by file path (relative to `strategies/`, without `.yaml`). */
   strategies: Record<string, { strategy: unknown; doc?: string }>;
+  /** Sequences (SFC) by file path (relative to `strategies/`, without `.seq.yaml`). */
+  sequences: Record<string, { sequence: unknown; doc?: string }>;
   assets: string[];
 }
 
 export function projectData(files: Files, config: ExportConfig, exportedAt = new Date().toISOString()): ProjectData {
-  const out: ProjectData = { format: DATA_FORMAT, exportedAt, project: {}, folders: {}, libraries: {}, strategies: {}, assets: [] };
+  const out: ProjectData = { format: DATA_FORMAT, exportedAt, project: {}, folders: {}, libraries: {}, strategies: {}, sequences: {}, assets: [] };
   const parsed = (c: string) => parseYaml(c).data ?? null;
-  for (const [f, c] of Object.entries(filesInScope(files, config))) {
+  const scoped = filesInScope(files, config);
+  for (const [f, c] of Object.entries(scoped)) {
     const role = classify(f);
     if (typeof c !== 'string') {
       if (role.kind === 'asset') out.assets.push(f);
@@ -48,9 +51,16 @@ export function projectData(files: Files, config: ExportConfig, exportedAt = new
         out.strategies[key] = { ...out.strategies[key], strategy: parsed(c) };
         break;
       }
+      case 'sequence': {
+        const key = f.slice('strategies/'.length).replace(/\.seq\.yaml$/, '');
+        out.sequences[key] = { ...out.sequences[key], sequence: parsed(c) };
+        break;
+      }
       case 'strategy-doc': {
         const key = f.slice('strategies/'.length).replace(/\.md$/, '');
-        out.strategies[key] = { ...(out.strategies[key] ?? { strategy: null }), doc: c };
+        // NAME.md describes the strategy NAME.yaml or the sequence NAME.seq.yaml.
+        if (f.replace(/\.md$/, '.seq.yaml') in scoped && !(f.replace(/\.md$/, '.yaml') in scoped)) out.sequences[key] = { ...(out.sequences[key] ?? { sequence: null }), doc: c };
+        else out.strategies[key] = { ...(out.strategies[key] ?? { strategy: null }), doc: c };
         break;
       }
       case 'asset':

@@ -46,15 +46,19 @@ export function fromBase64(s: string): Uint8Array {
 
 /**
  * Files that go into an export: project data, libraries, assets and only the
- * strategies in scope (plus their docs and the READMEs of their folders).
+ * strategies and sequences in scope (plus their docs and the READMEs of their folders).
  */
 export function filesInScope(files: Files, config: ExportConfig): Files {
-  const all = Object.keys(files).filter((f) => classify(f).kind === 'strategy');
+  const all = Object.keys(files).filter((f) => {
+    const k = classify(f).kind;
+    return k === 'strategy' || k === 'sequence';
+  });
   const scope = new Set(config.strategies.length ? config.strategies : all);
   const folders = new Set<string>();
+  const docs = new Set([...scope].map(strategyDocFile));
   for (const f of scope) {
     const role = classify(f);
-    if (role.kind !== 'strategy') continue;
+    if (role.kind !== 'strategy' && role.kind !== 'sequence') continue;
     const parts = role.folder ? role.folder.split('/') : [];
     for (let i = 0; i <= parts.length; i++) folders.add(parts.slice(0, i).join('/'));
   }
@@ -67,8 +71,8 @@ export function filesInScope(files: Files, config: ExportConfig): Files {
       role.kind === 'blocktype' ||
       role.kind === 'asset' ||
       (role.kind === 'readme' && (role.folder === null || folders.has(role.folder))) ||
-      (role.kind === 'strategy' && scope.has(f)) ||
-      (role.kind === 'strategy-doc' && [...scope].some((s) => strategyDocFile(s) === f));
+      ((role.kind === 'strategy' || role.kind === 'sequence') && scope.has(f)) ||
+      (role.kind === 'strategy-doc' && docs.has(f));
     if (keep) out[f] = c;
   }
   return out;

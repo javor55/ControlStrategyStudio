@@ -2,6 +2,9 @@
 //   #s=FIC101&sheet=1&b=FIC101     strategy sheet with a selected block
 //   #s=P101&sheet=2&l=4            … with a selected link (signal)
 //   #s=FIC101&tab=blocks           strategy tab (doc | blocks | links)
+//   #q=FILL_T100&sheet=1&s=S10     sequence sheet with a selected step
+//   #q=FILL_T100&sheet=1&tr=2      … with a selected transition (index)
+//   #q=FILL_T100&tab=steps         sequence tab (doc | steps | transitions)
 //   #f=ACME/Brno                   hierarchy folder
 //   #lib  /  #t=acme/AI_2OO3@1.0.0&b=MED   library index / block type
 //   #project (or empty)            project page
@@ -9,13 +12,16 @@ import { useEffect, useState } from 'react';
 
 export type Sel = { kind: 'block'; id: string } | { kind: 'link'; index: number } | null;
 export type Tab = 'doc' | 'sheet' | 'blocks' | 'links';
+export type SeqSel = { kind: 'step'; id: string } | { kind: 'transition'; index: number } | null;
+export type SeqTab = 'doc' | 'sheet' | 'steps' | 'transitions';
 
 export type Route =
   | { page: 'project' }
   | { page: 'folder'; path: string }
   | { page: 'library' }
   | { page: 'type'; key: string; sheet?: number; sel: Sel }
-  | { page: 'strategy'; name: string; tab?: Tab; sheet?: number; sel: Sel };
+  | { page: 'strategy'; name: string; tab?: Tab; sheet?: number; sel: Sel }
+  | { page: 'sequence'; name: string; tab?: SeqTab; sheet?: number; sel: SeqSel };
 
 export function parseHash(hash: string): Route {
   const q = new URLSearchParams(hash.replace(/^#/, ''));
@@ -28,6 +34,14 @@ export function parseHash(hash: string): Route {
   };
   const sheet = q.get('sheet');
   const sheetN = sheet && /^\d+$/.test(sheet) ? Number(sheet) : undefined;
+  const seq = q.get('q');
+  if (seq) {
+    const tab = q.get('tab');
+    const step = q.get('s');
+    const tr = q.get('tr');
+    const ssel: SeqSel = step ? { kind: 'step', id: step } : tr !== null && /^\d+$/.test(tr) ? { kind: 'transition', index: Number(tr) } : null;
+    return { page: 'sequence', name: seq, tab: tab === 'doc' || tab === 'steps' || tab === 'transitions' ? tab : sheetN !== undefined || ssel ? 'sheet' : undefined, sheet: sheetN, sel: ssel };
+  }
   const s = q.get('s');
   if (s) {
     const tab = q.get('tab');
@@ -68,6 +82,13 @@ export function routeHash(r: Route): string {
       if (r.tab && r.tab !== 'sheet') add('tab', r.tab);
       else if (r.sheet !== undefined) add('sheet', r.sheet);
       addSel(r.sel);
+      break;
+    case 'sequence':
+      add('q', r.name);
+      if (r.tab && r.tab !== 'sheet') add('tab', r.tab);
+      else if (r.sheet !== undefined) add('sheet', r.sheet);
+      if (r.sel?.kind === 'step') add('s', r.sel.id);
+      if (r.sel?.kind === 'transition') add('tr', r.sel.index);
       break;
   }
   return '#' + q.join('&');

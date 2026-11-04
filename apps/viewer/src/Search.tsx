@@ -1,12 +1,12 @@
-// Header search: strategies, blocks (tag, type, description), signals (labels), block types.
+// Header search: strategies, blocks (tag, type, description), signals (labels), sequences (steps, conditions), block types.
 import { forwardRef, useMemo, useState, type KeyboardEvent } from 'react';
 import { formatEndpoint, typeLabel } from '@csd/core';
 import { useData } from './context';
-import { sheetOfBlock, sheetOfLink, strategyCtx, type ViewerData } from './data';
+import { seqSelRoute, sheetOfBlock, sheetOfLink, strategyCtx, type ViewerData } from './data';
 import { go, type Route } from './route';
 
 interface Hit {
-  kind: 'strategy' | 'block' | 'signal' | 'type';
+  kind: 'strategy' | 'sequence' | 'block' | 'step' | 'signal' | 'condition' | 'type';
   label: string;
   sub?: string;
   where?: string;
@@ -45,6 +45,30 @@ function buildIndex(d: ViewerData): Hit[] {
       });
     }
   }
+  for (const q of d.plan.sequences) {
+    out.push({ kind: 'sequence', label: q.name, sub: q.title, where: q.hierarchy.map((h) => h.name).join(' / '), text: `${q.name} ${q.title ?? ''} ${q.description ?? ''} sequence`, route: { page: 'sequence', name: q.name, sel: null } });
+    for (const s of q.steps) {
+      out.push({
+        kind: 'step',
+        label: s.step,
+        sub: s.description,
+        where: `${q.name}${s.actions.length ? ` · ${s.actions.length} action${s.actions.length > 1 ? 's' : ''}` : ''}`,
+        text: `${s.step} ${s.description ?? ''} ${s.comment ?? ''} ${s.actions.map((a) => a.summary).join(' ')}`,
+        route: seqSelRoute(q, { kind: 'step', id: s.step }),
+      });
+    }
+    for (const t of q.transitions) {
+      if (!t.condition) continue;
+      out.push({
+        kind: 'condition',
+        label: t.condition,
+        sub: t.comment,
+        where: `${q.name} · ${t.label}`,
+        text: `${t.condition} ${t.comment ?? ''} ${t.label}`,
+        route: seqSelRoute(q, { kind: 'transition', index: t.index }),
+      });
+    }
+  }
   if (d.plan.config.sections.library)
     for (const [k, t] of d.typeByKey) out.push({ kind: 'type', label: t.def.type, sub: t.def.description, where: `${t.def.library} @${t.def.version}`, text: `${t.def.type} ${t.def.description}`, route: { page: 'type', key: k, sel: null } });
   return out;
@@ -58,7 +82,7 @@ function search(index: Hit[], q: string): Hit[] {
     const t = h.text.toLowerCase();
     if (!terms.every((x) => t.includes(x))) continue;
     const l = h.label.toLowerCase();
-    const score = (l === terms[0] ? 0 : l.startsWith(terms[0]) ? 1 : l.includes(terms[0]) ? 2 : 3) * 10 + ['strategy', 'block', 'signal', 'type'].indexOf(h.kind);
+    const score = (l === terms[0] ? 0 : l.startsWith(terms[0]) ? 1 : l.includes(terms[0]) ? 2 : 3) * 10 + ['strategy', 'sequence', 'block', 'step', 'signal', 'condition', 'type'].indexOf(h.kind);
     scored.push([score, h]);
   }
   return scored
@@ -110,7 +134,7 @@ export const Search = forwardRef<HTMLInputElement>(function Search(_p, ref) {
         ref={ref}
         className="input search-input"
         type="search"
-        placeholder="Search strategies, blocks, signals…  ( / )"
+        placeholder="Search strategies, sequences, blocks, signals…  ( / )"
         aria-label="Search"
         role="combobox"
         aria-expanded={show}

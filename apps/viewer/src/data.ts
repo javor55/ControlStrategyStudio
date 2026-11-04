@@ -5,6 +5,7 @@ import {
   feedbackOrders,
   formatEndpoint,
   loadProject,
+  sequenceSignalType,
   type BlockInst,
   type BlockTypeDef,
   type Diagram,
@@ -20,11 +21,13 @@ import {
   planExport,
   VIEWER_DATA_ID,
   type ExportPlan,
+  type SequencePlan,
   type SheetPlan,
   type StrategyPlan,
   type TypePlan,
   type ViewerPayload,
 } from '@csd/export';
+import type { Route, SeqSel, Sel } from './route';
 
 export interface ViewerData {
   demo: boolean;
@@ -36,6 +39,7 @@ export interface ViewerData {
   model: ProjectModel;
   plan: ExportPlan;
   strategyByName: Map<string, StrategyPlan>;
+  sequenceByName: Map<string, SequencePlan>;
   typeByKey: Map<string, TypePlan>;
 }
 
@@ -63,6 +67,7 @@ export function loadViewerData(): ViewerData {
     model,
     plan,
     strategyByName: new Map(plan.strategies.map((s) => [s.name, s])),
+    sequenceByName: new Map(plan.sequences.map((s) => [s.name, s])),
     typeByKey: new Map(plan.types.map((t) => [typeKey(t.def), t])),
   };
 }
@@ -116,7 +121,11 @@ export interface PortInfo {
 
 /** Type of the signal a link carries. */
 export function linkSignalType(d: ViewerData, ctx: DiagramCtx, l: LinkInst): string | undefined {
-  if (l.from.strategy) return d.model.strategyByName.get(l.from.strategy)?.blocks.find((b) => b.id === l.from.block)?.def?.outputs.find((p) => p.name === l.from.port)?.type;
+  if (l.from.strategy) {
+    const q = d.model.sequenceByName.get(l.from.strategy);
+    if (q) return sequenceSignalType(q, l.from.block, l.from.port);
+    return d.model.strategyByName.get(l.from.strategy)?.blocks.find((b) => b.id === l.from.block)?.def?.outputs.find((p) => p.name === l.from.port)?.type;
+  }
   if (ctx.kind === 'type' && l.from.block === 'in') return ctx.type?.def.inputs.find((p) => p.name === l.from.port)?.type;
   return ctx.diagram.blocks.find((b) => b.id === l.from.block)?.def?.outputs.find((p) => p.name === l.from.port)?.type;
 }
@@ -167,4 +176,40 @@ export function blockParams(ctx: DiagramCtx, b: BlockInst): ParamInfo[] {
     if (!out.some((p) => p.name === k)) out.push({ name: k, kind: 'param', type: '?', value: v, set: true, unknown: true });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Sequences
+
+/** Sheet a step is drawn on. */
+export function sheetOfStep(q: SequencePlan, id: string): number | undefined {
+  for (const s of q.sheets) if (s.layout.steps.some((g) => g.id === id)) return s.id;
+  return q.steps.find((s) => s.step === id)?.sheet;
+}
+
+/** Sheet a transition is drawn on. */
+export function sheetOfTransition(q: SequencePlan, index: number): number | undefined {
+  for (const s of q.sheets) if (s.layout.transitions.some((t) => t.index === index)) return s.id;
+  return q.transitions.find((t) => t.index === index)?.sheet;
+}
+
+/** Route showing a step or transition of a sequence on its sheet. */
+export function seqSelRoute(q: SequencePlan, sel: SeqSel, sheet?: number): Route {
+  const sh = sheet ?? (sel?.kind === 'step' ? sheetOfStep(q, sel.id) : sel?.kind === 'transition' ? sheetOfTransition(q, sel.index) : undefined);
+  return { page: 'sequence', name: q.name, tab: 'sheet', sheet: sh ?? q.sheets[0]?.id, sel };
+}
+
+/**
+ * Route for a signal reference `SCOPE:BLOCK.PORT`: the block in a strategy, or
+ * the step of a sequence (`FILL_T100:S20.X`). Undefined when not in the export.
+ */
+export function refRoute(d: ViewerData, scope: string, block: string): Route | undefined {
+  if (d.strategyByName.has(scope)) {
+    const ctx = strategyCtx(d, scope)!;
+    const sel: Sel = ctx.diagram.blocks.some((b) => b.id === block) ? { kind: 'block', id: block } : null;
+    return { page: 'strategy', name: scope, tab: 'sheet', sheet: sel ? sheetOfBlock(ctx, block) : undefined, sel };
+  }
+  const q = d.sequenceByName.get(scope);
+  if (q) return seqSelRoute(q, q.steps.some((s) => s.step === block) ? { kind: 'step', id: block } : null);
+  return undefined;
 }

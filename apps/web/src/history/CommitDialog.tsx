@@ -6,7 +6,7 @@ import { validRefName, type Change } from '@csd/vcs';
 import { commit, getAuthor, history, setAuthor, tagRevision } from '../state/session';
 import { store, useEditor } from '../state/store';
 import { diffCached } from './compare';
-import { groupFiles, KIND_LABEL, KIND_LETTER, nextRevision, revisionLabel, strategyDiffsByFile, summarizeStrategy } from './format';
+import { graphDiffsByFile, groupFiles, KIND_LABEL, KIND_LETTER, nextRevision, revisionLabel, summarizeGraph } from './format';
 import { closeCommit } from './ui';
 import './history.css';
 
@@ -33,11 +33,11 @@ export function ChangeBadge({ kind }: { kind: Change['kind'] }) {
   );
 }
 
-/** Changed files grouped (strategies / library / documents / other) with graph summaries for strategies. */
+/** Changed files grouped (strategies & sequences / library / documents / other) with graph summaries for strategies and sequences. */
 export function ChangeList(props: { changes: readonly Change[]; before?: ProjectModel; after?: ProjectModel; onFile?: (path: string) => void; fileTitle?: string }) {
   const { before, after } = props;
   const diff = useMemo(() => (before && after ? diffCached(before, after) : undefined), [before, after]);
-  const byFile = useMemo(() => strategyDiffsByFile(diff), [diff]);
+  const byFile = useMemo(() => graphDiffsByFile(diff), [diff]);
   if (!props.changes.length) return <div className="hx-muted">No changed files.</div>;
   return (
     <div className="hx-files">
@@ -48,7 +48,8 @@ export function ChangeList(props: { changes: readonly Change[]; before?: Project
           </div>
           <ul>
             {items.map((c) => {
-              const sd = byFile.get(c.path);
+              const g = byFile.get(c.path);
+              const sd = g?.diff;
               const isYaml = c.path.endsWith('.yaml');
               return (
                 <li key={c.path} className="hx-file">
@@ -68,7 +69,12 @@ export function ChangeList(props: { changes: readonly Change[]; before?: Project
                         {`\u200e${c.path}\u200e`}
                       </span>
                     )}
-                    {sd && isYaml && <div className="hx-sum">{summarizeStrategy(sd)}</div>}
+                    {g && isYaml && (
+                      <div className="hx-sum">
+                        {g.kind === 'sequence' && <span className="hx-seq">sequence · </span>}
+                        {summarizeGraph(g)}
+                      </div>
+                    )}
                     {sd && !isYaml && <div className="hx-sum">function description of {sd.name}</div>}
                   </div>
                 </li>

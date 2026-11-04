@@ -167,3 +167,4 @@
 /* ---- project tree ---------------------------------------------------------------------------- */
 .hx-tree-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .hx-tree-dot.hollow { background: transparent; border: 2px solid; }
+.hx-seq { color: var(--ink-3); font-style: italic; }

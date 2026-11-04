@@ -47,7 +47,8 @@ export function Tree({ route, onNavigate }: { route: Route; onNavigate?(): void 
     });
 
   const currentStrategy = route.page === 'strategy' ? route.name : undefined;
-  const currentFile = currentStrategy ? d.strategyByName.get(currentStrategy)?.file : undefined;
+  const currentSequence = route.page === 'sequence' ? route.name : undefined;
+  const currentFile = currentStrategy ? d.strategyByName.get(currentStrategy)?.file : currentSequence ? d.sequenceByName.get(currentSequence)?.file : undefined;
   // Reveal the current item.
   useEffect(() => {
     if (route.page === 'type') setLibOpen(true);
@@ -66,7 +67,7 @@ export function Tree({ route, onNavigate }: { route: Route; onNavigate?(): void 
 
   const renderNode = (n: Node, depth: number): JSX.Element => {
     const open = !closed.has(n.f.path);
-    const hasKids = n.children.length > 0 || n.f.strategies.length > 0;
+    const hasKids = n.children.length > 0 || n.f.items.length > 0;
     return (
       <li key={n.f.path || '(root)'}>
         <div className="t-row" style={{ paddingLeft: 6 + depth * 14 }}>
@@ -83,21 +84,37 @@ export function Tree({ route, onNavigate }: { route: Route; onNavigate?(): void 
         {open && hasKids && (
           <ul role="group">
             {n.children.map((c) => renderNode(c, depth + 1))}
-            {n.f.strategies.map((file) => {
+            {n.f.items.map((file) => {
               const s = d.plan.strategies.find((x) => x.file === file);
-              if (!s) return null;
+              const q = s ? undefined : d.plan.sequences.find((x) => x.file === file);
+              const it = s ?? q;
+              if (!it) return null;
               return (
                 <li key={file}>
                   <div className="t-row" style={{ paddingLeft: 6 + (depth + 1) * 14 }}>
                     <span className="tw-sp" />
-                    <a className="t-link strat" href={routeHash({ page: 'strategy', name: s.name, sel: null })} onClick={onNavigate} {...cur(currentStrategy === s.name)} title={s.title}>
-                      <svg className="t-ico" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                        <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-                        <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-                        <path d="M5 6 H7" stroke="currentColor" />
-                      </svg>
-                      <span className="t-name mono">{s.name}</span>
-                      {s.title && <span className="t-sub">{s.title}</span>}
+                    <a
+                      className={`t-link ${s ? 'strat' : 'seq'}`}
+                      href={routeHash(s ? { page: 'strategy', name: it.name, sel: null } : { page: 'sequence', name: it.name, sel: null })}
+                      onClick={onNavigate}
+                      {...cur(s ? currentStrategy === it.name : currentSequence === it.name)}
+                      title={s ? it.title : `Sequence${it.title ? ': ' + it.title : ''}`}
+                    >
+                      {s ? (
+                        <svg className="t-ico" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                          <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
+                          <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
+                          <path d="M5 6 H7" stroke="currentColor" />
+                        </svg>
+                      ) : (
+                        <svg className="t-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence" role="img">
+                          <rect x="3" y="0.5" width="6" height="3.5" fill="none" stroke="currentColor" />
+                          <path d="M6 4 V8 M3.5 6 H8.5" stroke="currentColor" />
+                          <rect x="3" y="8" width="6" height="3.5" fill="none" stroke="currentColor" />
+                        </svg>
+                      )}
+                      <span className="t-name mono">{it.name}</span>
+                      {it.title && <span className="t-sub">{it.title}</span>}
                     </a>
                   </div>
                 </li>

@@ -1,6 +1,6 @@
 // Small helpers shared by the history UI: wording of graph diffs, grouping of
 // changed files, revision names, dates.
-import { classify, type ProjectDiff, type StrategyDiff } from '@csd/core';
+import { classify, type ProjectDiff, type SequenceDiff, type StrategyDiff } from '@csd/core';
 import type { ChangeKind, CommitInfo } from '@csd/vcs';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -47,6 +47,70 @@ export function summarizeStrategy(sd: StrategyDiff): string {
   return parts.length ? parts.join(', ') : 'changed';
 }
 
+/** One line describing what changed in a sequence, e.g. "+1 step, 2 transitions changed, 1 action changed". */
+export function summarizeSequence(sd: SequenceDiff): string {
+  if (sd.kind === 'added') return `new sequence (${plural(sd.steps.length, 'step')}, ${plural(sd.transitions.length, 'transition')})`;
+  if (sd.kind === 'removed') return 'sequence deleted';
+  const parts: string[] = [];
+  const renamed = sd.header.find((h) => h.field === 'name');
+  if (renamed) parts.push(`renamed from ${renamed.before}`);
+  if (sd.header.some((h) => h.field === 'location')) parts.push('moved to another folder');
+  const otherHeader = sd.header.filter((h) => h.field !== 'name' && h.field !== 'location').length;
+  if (otherHeader) parts.push(`${plural(otherHeader, 'header field')} changed`);
+  const added = sd.steps.filter((s) => s.kind === 'added').length;
+  const removed = sd.steps.filter((s) => s.kind === 'removed').length;
+  if (added) parts.push(`+${plural(added, 'step')}`);
+  if (removed) parts.push(`−${plural(removed, 'step')}`);
+  let actions = 0;
+  let edited = 0;
+  let moved = 0;
+  for (const s of sd.steps) {
+    if (s.kind !== 'changed') continue;
+    const a = s.changes.filter((c) => c.field.startsWith('actions[')).length;
+    actions += a;
+    if (s.changes.length > a) edited++;
+    if (!s.changes.length && s.moved) moved++;
+  }
+  if (edited) parts.push(`${plural(edited, 'step')} edited`);
+  if (actions) parts.push(`${plural(actions, 'action')} changed`);
+  const ta = sd.transitions.filter((t) => t.kind === 'added').length;
+  const tr = sd.transitions.filter((t) => t.kind === 'removed').length;
+  const tc = sd.transitions.filter((t) => t.kind === 'changed').length;
+  if (ta) parts.push(`+${plural(ta, 'transition')}`);
+  if (tr) parts.push(`−${plural(tr, 'transition')}`);
+  if (tc) parts.push(`${plural(tc, 'transition')} changed`);
+  if (sd.inputs.length) parts.push('inputs changed');
+  if (moved) parts.push(`${plural(moved, 'step')} moved`);
+  return parts.length ? parts.join(', ') : 'changed';
+}
+
+/** Graph diff of a strategy or a sequence, for the file lists. */
+export type GraphDiff = { kind: 'strategy'; diff: StrategyDiff } | { kind: 'sequence'; diff: SequenceDiff };
+
+export function summarizeGraph(g: GraphDiff): string {
+  return g.kind === 'strategy' ? summarizeStrategy(g.diff) : summarizeSequence(g.diff);
+}
+
+/** Strategy and sequence diffs by file (YAML or its .md), for the file lists. */
+export function graphDiffsByFile(d: ProjectDiff | undefined): Map<string, GraphDiff> {
+  const m = new Map<string, GraphDiff>();
+  for (const sd of d?.strategies ?? []) {
+    for (const f of [sd.afterFile, sd.beforeFile]) {
+      if (!f) continue;
+      m.set(f, { kind: 'strategy', diff: sd });
+      m.set(f.replace(/\.yaml$/, '.md'), { kind: 'strategy', diff: sd });
+    }
+  }
+  for (const sd of d?.sequences ?? []) {
+    for (const f of [sd.afterFile, sd.beforeFile]) {
+      if (!f) continue;
+      m.set(f, { kind: 'sequence', diff: sd });
+      m.set(f.replace(/\.seq\.yaml$/, '.md'), { kind: 'sequence', diff: sd });
+    }
+  }
+  return m;
+}
+
 /** Strategy diff by file (YAML or its .md), for the file lists. */
 export function strategyDiffsByFile(d: ProjectDiff | undefined): Map<string, StrategyDiff> {
   const m = new Map<string, StrategyDiff>();
@@ -60,12 +124,12 @@ export function strategyDiffsByFile(d: ProjectDiff | undefined): Map<string, Str
   return m;
 }
 
-export type FileGroup = 'Strategies' | 'Library' | 'Documents' | 'Other';
-export const FILE_GROUPS: FileGroup[] = ['Strategies', 'Library', 'Documents', 'Other'];
+export type FileGroup = 'Strategies & sequences' | 'Library' | 'Documents' | 'Other';
+export const FILE_GROUPS: FileGroup[] = ['Strategies & sequences', 'Library', 'Documents', 'Other'];
 
 export function fileGroup(path: string): FileGroup {
   const k = classify(path).kind;
-  if (k === 'strategy' || k === 'strategy-doc') return 'Strategies';
+  if (k === 'strategy' || k === 'sequence' || k === 'strategy-doc') return 'Strategies & sequences';
   if (path.startsWith('library/')) return 'Library';
   if (k === 'readme' || k === 'asset' || path.endsWith('.md')) return 'Documents';
   return 'Other';
@@ -77,8 +141,8 @@ export function groupFiles<T extends { path: string }>(items: readonly T[]): [Fi
     const g = fileGroup(it.path);
     out.set(g, [...(out.get(g) ?? []), it]);
   }
-  // Strategy YAML before its function description.
-  const key = (p: string) => p.replace(/\.(yaml|md)$/, '') + (p.endsWith('.md') ? '\u0001' : '\u0000');
+  // Strategy / sequence YAML before its function description.
+  const key = (p: string) => p.replace(/(\.seq)?\.(yaml|md)$/, '') + (p.endsWith('.md') ? '\u0001' : '\u0000');
   for (const list of out.values()) list.sort((a, b) => (key(a.path) < key(b.path) ? -1 : key(a.path) > key(b.path) ? 1 : 0));
   return FILE_GROUPS.filter((g) => out.has(g)).map((g) => [g, out.get(g)!]);
 }

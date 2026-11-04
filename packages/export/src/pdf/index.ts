@@ -4,8 +4,8 @@
 //   const blob = await exportPdf(planExport(model, config), { files: model.files });
 import { jsPDF } from 'jspdf';
 import type { Files } from '@csd/core';
-import { PRINT_THEME, renderSheetSvg, type Theme } from '@csd/render';
-import { exportRenderOptions, type ExportPlan, type FolderPlan, type SheetPlan, type StrategyPlan, type TypePlan } from '../plan';
+import { PRINT_THEME, renderSequenceSvg, renderSheetSvg, type Theme } from '@csd/render';
+import { exportRenderOptions, type ExportPlan, type FolderPlan, type SequencePlan, type SequenceSheetPlan, type SheetPlan, type StrategyPlan, type TypePlan } from '../plan';
 import { APP_LOGO_SVG } from '../logo';
 import { MONO, registerFonts, SANS } from './fonts';
 import { fitBox, hierarchyPath, normalizePath, pagesFor, sniffImage } from './util';
@@ -40,7 +40,7 @@ export async function exportPdf(plan: ExportPlan, opts: PdfOptions): Promise<Blo
   const coverage = await registerFonts(doc);
   const w = new Writer(doc, plan.config.paper, coverage, opts.files);
   const sec = plan.config.sections;
-  const total = plan.strategies.length + (sec.library ? plan.types.length : 0) + 2;
+  const total = plan.items.length + (sec.library ? plan.types.length : 0) + 2;
   let done = 0;
   const progress = () => opts.onProgress?.(++done, total);
 
@@ -76,8 +76,10 @@ export async function exportPdf(plan: ExportPlan, opts: PdfOptions): Promise<Blo
     await w.markdown(plan.projectReadme.markdown, { ...w.ctx(), file: plan.projectReadme.file });
   }
 
-  const byFile = new Map(plan.strategies.map((s) => [s.file, s]));
+  const byFile = new Map(plan.items.map((i) => [i.file, i]));
   const printed = new Set<string>();
+  const item = (i: ExportPlan['items'][number], depth: number, parent: string | undefined) =>
+    i.kind === 'strategy' ? strategy(w, plan, i.plan, depth, parent, entries, sub) : sequence(w, plan, i.plan, depth, parent, entries, sub);
   const minDepth = Math.min(...plan.folders.filter((f) => f.path).map((f) => f.depth), 99);
   let lastWasFolder = false;
   for (const folder of plan.folders) {
@@ -101,19 +103,19 @@ export async function exportPdf(plan: ExportPlan, opts: PdfOptions): Promise<Blo
         entries.push({ depth, text: label, page: -1, bold: true, key, parent });
       }
     }
-    for (const file of folder.strategies) {
+    for (const file of folder.items) {
       const s = byFile.get(file);
       if (!s || printed.has(file)) continue;
       printed.add(file);
-      const first = await strategy(w, plan, s, folder.path ? depth + 1 : 0, key, entries, sub);
+      const first = await item(s, folder.path ? depth + 1 : 0, key);
       if (first) lastWasFolder = false;
       progress();
       await yieldToBrowser();
     }
   }
-  for (const s of plan.strategies) {
+  for (const s of plan.items) {
     if (printed.has(s.file)) continue;
-    await strategy(w, plan, s, 0, undefined, entries, sub);
+    await item(s, 0, undefined);
     progress();
     await yieldToBrowser();
   }
@@ -189,7 +191,11 @@ async function cover(w: Writer, plan: ExportPlan, files: Files) {
   if (plan.meta.description) w.para(plan.meta.description, ctx, { size: 12, color: C.ink, gapAfter: 6 });
   w.y += 4;
 
-  const scope = plan.config.strategies.length ? `${plan.strategies.length} selected ${plan.strategies.length === 1 ? 'strategy' : 'strategies'}` : `All strategies (${plan.strategies.length})`;
+  const nq = plan.sequences.length;
+  const seqs = nq ? `, ${nq} ${nq === 1 ? 'sequence' : 'sequences'}` : '';
+  const scope = plan.config.strategies.length
+    ? `${plan.strategies.length} selected ${plan.strategies.length === 1 ? 'strategy' : 'strategies'}${seqs}`
+    : `All strategies (${plan.strategies.length})${nq ? ` and sequences (${nq})` : ''}`;
   const sections = Object.entries(plan.config.sections)
     .filter(([, v]) => v)
     .map(([k]) => SECTION_NAMES[k] ?? k);
@@ -375,6 +381,7 @@ function strategyHeader(w: Writer, plan: ExportPlan, s: StrategyPlan) {
     `${s.links.length} link${s.links.length === 1 ? '' : 's'}`,
     `${s.sheets.length} sheet${s.sheets.length === 1 ? '' : 's'}`,
     s.usedBy.length ? `used by ${[...new Set(s.usedBy.map((u) => u.strategy))].join(', ')}` : undefined,
+    s.sequenceRefs.length ? `sequences ${[...new Set(s.sequenceRefs.map((r) => r.sequence))].join(', ')}` : undefined,
     `file ${s.file}`,
   ].filter(Boolean);
   w.para(facts.join('  ·  '), w.fullCtx, { size: 8.5, color: C.muted, gapAfter: 3 });
@@ -396,6 +403,12 @@ function strategyHeader(w: Writer, plan: ExportPlan, s: StrategyPlan) {
 // ---------------------------------------------------------------------------
 
 async function diagramPage(w: Writer, plan: ExportPlan, sheet: SheetPlan, name: string, title: string, sub: string) {
+  // On paper the ▾ of expanded parameters cannot be clicked: exportRenderOptions() turns off the expand / collapse arrows.
+  const svg = renderSheetSvg(sheet.layout, { ...exportRenderOptions(plan), theme: PDF_THEME, background: false });
+  await drawingPage(w, svg, sheet.layout.bounds, name, title, sub);
+}
+
+async function drawingPage(w: Writer, svg: string, b: { w: number; h: number }, name: string, title: string, sub: string | undefined) {
   const { geo } = w;
   const yTitle = geo.top + 4;
   w.text(name, geo.left, yTitle, { family: MONO, style: 'bold', size: 12 });
@@ -404,16 +417,263 @@ async function diagramPage(w: Writer, plan: ExportPlan, sheet: SheetPlan, name: 
   w.text(title, nx, yTitle, { size: 11, maxWidth: geo.right - nx });
   if (sub) w.text(sub, geo.right, yTitle, { size: 8, color: C.muted, align: 'right' });
   const area = { x: geo.left, y: geo.top + 9, w: geo.right - geo.left, h: geo.bottom - geo.top - 9 };
-  // On paper the ▾ of expanded parameters cannot be clicked: drop it (collapsed blocks keep their "N parameters" line).
-  const layout = sheet.layout; // exportRenderOptions() turns off the expand / collapse arrows
-  const svg = renderSheetSvg(layout, { ...exportRenderOptions(plan), theme: PDF_THEME, background: false });
-  const b = sheet.layout.bounds;
   const f = fitBox(b.w, b.h, area.w, area.h, 1.6 * PX);
   if (!f.w) return;
   const x = area.x + (area.w - f.w) / 2;
   const y = area.y + (area.h - f.h) / 2;
   await w.svg(svg, x, y, f.w, f.h);
   if (f.scale < PX * 0.55) w.text(`Scale ${Math.round((f.scale / PX) * 100)} %`, geo.left, geo.bottom + 3, { size: 6.5, color: C.muted });
+}
+
+// ---------------------------------------------------------------------------
+// Sequence (SFC)
+// ---------------------------------------------------------------------------
+
+function sequenceInfo(plan: ExportPlan, q: SequencePlan, title: string): PageInfo {
+  return {
+    section: 'sequence',
+    document: q.title ? `${q.name} — ${q.title}` : q.name,
+    title,
+    hierarchy: hierarchyPath(q.hierarchy),
+    revision: plan.config.titleBlock.revision || q.revision || plan.revision,
+    drawn: plan.meta.titleBlock.drawn || q.author || plan.author,
+  };
+}
+
+const CONDITION_KIND: Record<SequencePlan['transitions'][number]['conditionKind'], string> = {
+  linked: 'linked',
+  words: 'in words',
+  missing: 'missing',
+  invalid: 'invalid',
+};
+
+/** Writes all parts of a sequence; returns false when nothing was printed. */
+async function sequence(
+  w: Writer,
+  plan: ExportPlan,
+  q: SequencePlan,
+  depth: number,
+  parent: string | undefined,
+  entries: Entry[],
+  sub: (key: string, title: string) => void,
+): Promise<boolean> {
+  const sec = plan.config.sections;
+  const key = `sequence:${q.file}`;
+  let started = false;
+  const start = (title: string) => {
+    if (!started) entries.push({ depth, text: `${q.title ? `${q.title} ` : ''}(sequence)`, mono: q.name, page: w.page, key, parent });
+    started = true;
+    sub(key, title);
+  };
+
+  if (sec.functionDescription) {
+    w.newPage(sequenceInfo(plan, q, 'Function description'));
+    start('Function description');
+    sequenceHeader(w, q);
+    if (q.doc) await w.markdown(q.doc.markdown, { ...w.ctx(), file: q.doc.file }, { headingOffset: 0 });
+    if (q.steps.length) {
+      w.heading('Steps', 2, w.fullCtx, { keep: 20 });
+      const purpose = q.steps.some((s) => s.doc || s.comment);
+      w.table({
+        head: [purpose ? ['Step', 'Description', 'Purpose'] : ['Step', 'Description']],
+        body: q.steps.map((s) => [s.initial ? `${s.step} (initial)` : s.step, s.description ?? '', ...(purpose ? [[s.doc, s.comment].filter(Boolean).join('\n')] : [])]),
+        columnStyles: { 0: { font: MONO, fontStyle: 'bold', cellWidth: 34 }, 1: purpose ? { cellWidth: 110 } : {} },
+      });
+    }
+  }
+
+  if (sec.diagrams) {
+    for (const sh of q.sheets) {
+      const n = q.sheets.length;
+      const title = `Sheet ${sh.id}${n > 1 ? ` of ${n}` : ''}${sh.title ? ` — ${sh.title}` : ''}`;
+      w.newPage(sequenceInfo(plan, q, title));
+      start(title);
+      await sequenceSheetPage(w, sh, q.name, `${q.title ? `${q.title} · ` : ''}${title}`, hierarchyPath(q.hierarchy));
+    }
+  }
+
+  // Step and transition tables belong to the settings of a sequence.
+  const parts: string[] = [];
+  const part = (title: string, needed: number) => {
+    if (!parts.length || w.remaining < needed) {
+      parts.length = 0;
+      parts.push(title);
+      w.newPage(sequenceInfo(plan, q, title));
+    } else {
+      parts.push(title);
+      w.info = sequenceInfo(plan, q, parts.map((p, i) => (i ? p.charAt(0).toLowerCase() + p.slice(1) : p)).join(', '));
+      w.pages[w.page - 1] = w.info;
+      w.y += 4;
+    }
+    start(title);
+  };
+  if (sec.blockSettings || sec.functionDescription) {
+    part('Steps and actions', 0);
+    stepsTable(w, q);
+    part('Transitions', 50);
+    transitionsTable(w, q);
+  }
+  if (sec.links) {
+    part('Cross references', 60);
+    sequenceRefs(w, q);
+  }
+  return started;
+}
+
+function sequenceHeader(w: Writer, q: SequencePlan) {
+  const ctx = w.fullCtx;
+  if (q.hierarchy.length) w.eyebrow(q.hierarchy.map((h) => (h.level ? `${h.level} ${h.name}` : h.name)).join('  ›  '));
+  w.heading(q.title ? `— ${q.title}` : '', 1, ctx, { mono: q.name });
+  if (q.description) w.para(q.description, w.ctx(), { size: 10.5, gapAfter: 2 });
+  const readers = [...new Set(q.usedBy.map((u) => u.strategy))];
+  const facts = [
+    'Sequence (SFC)',
+    q.scan ? `Scan ${q.scan}` : undefined,
+    q.revision ? `Revision ${q.revision}` : undefined,
+    q.author ? `Author ${q.author}` : undefined,
+    `${q.steps.length} step${q.steps.length === 1 ? '' : 's'}`,
+    `${q.transitions.length} transition${q.transitions.length === 1 ? '' : 's'}`,
+    `${q.sheets.length} sheet${q.sheets.length === 1 ? '' : 's'}`,
+    readers.length ? `read by ${readers.join(', ')}` : undefined,
+    `file ${q.file}`,
+  ].filter(Boolean);
+  w.para(facts.join('  ·  '), w.fullCtx, { size: 8.5, color: C.muted, gapAfter: 3 });
+  const problems = q.diags.filter((d) => d.severity !== 'info');
+  if (problems.length) {
+    const errs = problems.filter((d) => d.severity === 'error').length;
+    w.box(
+      `Problems: ${errs} error${errs === 1 ? '' : 's'}, ${problems.length - errs} warning${problems.length - errs === 1 ? '' : 's'}`,
+      problems.map((d) => `${d.severity === 'error' ? 'Error' : 'Warning'}${d.line ? ` (line ${d.line})` : ''}: ${d.message}`),
+      w.ctx(),
+      { color: errs ? C.error : C.warning },
+    );
+  }
+  w.y += 2;
+}
+
+async function sequenceSheetPage(w: Writer, sheet: SequenceSheetPlan, name: string, title: string, sub: string) {
+  // The fonts have no stopwatch glyph: monitoring notes print as "max 2min".
+  const svg = renderSequenceSvg(sheet.layout, { theme: PDF_THEME, background: false }).replace(/⏱\s*/g, '');
+  await drawingPage(w, svg, sheet.layout.bounds, name, title, sub);
+}
+
+function stepsTable(w: Writer, q: SequencePlan) {
+  const ctx = w.fullCtx;
+  w.heading('Steps and actions', 1, ctx, { mono: `${q.name} ·` });
+  w.para('Qualifiers: N while active, S set (stored), R reset, P1 / P0 pulse on entry / exit, D delayed, L time limited. Actions in italics are described in words, not linked to a signal.', w.ctx(), {
+    size: 8.5,
+    color: C.muted,
+  });
+  if (!q.steps.length) {
+    w.para('The sequence has no steps.', w.ctx(), { size: 9, color: C.muted });
+    return;
+  }
+  // One row per action (a step without actions gets one row); step cells span its actions.
+  type Row = { step: (typeof q.steps)[number]; a?: (typeof q.steps)[number]['actions'][number]; first: boolean; span: number };
+  const rows: Row[] = [];
+  for (const s of q.steps) {
+    if (!s.actions.length) rows.push({ step: s, first: true, span: 1 });
+    s.actions.forEach((a, i) => rows.push({ step: s, a, first: i === 0, span: s.actions.length }));
+  }
+  const spanned = (r: Row, content: string) => ({ content, rowSpan: r.span });
+  w.table({
+    ctx,
+    head: [['Step', 'Description', 'Q', 'Target', 'Value', 'Time', 'Action text', 'Monitoring']],
+    body: rows.map((r) => {
+      const cells: (string | { content: string; rowSpan: number })[] = [];
+      if (r.first) cells.push(spanned(r, r.step.initial ? `${r.step.step}\n(initial)` : r.step.step), spanned(r, [r.step.description, r.step.comment].filter(Boolean).join('\n')));
+      cells.push(r.a?.q ?? '', r.a?.target ?? '', r.a?.value ?? '', r.a?.time ?? '', r.a?.text ?? (r.a ? '' : 'no actions'));
+      if (r.first) cells.push(spanned(r, r.step.monitoring ?? ''));
+      return cells;
+    }),
+    columnStyles: {
+      0: { font: MONO, fontStyle: 'bold', cellWidth: ctx.width * 0.07 },
+      1: { cellWidth: ctx.width * 0.17 },
+      2: { font: MONO, fontStyle: 'bold', cellWidth: ctx.width * 0.035, halign: 'center' },
+      3: { font: MONO, cellWidth: ctx.width * 0.2 },
+      4: { font: MONO, cellWidth: ctx.width * 0.07 },
+      5: { font: MONO, cellWidth: ctx.width * 0.06 },
+      7: { cellWidth: ctx.width * 0.1 },
+    },
+    keep: 20,
+    cellHook: (d) => {
+      if (d.section !== 'body') return;
+      const raw = d.cell.raw as unknown;
+      const text = typeof raw === 'string' ? raw : (raw as { content?: string })?.content ?? '';
+      if (text === 'no actions') {
+        d.cell.styles.textColor = rgb(C.muted);
+        d.cell.styles.fontStyle = 'italic';
+      }
+      if (d.column.index === 3 && text) d.cell.styles.textColor = rgb('#8a5a12');
+    },
+  });
+  // Unlinked action texts: italics (rows of actions without a target).
+}
+
+function transitionsTable(w: Writer, q: SequencePlan) {
+  const ctx = w.fullCtx;
+  w.heading('Transitions', 2, ctx, { keep: 20 });
+  if (!q.transitions.length) {
+    w.para('The sequence has no transitions.', w.ctx(), { size: 9, color: C.muted });
+    return;
+  }
+  w.table({
+    ctx,
+    head: [['#', 'From', 'To', 'Condition', 'Kind', 'Comment']],
+    body: q.transitions.map((t) => [String(t.index + 1), t.from.join(' + '), t.to.join(' + '), t.condition ?? '', CONDITION_KIND[t.conditionKind], t.comment ?? '']),
+    columnStyles: {
+      0: { cellWidth: 8, halign: 'right', textColor: rgb(C.muted) },
+      1: { font: MONO, fontStyle: 'bold', cellWidth: ctx.width * 0.1 },
+      2: { font: MONO, fontStyle: 'bold', cellWidth: ctx.width * 0.1 },
+      3: { font: MONO, cellWidth: ctx.width * 0.38 },
+      4: { cellWidth: ctx.width * 0.07 },
+    },
+    keep: 20,
+    cellHook: (d) => {
+      if (d.section !== 'body') return;
+      const t = q.transitions[d.row.index];
+      if (d.column.index === 3 && t.conditionKind === 'words') {
+        d.cell.styles.font = SANS;
+        d.cell.styles.fontStyle = 'italic';
+      }
+      if (d.column.index === 4) d.cell.styles.textColor = rgb(t.conditionKind === 'linked' ? C.muted : t.conditionKind === 'words' ? C.warning : C.error);
+    },
+  });
+}
+
+function sequenceRefs(w: Writer, q: SequencePlan) {
+  w.heading('Cross references', 1, w.fullCtx, { mono: `${q.name} ·` });
+  const ctx = w.fullCtx;
+  w.heading('Signals of strategies', 2, ctx, { keep: 16 });
+  if (!q.refs.length) w.para('No action writes to and no condition reads from a strategy.', w.ctx(), { size: 9, color: C.muted });
+  else
+    w.table({
+      ctx: w.ctx(),
+      head: [['Step / transition', 'Access', 'Strategy', 'Signal']],
+      body: q.refs.map((r) => [r.where, r.kind === 'writes' ? 'written by action' : 'read by condition', r.strategy, `${r.strategy}:${r.block}.${r.port}`]),
+      columnStyles: { 0: { font: MONO, fontStyle: 'bold' }, 2: { font: MONO, fontStyle: 'bold' }, 3: { font: MONO } },
+      keep: 16,
+    });
+  w.heading('Strategies reading this sequence', 2, ctx, { keep: 16 });
+  if (!q.usedBy.length) w.para(`No strategy reads signals of ${q.name} (S…X, S…T, SEQ.RUNNING …).`, w.ctx(), { size: 9, color: C.muted });
+  else
+    w.table({
+      ctx: w.ctx(),
+      head: [['Signal', 'Read by strategy', 'Input']],
+      body: q.usedBy.map((u) => [`${q.name}:${u.output}`, u.strategy, u.input]),
+      columnStyles: { 0: { font: MONO }, 1: { font: MONO, fontStyle: 'bold' }, 2: { font: MONO } },
+      keep: 16,
+    });
+  w.heading('Inputs of the sequence', 2, ctx, { keep: 16 });
+  if (!q.inputs.length) w.para('The sequence has no named inputs.', w.ctx(), { size: 9, color: C.muted });
+  else
+    w.table({
+      ctx: w.ctx(),
+      head: [['Name', 'Type', 'Description']],
+      body: q.inputs.map((i) => [i.name, i.type, i.description ?? '']),
+      columnStyles: { 0: { font: MONO, fontStyle: 'bold' }, 1: { font: MONO } },
+      keep: 16,
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +813,16 @@ function links(w: Writer, plan: ExportPlan, s: StrategyPlan) {
       columnStyles: { 0: { font: MONO }, 1: { font: MONO, fontStyle: 'bold' }, 2: { font: MONO } },
       keep: 16,
     });
+  if (s.sequenceRefs.length) {
+    w.heading('Signals read or written by sequences', 2, w.fullCtx, { keep: 16 });
+    w.table({
+      ctx: w.ctx(),
+      head: [['Signal', 'Sequence', 'Access', 'Where']],
+      body: s.sequenceRefs.map((r) => [`${r.block}.${r.port}`, r.sequence, r.kind === 'writes' ? 'written by action' : 'read by condition', r.where]),
+      columnStyles: { 0: { font: MONO }, 1: { font: MONO, fontStyle: 'bold' }, 3: { font: MONO } },
+      keep: 16,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -773,7 +1043,7 @@ async function titleBlock(w: Writer, plan: ExportPlan, info: PageInfo, page: num
   cell(xLogo, tb.y + r, mainW, r, 'Hierarchy', info.hierarchy);
   // Document cell: two lines.
   const dy = tb.y + 2 * r;
-  w.text(info.section === 'strategy' ? 'Strategy' : 'Document', xLogo + 1.2, dy + 2.3 * k + 0.2, { size: label, color: C.muted });
+  w.text(info.section === 'strategy' ? 'Strategy' : info.section === 'sequence' ? 'Sequence' : 'Document', xLogo + 1.2, dy + 2.3 * k + 0.2, { size: label, color: C.muted });
   w.text(info.document || '—', xLogo + 1.2, dy + 2.3 * k + 0.2 + value * PT * 1.25 + 0.4, { size: value + 1, style: 'bold', maxWidth: mainW - 2.4 });
   if (info.title) w.text(info.title, xLogo + 1.2, dy + 2 * r - 1.7 * k, { size: value, maxWidth: mainW - 2.4 });
 

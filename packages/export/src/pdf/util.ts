@@ -124,6 +124,8 @@ const FALLBACK: Record<string, string> = {
   '–': '-',
   '—': '-',
   '\t': '    ',
+  '⏱': '', // stopwatch (step monitoring times)
+  '\ufe0f': '', // emoji presentation selector
 };
 
 /**

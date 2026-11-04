@@ -2,12 +2,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { APP_LOGO_SVG } from '@csd/export';
 import { useData } from './context';
-import { sheetOfBlock, sheetOfLink, strategyCtx, typeCtx, type DiagramCtx } from './data';
+import { seqSelRoute, sheetOfBlock, sheetOfLink, sheetOfStep, sheetOfTransition, strategyCtx, typeCtx, type DiagramCtx } from './data';
 import { go, useRoute, type Route } from './route';
 import { Tree } from './Tree';
 import { Search } from './Search';
 import { Inspector, selRoute } from './Inspector';
 import { FolderPage, LibraryPage, ProjectPage, StrategyPage, TypePage } from './pages';
+import { SequencePage, sequenceView } from './SequencePage';
+import { SeqInspector } from './SeqInspector';
 
 const store = {
   get(k: string): string | null {
@@ -50,6 +52,7 @@ function diagramOf(d: ReturnType<typeof useData>, r: Route): { ctx?: DiagramCtx;
 function pageTitle(d: ReturnType<typeof useData>, r: Route): string {
   switch (r.page) {
     case 'strategy':
+    case 'sequence':
       return r.name;
     case 'folder':
       return r.path.split('/').pop() ?? '';
@@ -67,6 +70,14 @@ export function App() {
   const route = useRoute();
   const { ctx, sheet } = useMemo(() => diagramOf(d, route), [d, route]);
   const sel = route.page === 'strategy' || route.page === 'type' ? route.sel : null;
+  // Sequence sheet shown by the route (sheet tab only).
+  const seq = useMemo(() => {
+    if (route.page !== 'sequence') return undefined;
+    const q = d.sequenceByName.get(route.name);
+    if (!q) return undefined;
+    const v = sequenceView(d, q, route);
+    return v.tab?.tab === 'sheet' ? { q, sheet: v.tab.sheet ?? v.sheet, sel: route.sel } : undefined;
+  }, [d, route]);
   const [inspector, setInspector] = useState(() => (isNarrow() ? false : store.get('csv.inspector') !== '0'));
   const [treeOpen, setTreeOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -79,8 +90,8 @@ export function App() {
 
   // On narrow screens the inspector is a drawer: open it when something is selected.
   useEffect(() => {
-    if (sel && isNarrow()) setInspector(true);
-  }, [sel]);
+    if ((sel || seq?.sel) && isNarrow()) setInspector(true);
+  }, [sel, seq?.sel]);
 
   useEffect(() => {
     document.title = `${pageTitle(d, route)} — ${d.projectName}`;
@@ -92,9 +103,15 @@ export function App() {
     const s = sel.kind === 'block' ? sheetOfBlock(ctx, sel.id) : sheetOfLink(ctx, sel.index, sheet);
     if (s !== undefined && s !== sheet) go(selRoute(ctx, sel, s), { replace: true });
   }, [ctx, sel, sheet]);
+  // Same for sequences: a step / transition on another sheet.
+  useEffect(() => {
+    if (!seq?.sel) return;
+    const s = seq.sel.kind === 'step' ? sheetOfStep(seq.q, seq.sel.id) : sheetOfTransition(seq.q, seq.sel.index);
+    if (s !== undefined && s !== seq.sheet) go(seqSelRoute(seq.q, seq.sel, s), { replace: true });
+  }, [seq]);
 
   // Move to the top of a page when the page (not just the selection) changes.
-  const pageKey = route.page === 'strategy' ? `s:${route.name}:${route.tab ?? ''}` : route.page === 'type' ? `t:${route.key}` : route.page === 'folder' ? `f:${route.path}` : route.page;
+  const pageKey = route.page === 'strategy' ? `s:${route.name}:${route.tab ?? ''}` : route.page === 'sequence' ? `q:${route.name}:${route.tab ?? ''}` : route.page === 'type' ? `t:${route.key}` : route.page === 'folder' ? `f:${route.path}` : route.page;
   useEffect(() => {
     mainRef.current?.scrollTo?.(0, 0);
     mainRef.current?.querySelector<HTMLElement>('.v-page, .spage')?.scrollTo?.(0, 0);
@@ -114,14 +131,15 @@ export function App() {
       if (e.key === 'Escape' && !typing) {
         if (treeOpen) setTreeOpen(false);
         else if (ctx && sel) go(selRoute(ctx, null, sheet), { replace: true });
+        else if (seq?.sel) go(seqSelRoute(seq.q, null, seq.sheet), { replace: true });
         else if (inspector && isNarrow()) setInspector(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [ctx, sel, sheet, treeOpen, inspector]);
+  }, [ctx, sel, sheet, seq, treeOpen, inspector]);
 
-  const showInspector = !!ctx;
+  const showInspector = !!ctx || !!seq;
   const date = d.generatedAt.slice(0, 10);
 
   return (
@@ -168,8 +186,10 @@ export function App() {
         {route.page === 'library' && <LibraryPage />}
         {route.page === 'type' && <TypePage route={route} />}
         {route.page === 'strategy' && <StrategyPage route={route} />}
+        {route.page === 'sequence' && <SequencePage route={route} />}
       </main>
-      {showInspector && inspector && <Inspector ctx={ctx} sel={sel} sheet={sheet} onSelect={(s, sh) => ctx && go(selRoute(ctx, s, sh ?? sheet), { replace: (sh ?? sheet) === sheet })} onClose={() => setInspectorOpen(false)} />}
+      {seq && inspector && <SeqInspector q={seq.q} sel={seq.sel} sheet={seq.sheet} onClose={() => setInspectorOpen(false)} />}
+      {ctx && inspector && <Inspector ctx={ctx} sel={sel} sheet={sheet} onSelect={(s, sh) => ctx && go(selRoute(ctx, s, sh ?? sheet), { replace: (sh ?? sheet) === sheet })} onClose={() => setInspectorOpen(false)} />}
       <footer className="footer">
         Exported from Control Strategy Studio · {date} · read-only
       </footer>

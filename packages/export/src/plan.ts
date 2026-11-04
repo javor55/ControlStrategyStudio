@@ -1,16 +1,24 @@
 // Export plan: everything a PDF or HTML export shows, computed once from the
 // project model and the export configuration. Writers only draw it.
 import {
+  exprRefs,
   feedbackOrders,
   formatEndpoint,
   formatValue,
   layoutDiagram,
+  layoutSequence,
+  parseCondition,
+  sequenceSignalType,
   typeLabel,
   type BlockTypeDef,
   type Diag,
   type FolderNode,
+  type PortDef,
   type ProjectMeta,
   type ProjectModel,
+  type SeqAction,
+  type Sequence,
+  type SfcLayout,
   type SheetLayout,
   type SignalCategory,
   type Strategy,
@@ -86,6 +94,22 @@ export interface UsedByRow {
   input: string;
 }
 
+/** A signal of a strategy read (transition condition) or written (step action) by a sequence. */
+export interface SequenceRefRow {
+  kind: 'reads' | 'writes';
+  sequence: string;
+  sequenceFile: string;
+  /** Step with the action (writes). */
+  step?: string;
+  /** Transition index (reads). */
+  transition?: number;
+  /** "S10" or "S0 → S10". */
+  where: string;
+  strategy: string;
+  block: string;
+  port: string;
+}
+
 export interface SheetPlan {
   id: number;
   title?: string;
@@ -106,8 +130,95 @@ export interface StrategyPlan {
   blocks: BlockRow[];
   links: LinkRow[];
   usedBy: UsedByRow[];
+  /** Signals of this strategy read or written by sequences. */
+  sequenceRefs: SequenceRefRow[];
   diags: Diag[];
 }
+
+// ---------------------------------------------------------------------------
+// Sequences
+
+export interface SequenceSheetPlan {
+  id: number;
+  title?: string;
+  layout: SfcLayout;
+}
+
+export interface ActionRow {
+  index: number;
+  /** Qualifier (N, S, R, P1, P0, D, L). */
+  q: string;
+  /** Written input `STRATEGY:BLOCK.PORT` (linked actions). */
+  target?: string;
+  value?: string;
+  time?: string;
+  text?: string;
+  linked: boolean;
+  /** One line: "S P101:P101.START := TRUE · 5s — text". */
+  summary: string;
+}
+
+export interface StepRow {
+  step: string;
+  initial: boolean;
+  description?: string;
+  doc?: string;
+  comment?: string;
+  sheet: number;
+  actions: ActionRow[];
+  /** Monitoring, e.g. "max 2min" / "min 5s, max 1min". */
+  monitoring?: string;
+}
+
+/** Reference inside a condition (character offset `at` into the condition text). */
+export interface ConditionRef {
+  text: string;
+  at: number;
+  /** Strategy or sequence name (`STRATEGY:BLOCK.PORT`); absent for own steps / inputs. */
+  scope?: string;
+  name: string;
+  port?: string;
+}
+
+export interface TransitionRow {
+  index: number;
+  from: string[];
+  to: string[];
+  /** "S0 → S10" / "S10 → S20 + S25". */
+  label: string;
+  condition?: string;
+  comment?: string;
+  /** linked = parsed expression, words = described in words only, missing = none, invalid = does not parse. */
+  conditionKind: 'linked' | 'words' | 'missing' | 'invalid';
+  refs: ConditionRef[];
+  /** Sheet of the source step. */
+  sheet: number;
+}
+
+export interface SequencePlan {
+  file: string;
+  name: string;
+  title?: string;
+  description?: string;
+  revision?: string;
+  author?: string;
+  scan?: string;
+  hierarchy: HierarchyItem[];
+  doc?: MarkdownDoc;
+  sheets: SequenceSheetPlan[];
+  steps: StepRow[];
+  transitions: TransitionRow[];
+  /** Named external signals of the sequence. */
+  inputs: PortDef[];
+  /** Strategy signals read by conditions and written by actions. */
+  refs: SequenceRefRow[];
+  /** Links in strategies that read signals of this sequence (`FILL_T100:S20.X`). */
+  usedBy: UsedByRow[];
+  diags: Diag[];
+}
+
+/** Strategies and sequences in hierarchy pre-order. */
+export type PlanItem = { kind: 'strategy'; file: string; name: string; plan: StrategyPlan } | { kind: 'sequence'; file: string; name: string; plan: SequencePlan };
 
 export interface FolderPlan {
   path: string;
@@ -117,6 +228,10 @@ export interface FolderPlan {
   readme?: MarkdownDoc;
   /** In-scope strategy files directly in this folder. */
   strategies: string[];
+  /** In-scope sequence files directly in this folder. */
+  sequences: string[];
+  /** Strategy and sequence files of this folder in document order (by name). */
+  items: string[];
 }
 
 export interface TypePlan {
@@ -149,6 +264,10 @@ export interface ExportPlan {
   folders: FolderPlan[];
   /** In-scope strategies, hierarchy pre-order. */
   strategies: StrategyPlan[];
+  /** In-scope sequences, hierarchy pre-order. */
+  sequences: SequencePlan[];
+  /** Strategies and sequences together, hierarchy pre-order (document order). */
+  items: PlanItem[];
   /** Block types used by in-scope strategies (and their composites). */
   types: TypePlan[];
   categories: Record<string, SignalCategory>;
@@ -221,6 +340,11 @@ function blockRows(model: ProjectModel, s: Strategy, config: ExportConfig): Bloc
   return rows.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
 }
 
+function seqSignal(model: ProjectModel, e: { strategy?: string; block: string; port: string }): string | undefined {
+  const q = e.strategy ? model.sequenceByName.get(e.strategy) : undefined;
+  return q ? sequenceSignalType(q, e.block, e.port) : undefined;
+}
+
 function linkRows(s: Strategy, model: ProjectModel): LinkRow[] {
   const sheetOfBlock = new Map(s.blocks.map((b) => [b.id, b.sheet]));
   return s.links.map((l) => {
@@ -229,7 +353,7 @@ function linkRows(s: Strategy, model: ProjectModel): LinkRow[] {
       index: l.index,
       from: formatEndpoint(l.from),
       to: formatEndpoint(l.to),
-      signalType: src?.def?.outputs.find((p) => p.name === l.from.port)?.type,
+      signalType: src?.def?.outputs.find((p) => p.name === l.from.port)?.type ?? seqSignal(model, l.from),
       label: l.label,
       category: l.category,
       comment: l.comment,
@@ -238,6 +362,74 @@ function linkRows(s: Strategy, model: ProjectModel): LinkRow[] {
       crossSheet: !l.from.strategy && sheetOfBlock.get(l.from.block) !== sheetOfBlock.get(l.to.block),
     };
   });
+}
+
+const transitionLabel = (t: { from: string[]; to: string[] }) => `${t.from.join(' + ') || '?'} → ${t.to.join(' + ') || '?'}`;
+
+function actionRow(a: SeqAction): ActionRow {
+  const target = a.set ? formatEndpoint(a.set) : undefined;
+  const value = a.value !== undefined ? formatValue(a.value) : undefined;
+  const head = [a.q, target, value !== undefined ? `:= ${value}` : undefined, a.time ? `· ${a.time}` : undefined].filter(Boolean).join(' ');
+  return { index: a.index, q: a.q, target, value, time: a.time, text: a.text, linked: !!a.set, summary: a.text ? (target ? `${head} — ${a.text}` : `${head} ${a.text}`) : head };
+}
+
+function sequencePlan(model: ProjectModel, q: Sequence, config: ExportConfig, hierarchy: HierarchyItem[]): SequencePlan {
+  const sheetOfStep = new Map(q.steps.map((s) => [s.id, q.sheets.some((x) => x.id === s.sheet) ? s.sheet : (q.sheets[0]?.id ?? 1)]));
+  const steps: StepRow[] = q.steps.map((s) => ({
+    step: s.id,
+    initial: s.initial,
+    description: s.description,
+    doc: s.doc,
+    comment: s.comment,
+    sheet: sheetOfStep.get(s.id) ?? 1,
+    actions: s.actions.map(actionRow),
+    monitoring: s.time && (s.time.min || s.time.max) ? [s.time.min ? `min ${s.time.min}` : '', s.time.max ? `max ${s.time.max}` : ''].filter(Boolean).join(', ') : undefined,
+  }));
+  const transitions: TransitionRow[] = q.transitions.map((t) => {
+    const c = parseCondition(t.condition);
+    const refs: ConditionRef[] = c.expr ? exprRefs(c.expr).map((r) => ({ text: r.text, at: r.at, scope: r.scope, name: r.name, port: r.port })) : [];
+    return {
+      index: t.index,
+      from: t.from,
+      to: t.to,
+      label: transitionLabel(t),
+      condition: t.condition,
+      comment: t.comment,
+      conditionKind: !t.condition?.trim() ? 'missing' : c.expr ? 'linked' : c.descriptive ? 'words' : 'invalid',
+      refs: refs.sort((a, b) => a.at - b.at),
+      sheet: sheetOfStep.get(t.from[0]) ?? q.sheets[0]?.id ?? 1,
+    };
+  });
+  const refs: SequenceRefRow[] = [];
+  for (const s of q.steps) {
+    for (const a of s.actions) if (a.set?.strategy) refs.push({ kind: 'writes', sequence: q.name, sequenceFile: q.file, step: s.id, where: s.id, strategy: a.set.strategy, block: a.set.block, port: a.set.port });
+  }
+  for (const t of transitions) {
+    for (const r of t.refs) if (r.scope && r.port) refs.push({ kind: 'reads', sequence: q.name, sequenceFile: q.file, transition: t.index, where: t.label, strategy: r.scope, block: r.name, port: r.port });
+  }
+  return {
+    file: q.file,
+    name: q.name,
+    title: q.title,
+    description: q.description,
+    revision: q.revision,
+    author: q.author,
+    scan: q.scan,
+    hierarchy,
+    doc: config.sections.functionDescription ? text(model.files, q.docFile) : undefined,
+    sheets: layoutSequence(q).map((layout) => ({ id: layout.sheet, title: q.sheets.find((x) => x.id === layout.sheet)?.title, layout })),
+    steps,
+    transitions,
+    inputs: q.inputs,
+    refs,
+    usedBy: model.usedBy(q.name).map((r) => ({
+      output: `${r.link.from.block}.${r.link.from.port}`,
+      strategy: r.strategy.name,
+      strategyFile: r.strategy.file,
+      input: `${r.link.to.block}.${r.link.to.port}`,
+    })),
+    diags: model.diagsByFile.get(q.file) ?? [],
+  };
 }
 
 function walk(node: FolderNode, visit: (n: FolderNode) => void) {
@@ -250,22 +442,33 @@ export function planExport(
   config: ExportConfig,
   opts: { date?: string; revision?: string; history?: HistoryEntry[]; uncommitted?: boolean } = {},
 ): ExportPlan {
-  const scope = new Set(config.strategies.length ? config.strategies : model.strategies.map((s) => s.file));
+  const scope = new Set(config.strategies.length ? config.strategies : [...model.strategies.map((s) => s.file), ...model.sequences.map((s) => s.file)]);
   const display = layoutDisplay(config);
 
-  // Hierarchy pre-order: folders and strategies in the order of the tree.
+  // Hierarchy pre-order: folders, strategies and sequences in the order of the tree.
   const folders: FolderPlan[] = [];
   const order: string[] = [];
   const pathOf = new Map<string, HierarchyItem[]>();
+  const nameOf = (f: string) => (f.split('/').pop() ?? f).replace(/(\.seq)?\.yaml$/, '');
+  const itemsOf = (n: FolderNode) =>
+    [...n.strategies, ...(n.sequences ?? [])].filter((f) => scope.has(f)).sort((a, b) => nameOf(a).localeCompare(nameOf(b)) || a.localeCompare(b));
+  const folderPlan = (n: FolderNode, items: string[]): FolderPlan => ({
+    path: n.path,
+    name: n.name,
+    level: n.level,
+    depth: n.depth,
+    readme: n.path && config.sections.folderReadmes ? text(model.files, n.readme) : undefined,
+    strategies: n.strategies.filter((f) => scope.has(f)),
+    sequences: (n.sequences ?? []).filter((f) => scope.has(f)),
+    items,
+  });
   walk(model.root, (n) => {
-    const inScope = n.strategies.filter((f) => scope.has(f));
+    const inScope = itemsOf(n);
     let hasDescendants = false;
     walk(n, (m) => {
-      if (m.strategies.some((f) => scope.has(f))) hasDescendants = true;
+      if (itemsOf(m).length) hasDescendants = true;
     });
-    if (n.path && hasDescendants) {
-      folders.push({ path: n.path, name: n.name, level: n.level, depth: n.depth, readme: config.sections.folderReadmes ? text(model.files, n.readme) : undefined, strategies: inScope });
-    }
+    if (n.path && hasDescendants) folders.push(folderPlan(n, inScope));
     const parts = n.path ? n.path.split('/') : [];
     const hierarchy = parts.map((name, i) => {
       const path = parts.slice(0, i + 1).join('/');
@@ -276,9 +479,23 @@ export function planExport(
       pathOf.set(f, hierarchy);
     }
   });
-  if (!model.root.path && model.root.strategies.some((f) => scope.has(f))) {
-    folders.unshift({ path: '', name: '', depth: 0, strategies: model.root.strategies.filter((f) => scope.has(f)) });
-  }
+  if (!model.root.path && itemsOf(model.root).length) folders.unshift(folderPlan(model.root, itemsOf(model.root)));
+
+  const seqRefRows = (strategy: string): SequenceRefRow[] =>
+    model.sequenceRefs(strategy).map((r) => {
+      const t = r.transition !== undefined ? model.sequenceByName.get(r.sequence)?.transitions.find((x) => x.index === r.transition) : undefined;
+      return {
+        kind: r.kind,
+        sequence: r.sequence,
+        sequenceFile: r.sequenceFile,
+        step: r.step,
+        transition: r.transition,
+        where: r.step ?? (t ? transitionLabel(t) : `transition ${(r.transition ?? 0) + 1}`),
+        strategy: r.strategy,
+        block: r.block,
+        port: r.port,
+      };
+    });
 
   const strategies: StrategyPlan[] = [];
   for (const file of order) {
@@ -288,11 +505,21 @@ export function planExport(
       defaultScan: s.scan,
       display,
       paramsDefault: model.meta.drawing.params !== 'hide',
-      usedBy: (block, port) =>
-        model
+      usedBy: (block, port) => [
+        ...model
           .usedBy(s.name, block)
           .filter((r) => r.link.from.port === port)
           .map((r) => r.strategy.name),
+        ...model
+          .sequenceRefs(s.name, block)
+          .filter((r) => r.kind === 'reads' && r.port === port)
+          .map((r) => r.sequence),
+      ],
+      writtenBy: (block, port) =>
+        model
+          .sequenceRefs(s.name, block)
+          .filter((r) => r.kind === 'writes' && r.port === port)
+          .map((r) => r.sequence),
     });
     strategies.push({
       file,
@@ -313,8 +540,24 @@ export function planExport(
         strategyFile: r.strategy.file,
         input: `${r.link.to.block}.${r.link.to.port}`,
       })),
+      sequenceRefs: seqRefRows(s.name),
       diags: model.diagsByFile.get(file) ?? [],
     });
+  }
+
+  const sequences: SequencePlan[] = [];
+  for (const file of order) {
+    const q = model.sequenceByFile.get(file);
+    if (q) sequences.push(sequencePlan(model, q, config, pathOf.get(file) ?? []));
+  }
+  const stratByFile = new Map(strategies.map((s) => [s.file, s]));
+  const seqByFile = new Map(sequences.map((s) => [s.file, s]));
+  const items: PlanItem[] = [];
+  for (const file of order) {
+    const st = stratByFile.get(file);
+    if (st) items.push({ kind: 'strategy', file, name: st.name, plan: st });
+    const sq = seqByFile.get(file);
+    if (sq) items.push({ kind: 'sequence', file, name: sq.name, plan: sq });
   }
 
   // Block types used (directly or inside used composites).
@@ -334,7 +577,7 @@ export function planExport(
   }
   const types = [...used.values()].sort((a, b) => a.def.library.localeCompare(b.def.library) || a.def.type.localeCompare(b.def.type) || a.def.version.localeCompare(b.def.version));
 
-  const items = model.diags.filter((d) => !d.file || scope.has(d.file) || types.some((t) => t.def.file === d.file) || d.file === 'project.yaml');
+  const diagItems = model.diags.filter((d) => !d.file || scope.has(d.file) || types.some((t) => t.def.file === d.file) || d.file === 'project.yaml');
   return {
     config,
     meta: model.meta,
@@ -344,9 +587,11 @@ export function planExport(
     projectReadme: config.sections.projectReadme ? text(model.files, 'README.md') : undefined,
     folders,
     strategies,
+    sequences,
+    items,
     types,
     categories: model.meta.signalCategories,
-    diags: { errors: items.filter((d) => d.severity === 'error').length, warnings: items.filter((d) => d.severity === 'warning').length, items },
+    diags: { errors: diagItems.filter((d) => d.severity === 'error').length, warnings: diagItems.filter((d) => d.severity === 'warning').length, items: diagItems },
     history: config.sections.history ? opts.history ?? [] : [],
     uncommitted: !!opts.uncommitted,
   };
