@@ -48,16 +48,16 @@ function save(projectId: string, c: ExportConfig) {
 }
 
 const SEQ_ICON = (
-  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence" role="img">
-    <title>Sequence (SFC)</title>
+  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence strategy" role="img">
+    <title>Sequence strategy (SFC)</title>
     <rect x="3" y="0.5" width="6" height="3.5" fill="none" stroke="currentColor" />
     <path d="M6 4 V8 M3.5 6 H8.5" stroke="currentColor" />
     <rect x="3" y="8" width="6" height="3.5" fill="none" stroke="currentColor" />
   </svg>
 );
 const STRATEGY_ICON = (
-  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Strategy" role="img">
-    <title>Strategy (function blocks)</title>
+  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Continuous strategy" role="img">
+    <title>Continuous strategy (FBD)</title>
     <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
     <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
     <path d="M5 6 H7" stroke="currentColor" />

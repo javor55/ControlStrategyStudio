@@ -125,9 +125,8 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
 /** Removes steps (one undo step). */
 export function removeSteps(file: string, ids: string[]): boolean {
   if (!ids.length) return false;
-  const ops: Op[] = ids.map((id) => ({ op: 'removeStep', file, id }));
   const label = ids.length === 1 ? `Delete step ${ids[0]}` : `Delete ${ids.length} steps`;
-  return store().dispatch(ops.length === 1 ? ops[0] : { op: 'batch', label, ops }, { label, select: null });
+  return store().dispatch(ids.length === 1 ? { op: 'removeStep', file, id: ids[0] } : { op: 'removeSteps', file, ids }, { label, select: null });
 }
 
 /** Moves steps to another sheet (positions are dropped: the step is laid out there). */

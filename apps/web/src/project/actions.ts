@@ -11,8 +11,12 @@ import {
   sequenceFile,
   strategyDocFile,
   strategyFile,
+  wireKind,
+  BUILTIN_CATEGORIES,
+  type BlockInst,
   type BlockTypeDef,
   type FolderNode,
+  type LinkInst,
   type Op,
 } from '@csd/core';
 import { store } from '../state/store';
@@ -79,20 +83,20 @@ export function filesUnderFolder(path: string): string[] {
 
 export async function newStrategy(folder: string) {
   const name = await promptDialog({
-    title: 'New strategy',
-    message: folder ? `In ${folder}` : 'At the top of the hierarchy',
+    title: 'New continuous strategy',
+    message: `${folder ? `In ${folder}` : 'At the top of the hierarchy'} · function blocks and links (FBD)`,
     label: 'Name (tag)',
     placeholder: 'e.g. FIC101',
     okLabel: 'Create',
     validate: (v) => validateStrategyName(v),
   });
   if (!name) return;
-  if (store().dispatch({ op: 'createStrategy', folder, name }, { label: `New strategy ${name}` })) store().open(strategyFile(folder, name));
+  if (store().dispatch({ op: 'createStrategy', folder, name }, { label: `New continuous strategy ${name}` })) store().open(strategyFile(folder, name));
 }
 
 export async function newSequence(folder: string) {
   const name = await promptDialog({
-    title: 'New sequence',
+    title: 'New sequence strategy',
     message: `${folder ? `In ${folder}` : 'At the top of the hierarchy'} · steps, transitions and actions (SFC / Grafcet)`,
     label: 'Name (tag)',
     placeholder: 'e.g. FILL_T100',
@@ -100,7 +104,7 @@ export async function newSequence(folder: string) {
     validate: (v) => validateStrategyName(v),
   });
   if (!name) return;
-  if (store().dispatch({ op: 'createSequence', folder, name }, { label: `New sequence ${name}` })) store().open(sequenceFile(folder, name));
+  if (store().dispatch({ op: 'createSequence', folder, name }, { label: `New sequence strategy ${name}` })) store().open(sequenceFile(folder, name));
 }
 
 export async function newFolder(parent: FolderNode, level?: string): Promise<string | undefined> {
@@ -371,28 +375,41 @@ export function defaultCategoryColor(): string {
   return CATEGORY_COLORS.find((c) => !used.has(c)) ?? CATEGORY_COLORS[Object.keys(st().model.meta.signalCategories).length % CATEGORY_COLORS.length];
 }
 
-/** Number of links (strategies and composite internals) per signal category. */
+/**
+ * Number of links (strategies and composite internals) per line category.
+ * Links without a category count for their built-in one (bool / numeric / other).
+ */
 export function categoryUsage(): Map<string, number> {
   const m = st().model;
   const out = new Map<string, number>();
-  const count = (links: readonly { category?: string }[]) => {
-    for (const l of links) if (l.category) out.set(l.category, (out.get(l.category) ?? 0) + 1);
+  const BUILTIN = { bool: 'bool', real: 'numeric', other: 'other' } as const;
+  const count = (d: { blocks: readonly BlockInst[]; links: readonly LinkInst[] }) => {
+    const byId = new Map(d.blocks.map((b) => [b.id, b]));
+    for (const l of d.links) {
+      let c = l.category;
+      if (!c) {
+        if (l.from.strategy) continue;
+        const t = byId.get(l.to.block)?.def?.inputs.find((p) => p.name === l.to.port)?.type ?? byId.get(l.from.block)?.def?.outputs.find((p) => p.name === l.from.port)?.type;
+        c = BUILTIN[wireKind(t)];
+      }
+      out.set(c, (out.get(c) ?? 0) + 1);
+    }
   };
-  for (const s of m.strategies) count(s.links);
-  for (const t of m.types.all) if (t.diagram) count(t.diagram.links);
+  for (const s of m.strategies) count(s);
+  for (const t of m.types.all) if (t.diagram) count(t.diagram);
   return out;
 }
 
 /** Asks for the name of a new signal category; null = cancelled. Does not create it. */
 export function askCategoryName(): Promise<string | null> {
   return promptDialog({
-    title: 'New signal category',
-    message: 'Links of a category share a line style (colour, dash, width), defined in project.yaml.',
+    title: 'New line category',
+    message: 'Links of a category share a line style (colour, dash, width), defined in project.yaml and editable in Settings → Drawing style.',
     label: 'Name',
     placeholder: 'e.g. interlock',
     okLabel: 'Create',
     validate: (v) =>
-      !v ? 'Enter a name' : !TAG.test(v) ? 'Use letters, digits, "_" or "-", starting with a letter or "_"' : v in st().model.meta.signalCategories ? 'This category already exists' : undefined,
+      !v ? 'Enter a name' : !TAG.test(v) ? 'Use letters, digits, "_" or "-", starting with a letter or "_"' : v in st().model.meta.signalCategories || v in BUILTIN_CATEGORIES ? 'This category already exists' : undefined,
   });
 }
 

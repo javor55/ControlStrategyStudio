@@ -145,7 +145,7 @@ export function CompareDetails() {
   const sd = strategyDiffOf(diff, file);
   let body;
   if (!sd) body = <div className="hx-muted hx-dd-p">No changes in this strategy since {target.label}.</div>;
-  else if (sd.kind === 'added') body = <div className="hx-dd-p">New strategy — it did not exist in {target.label}.</div>;
+  else if (sd.kind === 'added') body = <div className="hx-dd-p">New — it did not exist in {target.label}.</div>;
   else if (selection?.kind === 'block') {
     const b = sd.blocks.find((x) => x.id === selection.id);
     body = (

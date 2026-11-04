@@ -1,9 +1,9 @@
 // Sequence canvas: draws the active sheet of a sequence (SFC / Grafcet) and
 // turns gestures into core sequence ops. Same feel as the FBD canvas: crisp
 // zoom, wheel scroll, pan, rubber band, sheet tabs, undo — see panzoom.ts.
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { diffSequence, layoutSequenceSheet, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
-import { DIFF_COLORS, renderSequenceSvg } from '@csd/render';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { diffSequence, extractSequenceFragment, layoutSequenceSheet, parseSequenceFragment, stepRenameMap, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
+import { DIFF_COLORS, renderSequenceDiffFor, renderSequenceSvg } from '@csd/render';
 import { store, useEditor } from '../state/store';
 import { diagsOf, useActiveSequence } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
@@ -12,6 +12,8 @@ import { useCompare, compareState, stopCompare } from '../history/compare';
 import { InlineEdit } from './InlineEdit';
 import { MOD, ShortcutHelp, type HelpGroup } from './ShortcutHelp';
 import { usePanZoom, type Bounds } from './panzoom';
+import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
+import { setCanvasPrefs, useCanvasPrefs } from '../settings/prefs';
 import {
   addSfcElement,
   autoLayout,
@@ -33,6 +35,8 @@ const CLICK_SLOP = 3;
 /** Drawing units around a step's bottom edge where a press starts a new transition. */
 const EDGE = 8;
 const snap = (v: number) => Math.round(v / 10) * 10;
+/** Offset of a paste without a mouse position (repeated pastes step further). */
+const PASTE_STEP = 30;
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
@@ -57,6 +61,7 @@ const HELP: HelpGroup[] = [
       ['Drag a step / note', 'Move it (stores its position)'],
       ['Drag from the bottom edge of a step', 'Draw a transition to another step (drop on empty paper: new step)'],
       ['Double-click empty paper', 'Add a step there'],
+      ['Right-click empty paper', 'Add a step, a note or paste here'],
       ['Double-click a transition', 'Insert a step into it'],
       ['Double-click a step', 'Edit its description in place'],
       ['Click a jump label', 'Go to the target step'],
@@ -67,8 +72,13 @@ const HELP: HelpGroup[] = [
   {
     title: 'Keyboard',
     rows: [
-      ['Delete / Backspace', 'Delete selection'],
+      ['Delete / Backspace', 'Delete selection (several steps at once)'],
       [`${MOD}+A`, 'Select all steps on the sheet'],
+      [`${MOD}+C · ${MOD}+X`, 'Copy · cut selected steps (with their actions and the transitions between them)'],
+      [`${MOD}+V`, 'Paste at the mouse (renamed S…, pasted steps selected)'],
+      [`${MOD}+D`, 'Duplicate selected steps'],
+      [`/ · ${MOD}+Space`, 'Quick insert at the mouse: step, transition, branch, jump, note'],
+      ['Enter', 'Edit the description of the selected step'],
       ['Arrows · Shift+arrows', 'Move selected steps 10 px · 50 px'],
       [`${MOD}+Z · ${MOD}+Y`, 'Undo · redo'],
       ['Escape', 'Clear selection / cancel drag'],
@@ -107,6 +117,11 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const svgBoxRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const space = useRef(false);
+  /** Last pointer position over the canvas (client px), null when outside. */
+  const mouse = useRef<{ x: number; y: number } | null>(null);
+  const pasteCount = useRef<{ text: string; n: number }>({ text: '', n: 0 });
+  const prefs = useCanvasPrefs();
+  const [showView, setShowView] = useState(false);
   const seqRef = useRef(seq);
   seqRef.current = seq;
 
@@ -114,11 +129,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const file = seq.file;
 
   // --- layout & render --------------------------------------------------------------
-  const layout = useMemo<SfcLayout>(() => layoutSequenceSheet(seq, sheet, { overrides, noteOverrides }), [seq, sheet, overrides, noteOverrides]);
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
-  const boundsRef = useRef<Bounds>(layout.bounds);
-  boundsRef.current = layout.bounds;
+  const baseLayout = useMemo<SfcLayout>(() => layoutSequenceSheet(seq, sheet, { overrides, noteOverrides }), [seq, sheet, overrides, noteOverrides]);
 
   const errors = useMemo(() => {
     const steps = new Set<string>();
@@ -131,25 +142,60 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     return { steps, transitions };
   }, [model, file]);
 
-  // Comparison mode: steps by name, transitions by from → to.
+  // Comparison mode: steps by name, transitions by from → to; removed items are
+  // drawn as ghosts from the older version's layout of the same sheet.
   const compare = useCompare();
-  const seqDiff = useMemo(() => {
+  const prevSeq = useMemo(() => {
     const before = compare.before;
     if (!before || !compare.target) return undefined;
-    const prev = (seq.uid && before.sequences.find((x) => x.uid === seq.uid)) || before.sequenceByName.get(seq.name);
-    return diffSequence(prev, seq);
-  }, [compare.before, compare.target, seq]);
+    return (seq.uid && before.sequences.find((x) => x.uid === seq.uid)) || before.sequenceByName.get(seq.name);
+  }, [compare.before, compare.target, seq.uid, seq.name]);
+  const seqDiff = useMemo(() => (compare.before && compare.target ? diffSequence(prevSeq, seq) : undefined), [compare.before, compare.target, prevSeq, seq]);
+  const beforeLayout = useMemo(
+    () => (prevSeq && prevSeq.sheets.some((x) => x.id === sheet) ? layoutSequenceSheet(prevSeq, sheet) : undefined),
+    [prevSeq, sheet],
+  );
   const renderDiff = useMemo(() => {
     if (!seqDiff) return undefined;
-    const blocks: Record<string, 'added' | 'changed'> = {};
-    const links: Record<number, 'added' | 'changed'> = {};
-    const all = seqDiff.kind === 'added';
-    for (const s of seq.steps) if (all) blocks[s.id] = 'added';
-    for (const t of seq.transitions) if (all) links[t.index] = 'added';
-    for (const s of seqDiff.steps) if (s.kind !== 'removed') blocks[s.id] = s.kind;
-    for (const t of seqDiff.transitions) if (t.kind !== 'removed' && t.afterIndex !== undefined) links[t.afterIndex] = t.kind;
-    return { blocks, links };
-  }, [seqDiff, seq]);
+    const d = renderSequenceDiffFor(seqDiff, baseLayout, beforeLayout);
+    if (seqDiff.kind === 'added') {
+      const blocks: Record<string, 'added' | 'changed'> = {};
+      const links: Record<number, 'added' | 'changed'> = {};
+      for (const st of seq.steps) blocks[st.id] = 'added';
+      for (const t of seq.transitions) links[t.index] = 'added';
+      return { ...d, blocks, links };
+    }
+    return d;
+  }, [seqDiff, seq, baseLayout, beforeLayout]);
+
+  // Ghosts may lie outside the current drawing: grow the bounds to include them.
+  const layout = useMemo<SfcLayout>(() => {
+    const g = renderDiff?.ghosts;
+    if (!g || (!g.steps.length && !g.transitions.length)) return baseLayout;
+    const b = baseLayout.bounds;
+    const PAD = 30;
+    let x0 = b.x;
+    let y0 = b.y;
+    let x1 = b.x + b.w;
+    let y1 = b.y + b.h;
+    for (const k of g.steps) {
+      x0 = Math.min(x0, k.x - PAD);
+      y0 = Math.min(y0, k.y - PAD);
+      x1 = Math.max(x1, k.x + k.w + PAD);
+      y1 = Math.max(y1, k.y + k.h + PAD);
+    }
+    for (const t of g.transitions) {
+      x0 = Math.min(x0, t.x - 60);
+      y0 = Math.min(y0, t.y - PAD);
+      x1 = Math.max(x1, t.x + 200);
+      y1 = Math.max(y1, t.y + PAD);
+    }
+    return { ...baseLayout, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  }, [baseLayout, renderDiff]);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const boundsRef = useRef<Bounds>(layout.bounds);
+  boundsRef.current = layout.bounds;
 
   const svg = useMemo(
     () =>
@@ -159,11 +205,11 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
         errorSteps: errors.steps,
         errorTransitions: errors.transitions,
         diff: renderDiff,
-        grid: true,
+        grid: prefs.grid,
         width: layout.bounds.w,
         height: layout.bounds.h,
       }),
-    [layout, selection, errors, renderDiff],
+    [layout, selection, errors, renderDiff, prefs.grid],
   );
 
   const pz = usePanZoom({ host: hostRef, pane: paneRef, svgBox: svgBoxRef }, boundsRef, svg, () => setInline(null));
@@ -196,6 +242,134 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     if (sel.kind === 'block' || sel.kind === 'blocks') removeSteps(file, selectedSteps(sel));
     else if (sel.kind === 'link') dispatch({ op: 'removeTransition', file, index: sel.index }, { label: 'Delete transition', select: null });
     else if (sel.kind === 'note') dispatch({ op: 'removeNote', file, index: sel.index }, { label: 'Delete note', select: null });
+  };
+
+  // --- clipboard -----------------------------------------------------------------------
+  /** Fragment text of the selected steps on this sheet (with their drawn positions). */
+  const selectionFragment = (): { text: string; ids: string[] } | null => {
+    const ids = selectedOnSheet();
+    if (!ids.length) return null;
+    const text = store().getState().files[file];
+    if (typeof text !== 'string') return null;
+    const positions: Record<string, [number, number]> = {};
+    for (const id of ids) {
+      const g = geomOf(id);
+      if (g) positions[id] = [g.x, g.y];
+    }
+    return { text: extractSequenceFragment(text, ids, { positions }), ids };
+  };
+
+  /** Inserts copied steps; `at` = drawing position of the group's top-left, else `offset`. Selects the new steps. */
+  const insertSteps = (text: string, place: { at?: [number, number]; offset?: [number, number] }, label: string): boolean => {
+    const frag = parseSequenceFragment(text);
+    if (!frag || !Object.keys(frag.steps).length) {
+      store().toast('The clipboard does not contain sequence steps');
+      return false;
+    }
+    let offset: [number, number] = place.offset ?? [PASTE_STEP, PASTE_STEP];
+    if (place.at) {
+      const ps = Object.values(frag.steps)
+        .map((st) => st.pos)
+        .filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && typeof p[1] === 'number');
+      if (ps.length) offset = [snap(place.at[0]) - Math.min(...ps.map((p) => p[0])), snap(place.at[1]) - Math.min(...ps.map((p) => p[1]))];
+    }
+    const cur = seqRef.current;
+    const map = stepRenameMap(
+      cur.steps.map((x) => x.id),
+      Object.keys(frag.steps),
+    );
+    const ids = Object.values(map);
+    const n = ids.length;
+    return dispatch({ op: 'insertSequenceFragment', file, fragment: text, offset, sheet }, { label: n === 1 ? `${label} step ${ids[0]}` : `${label} ${n} steps`, select: stepSelection(ids) });
+  };
+
+  const mouseDrawing = (): [number, number] | undefined => (mouse.current ? toDrawing(mouse.current.x, mouse.current.y) : undefined);
+
+  const pasteText = (text: string) => {
+    const at = mouseDrawing();
+    if (at) return insertSteps(text, { at }, 'Paste');
+    const pc = pasteCount.current;
+    pc.n = pc.text === text ? pc.n + 1 : 1;
+    pc.text = text;
+    return insertSteps(text, { offset: [PASTE_STEP * pc.n, PASTE_STEP * pc.n] }, 'Paste');
+  };
+
+  const copySelection = (viaMenu: boolean): boolean => {
+    const f = selectionFragment();
+    if (!f) return false;
+    if (viaMenu) writeClipboard(f.text);
+    else rememberClipboard(f.text);
+    pasteCount.current = { text: f.text, n: 0 };
+    return true;
+  };
+
+  const cutSelection = () => {
+    const ids = selectedOnSheet();
+    if (copySelection(true)) removeSteps(file, ids);
+  };
+
+  const duplicate = () => {
+    const f = selectionFragment();
+    if (f) insertSteps(f.text, { offset: [PASTE_STEP, PASTE_STEP] }, 'Duplicate');
+  };
+
+  const clip = useRef({ copy: (_e: ClipboardEvent, _cut: boolean) => {}, paste: (_e: ClipboardEvent) => {} });
+  clip.current = {
+    copy: (e, cut) => {
+      const f = selectionFragment();
+      if (!f || !e.clipboardData) return;
+      e.clipboardData.setData('text/plain', f.text);
+      e.preventDefault();
+      rememberClipboard(f.text);
+      pasteCount.current = { text: f.text, n: 0 };
+      if (cut) removeSteps(file, f.ids);
+    },
+    paste: (e) => {
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      e.preventDefault();
+      pasteText(text);
+    },
+  };
+  useEffect(() => {
+    const own = () => document.activeElement === hostRef.current;
+    const onCopy = (e: ClipboardEvent) => own() && clip.current.copy(e, false);
+    const onCut = (e: ClipboardEvent) => own() && clip.current.copy(e, true);
+    const onPaste = (e: ClipboardEvent) => own() && clip.current.paste(e);
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('cut', onCut);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('copy', onCopy);
+      document.removeEventListener('cut', onCut);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, []);
+
+  const clipItems = (): MenuEntry[] => [
+    { label: 'Copy', hint: 'Ctrl+C', onClick: () => copySelection(true) },
+    { label: 'Cut', hint: 'Ctrl+X', onClick: cutSelection },
+    { label: 'Duplicate', hint: 'Ctrl+D', onClick: duplicate },
+  ];
+
+  /** Quick insert at the mouse (or the centre of the view): "/" and Ctrl+Space. */
+  const openQuick = () => {
+    const r = hostRef.current!.getBoundingClientRect();
+    const m = mouse.current ?? { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const [x, y] = toDrawing(m.x, m.y);
+    const sel1 = singleSelected();
+    const from = sel1 && seq.steps.some((x) => x.id === sel1) ? sel1 : undefined;
+    const need = from ? undefined : 'Select a step first';
+    menu.open({ clientX: m.x, clientY: m.y }, [
+      { section: from ? `Insert (after ${from})` : 'Insert' },
+      { label: 'Step here', onClick: () => addStepAt(x, y) },
+      { label: 'Transition to a new step', disabled: !from, description: need, onClick: () => addSfcElement(seq, 'transition', { from, sheet }) },
+      { label: 'Parallel branch', disabled: !from, onClick: () => addSfcElement(seq, 'parallel', { from, sheet }) },
+      { label: 'Alternative branch', disabled: !from, onClick: () => addSfcElement(seq, 'alternative', { from, sheet }) },
+      { label: 'Jump to initial step', disabled: !from, onClick: () => addSfcElement(seq, 'jump', { from, sheet }) },
+      'separator',
+      { label: 'Note here', onClick: () => addNote([x, y]) },
+      { label: 'Paste here', hint: 'Ctrl+V', onClick: () => readClipboard().then((t) => insertSteps(t, { at: [x, y] }, 'Paste')) },
+    ]);
   };
 
   const moveSteps = (positions: Record<string, [number, number]>, label: string, mergeKey?: string) => {
@@ -284,6 +458,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const host = hostRef.current!;
     host.focus({ preventScroll: true });
+    setShowView(false);
     if (e.button === 2) return;
     const el = e.target as Element;
     const s = store();
@@ -343,6 +518,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    mouse.current = { x: e.clientX, y: e.clientY };
     const g = gesture.current;
     if (!g) {
       if (e.buttons === 0) {
@@ -500,7 +676,8 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     const done = () => e.preventDefault();
     if (key === ' ' || e.code === 'Space') {
       done();
-      if (!space.current) {
+      if (mod) openQuick();
+      else if (!space.current) {
         space.current = true;
         setSpaceHeld(true);
       }
@@ -509,6 +686,12 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     if (mod && lower === 'a') {
       done();
       store().select(stepSelection(onSheetIds()));
+    } else if (mod && lower === 'd') {
+      done();
+      duplicate();
+    } else if (key === '/') {
+      done();
+      openQuick();
     } else if (mod && key === '0') {
       done();
       zoomAt(1);
@@ -588,7 +771,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       if (!st) return;
       const cur = selectedSteps(s.getState().selection);
       if (cur.length > 1 && cur.includes(id)) {
-        menu.open(e, [{ section: `${cur.length} steps` }, ...sheetItems(cur), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, cur) }]);
+        menu.open(e, [{ section: `${cur.length} steps` }, ...clipItems(), 'separator', ...sheetItems(cur), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, cur) }]);
         return;
       }
       s.select({ kind: 'block', id });
@@ -607,7 +790,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
         { label: 'Rename…', onClick: () => renameStep(id) },
       ];
       if (st.pos) items.push({ label: 'Unpin position', onClick: () => dispatch({ op: 'moveStep', file, id, pos: null }, { label: `Unpin ${id}` }) });
-      items.push('separator', ...sheetItems([id]), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, [id]) });
+      items.push('separator', ...clipItems(), 'separator', ...sheetItems([id]), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, [id]) });
       menu.open(e, items);
     } else if (tEl) {
       const index = Number(tEl.getAttribute('data-transition'));
@@ -629,6 +812,8 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       menu.open(e, [
         { label: 'Add step here', onClick: () => addStepAt(x, y) },
         { label: 'Add note here', onClick: () => addNote([x, y]) },
+        { label: 'Insert…', hint: '/', onClick: () => openQuick() },
+        { label: 'Paste here', hint: 'Ctrl+V', onClick: () => readClipboard().then((t) => insertSteps(t, { at: [x, y] }, 'Paste')) },
         'separator',
         { label: 'Select all steps', hint: 'Ctrl+A', onClick: () => s.select(stepSelection(onSheetIds())) },
         { label: 'Auto layout', onClick: () => autoLayout(seq) },
@@ -739,7 +924,10 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={cancelGesture}
-          onPointerLeave={() => edgeHover && !gesture.current && setEdgeHover(null)}
+          onPointerLeave={() => {
+            mouse.current = null;
+            if (edgeHover && !gesture.current) setEdgeHover(null);
+          }}
           onDoubleClick={onDoubleClick}
           onKeyDown={onKeyDown}
           onKeyUp={onKeyUp}
@@ -798,6 +986,21 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
             100 %
           </button>
           <span className="cv-sep" />
+          <span className="cv-dd">
+            <button className={`btn small${showView ? ' active' : ''}`} title="What the drawing shows" aria-expanded={showView} onClick={() => setShowView((v) => !v)}>
+              View ▾
+            </button>
+            {showView && (
+              <div className="cv-dd-panel" role="menu">
+                <label>
+                  <input type="checkbox" checked={prefs.grid} onChange={() => setCanvasPrefs({ grid: !prefs.grid })} /> Grid
+                </label>
+                <button type="button" className="cv-dd-item" title="Centre the selected step" disabled={!sel} onClick={() => sel && navigateJump(sel)}>
+                  Centre selected step
+                </button>
+              </div>
+            )}
+          </span>
           <button className="btn small" title="Add a step (double-click empty paper to place it)" onClick={() => addSfcElement(seq, 'step', { sheet })}>
             Add step
           </button>
@@ -832,7 +1035,7 @@ function sheetLabel(s: { id: number; title?: string }): string {
 function SequenceHeader({ seq }: { seq: Sequence }) {
   return (
     <div className="cv-header seq">
-      <span className="seq-kind" title="Sequence (SFC / Grafcet)">
+      <span className="seq-kind" title="Sequence strategy (SFC / Grafcet)">
         SFC
       </span>
       {seq.folder && <span className="cv-path">{seq.folder.split('/').join(' / ')} /</span>}

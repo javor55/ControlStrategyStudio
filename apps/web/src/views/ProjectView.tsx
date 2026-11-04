@@ -6,7 +6,8 @@ import { diagsOf } from '../state/selectors';
 import { SeverityBadge } from '../ui/kit';
 import { newBlockType } from '../project/actions';
 import { MarkdownView } from './MarkdownView';
-import { SignalCategoriesSection } from './SignalCategories';
+import { LineCategoriesLegend } from './SignalCategories';
+import { openSettings } from '../settings/open';
 import './views.css';
 
 function LibraryPage({ lib }: { lib: LibraryDef }) {
@@ -100,33 +101,50 @@ function ProjectPage({ onProjectFile }: { onProjectFile: boolean }) {
           {meta.description && <p className="lead">{meta.description}</p>}
           {meta.author && <p className="muted">Author: {meta.author}</p>}
         </div>
-        {!onProjectFile && (
-          <div className="v-actions">
-            <button className="btn" onClick={() => store().open(PROJECT_FILE)}>
-              Project settings
+        <div className="v-actions">
+          <button className="btn" onClick={() => openSettings('project')} data-testid="project-settings">
+            Project settings
+          </button>
+          {!onProjectFile && (
+            <button className="btn" title="project.yaml as text" onClick={() => store().open(PROJECT_FILE)}>
+              Open project.yaml
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </header>
 
-      <section className="v-sec">
-        <h3>Hierarchy levels</h3>
-        <div className="chips">
-          {meta.levels.map((l, i) => (
-            <span key={i} className="chip">
-              <span className="chip-n">{i + 1}</span>
-              {l}
-            </span>
-          ))}
-        </div>
+      <section className="v-sec" data-testid="project-levels">
+        <h3>
+          Hierarchy levels
+          <span className="spacer" />
+          <button className="btn small" onClick={() => openSettings('project')}>
+            Edit in Settings
+          </button>
+        </h3>
+        {meta.levels.length ? (
+          <div className="chips">
+            {meta.levels.map((l, i) => (
+              <span key={i} className="chip" title={`Folder depth ${i + 1}`}>
+                <span className="chip-n">{i + 1}</span>
+                {l}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No level names — folders are plain folders. Level names (e.g. ISA-95 or ISA-88) are optional labels by folder depth and never enforced.</p>
+        )}
       </section>
 
-      {onProjectFile && <SignalCategoriesSection />}
+      <LineCategoriesLegend />
 
       <section className="v-stats">
-        <div className="stat">
+        <div className="stat" title="Continuous strategies (function block diagrams, *.yaml)">
           <b>{model.strategies.length}</b>
-          <span>strategies</span>
+          <span>continuous strategies</span>
+        </div>
+        <div className="stat" title="Sequence strategies (SFC / Grafcet, *.seq.yaml)">
+          <b>{model.sequences.length}</b>
+          <span>sequence strategies</span>
         </div>
         <div className="stat">
           <b>{stats.blocks}</b>

@@ -107,18 +107,27 @@ export interface MenuItem {
   hint?: string;
   disabled?: boolean;
   danger?: boolean;
+  /** Second, smaller line under the label. */
+  description?: string;
+  /** Opens a flyout menu on hover / click / ArrowRight instead of running onClick. */
+  submenu?: MenuEntry[];
 }
 export type MenuEntry = MenuItem | 'separator' | { section: string };
 
 /** Popup menu anchored at a screen position. Closes on outside click / Escape. */
-export function Menu(props: { x: number; y: number; items: MenuEntry[]; onClose: () => void }) {
+export function Menu(props: { x: number; y: number; items: MenuEntry[]; onClose: () => void; /** After an item ran (default: onClose). */ onDone?: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: props.x, top: props.y });
+  const [sub, setSub] = useState<{ index: number; x: number; y: number } | null>(null);
   useLayoutEffect(() => {
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
-    setPos({ left: Math.min(props.x, window.innerWidth - r.width - 8), top: Math.min(props.y, window.innerHeight - r.height - 8) });
+    setPos({ left: Math.max(4, Math.min(props.x, window.innerWidth - r.width - 8)), top: Math.max(4, Math.min(props.y, window.innerHeight - r.height - 8)) });
   }, [props.x, props.y]);
+  const openSub = (i: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    setSub((cur) => (cur?.index === i ? cur : { index: i, x: r.right - 2, y: r.top - 4 }));
+  };
   useEffect(() => {
     const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && props.onClose();
     const key = (e: KeyboardEvent) => e.key === 'Escape' && props.onClose();
@@ -143,17 +152,40 @@ export function Menu(props: { x: number; y: number; items: MenuEntry[]; onClose:
             key={i}
             role="menuitem"
             disabled={it.disabled}
+            aria-haspopup={it.submenu ? 'menu' : undefined}
+            aria-expanded={it.submenu ? sub?.index === i : undefined}
+            className={`${it.description ? 'desc' : ''}${it.submenu && sub?.index === i ? ' open' : ''}`}
             style={it.danger ? { color: 'var(--error)' } : undefined}
-            onClick={() => {
-              props.onClose();
+            onMouseEnter={(e) => (it.submenu ? openSub(i, e.currentTarget) : setSub(null))}
+            onKeyDown={(e) => {
+              if (it.submenu && e.key === 'ArrowRight') {
+                e.preventDefault();
+                openSub(i, e.currentTarget);
+              }
+            }}
+            onClick={(e) => {
+              if (it.submenu) return openSub(i, e.currentTarget);
+              (props.onDone ?? props.onClose)();
               it.onClick?.();
             }}
           >
-            {it.label}
+            {it.description ? (
+              <span className="menu-text">
+                <span>{it.label}</span>
+                <span className="menu-desc">{it.description}</span>
+              </span>
+            ) : (
+              it.label
+            )}
             {it.hint && <span className="hint">{it.hint}</span>}
+            {it.submenu && <span className="hint">▸</span>}
           </button>
         ),
       )}
+      {sub && (() => {
+        const it = props.items[sub.index];
+        return it && it !== 'separator' && !('section' in it) && it.submenu ? <Menu x={sub.x} y={sub.y} items={it.submenu} onClose={() => setSub(null)} onDone={props.onDone ?? props.onClose} /> : null;
+      })()}
     </div>
   );
 }

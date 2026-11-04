@@ -4,6 +4,8 @@
 // operation.
 import type { ReactNode } from 'react';
 import {
+  BUILTIN_CATEGORIES,
+  lineCategories,
   compatible,
   feedbackOrders,
   formatEndpoint,
@@ -31,6 +33,8 @@ import { BlockTypeEditor } from './BlockTypeEditor';
 import { Field, Row, SectionHeader, SeverityBadge } from '../ui/kit';
 import { confirmDialog } from '../ui/dialogs';
 import { askCategoryName, defaultCategoryColor } from '../project/actions';
+import { builtinColor, categoryLabel } from '../views/SignalCategories';
+import { openSettings } from '../settings/open';
 import { parseParamText, refParts, sameValue, typeRefFor, valueText } from './values';
 import { CompareDetails } from '../history/DiffDetails';
 import './inspector.css';
@@ -568,7 +572,7 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
           onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'label', value: orUndef(v) }, 'Edit link label')}
         />
       </Row>
-      <Row label="Category" title="Line style from the project's signal categories">
+      <Row label="Category" title="Line style: automatic by signal type, or a project category (Settings → Drawing style)">
         <CategorySelect d={d} link={link} model={model} />
       </Row>
       <Row label="Comment">
@@ -582,18 +586,20 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
 const NEW_CATEGORY = '\u0000new';
 
 function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model: ProjectModel }) {
-  const cats = model.meta.signalCategories;
-  const names = Object.keys(cats);
+  const all = lineCategories(model.meta);
+  const builtins = Object.keys(all).filter((n) => n in BUILTIN_CATEGORIES);
+  const own = Object.keys(all).filter((n) => !(n in BUILTIN_CATEGORIES));
   const value = link.category ?? '';
-  const unknown = value && !(value in cats);
+  const unknown = value && !(value in all);
   const assign = (category: string | undefined) =>
-    run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'category', value: category }, category ? `Link category ${category}` : 'Clear link category');
+    run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'category', value: category }, category ? `Link category ${category}` : 'Automatic link category');
   return (
     <span className="insp-cat">
-      {value && <span className="insp-swatch" style={{ background: cats[value]?.color ?? 'transparent' }} aria-hidden="true" />}
+      {value && <span className="insp-swatch" style={{ background: all[value]?.color ?? (value in BUILTIN_CATEGORIES ? builtinColor(value) : 'transparent') }} aria-hidden="true" />}
       <select
         className="select"
         aria-label="Category"
+        data-testid="link-category"
         value={value}
         onChange={async (e) => {
           const v = e.target.value;
@@ -613,15 +619,29 @@ function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; 
           );
         }}
       >
-        <option value="">(none)</option>
-        {names.map((n) => (
-          <option key={n} value={n}>
-            {n}
-          </option>
-        ))}
+        <option value="">(automatic: BOOL / Numeric / Other)</option>
+        <optgroup label="Built-in">
+          {builtins.map((n) => (
+            <option key={n} value={n}>
+              {categoryLabel(n)}
+            </option>
+          ))}
+        </optgroup>
+        {own.length > 0 && (
+          <optgroup label="Project">
+            {own.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </optgroup>
+        )}
         {unknown && <option value={value}>{value} (not defined)</option>}
         <option value={NEW_CATEGORY}>New category…</option>
       </select>
+      <button type="button" className="btn small ghost icon" title="Edit line categories in Settings → Drawing style" aria-label="Edit line categories" onClick={() => openSettings('drawing')}>
+        ✎
+      </button>
     </span>
   );
 }
@@ -725,7 +745,7 @@ function StrategyPanel({ d, model }: { d: ActiveDiagram; model: ProjectModel }) 
   };
   return (
     <div className="insp-scroll">
-      <Head kind="Strategy" title={s.name} sub={s.title} diags={diags} />
+      <Head kind="Continuous strategy" title={s.name} sub={s.title} diags={diags} />
       <Row label="Name">
         <Field
           mono

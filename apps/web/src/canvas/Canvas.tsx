@@ -30,7 +30,7 @@ import {
   type SheetLayout,
   type YamlPath,
 } from '@csd/core';
-import { drawingRenderOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
+import { lineStyleOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
 import { store, useEditor, type EditorState } from '../state/store';
 import { activeDiagramOf, diagsOf, layoutActiveSheet, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
@@ -284,8 +284,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       // While a link end is dragged, the link itself is hidden; the overlay draws it.
       renderSheetSvg(reconnecting === undefined ? layout : { ...layout, wires: layout.wires.filter((w) => w.link !== reconnecting) }, {
         interactive: true,
-        categories: model.meta.signalCategories,
-        ...drawingRenderOptions(model.meta.drawing),
+        ...lineStyleOptions(model.meta),
         grid: display.grid,
         selection,
         errorBlocks: errors.blocks,
@@ -294,7 +293,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         height: layout.bounds.h,
         diff: renderDiff,
       }),
-    [layout, selection, errors, model.meta.signalCategories, model.meta.drawing, display.grid, reconnecting, renderDiff],
+    [layout, selection, errors, model.meta, display.grid, reconnecting, renderDiff],
   );
 
   // --- view transform ----------------------------------------------------------------
@@ -1566,6 +1565,9 @@ function CanvasHeader({ ad }: { ad: ActiveDiagram }) {
     const st = ad.strategy;
     return (
       <div className="cv-header">
+        <span className="seq-kind" title="Continuous strategy (function block diagram)">
+          FBD
+        </span>
         {st.folder && <span className="cv-path">{st.folder.split('/').join(' / ')} /</span>}
         <strong>{st.name}</strong>
         {st.title && <span className="cv-title">{st.title}</span>}

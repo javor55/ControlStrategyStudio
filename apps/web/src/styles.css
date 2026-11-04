@@ -126,3 +126,7 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .toasts { position: fixed; z-index: 70; right: 16px; bottom: 40px; display: grid; gap: 6px; }
 .toast { max-width: 420px; padding: 8px 12px; border-radius: var(--radius); background: var(--ink); color: var(--bg); box-shadow: var(--shadow); }
 .toast.error { background: var(--error); color: #fff; }
+.menu button.open { background: var(--hover); }
+.menu button.desc { align-items: flex-start; }
+.menu .menu-text { display: grid; gap: 1px; max-width: 340px; }
+.menu .menu-desc { color: var(--ink-3); font-size: 11.5px; white-space: normal; line-height: 1.35; }

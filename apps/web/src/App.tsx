@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { demoProjectFiles, formatTag, newUid, stdLibraryFiles, stringifyDoc, DEFAULT_LEVELS, type Files } from '@csd/core';
+import { formatTag, newUid, stdLibraryFiles, stringifyDoc, type Files } from '@csd/core';
 import { Document } from 'yaml';
 import { store, useEditor, type ViewMode } from './state/store';
 import { activeView } from './state/selectors';
@@ -22,11 +22,13 @@ import { AssetView } from './views/AssetView';
 import './editor/workspace.css';
 import { ExportDialog } from './export/ExportDialog';
 import { SettingsDialog } from './settings/SettingsDialog';
+import { onOpenSettings, type SettingsTab } from './settings/open';
+import { availableExamples, defaultProjectFiles } from './project/examples';
 import { HistoryDialogs, HistoryDrawer, VcsStatus } from './history/VcsStatus';
 
 export function emptyProjectFiles(name: string): Files {
   const project = stringifyDoc(
-    new Document({ format: formatTag('project'), uid: newUid(), name, author: '', levels: DEFAULT_LEVELS, title_block: { drawn: '', checked: '', approved: '' } }),
+    new Document({ format: formatTag('project'), uid: newUid(), name, author: '', levels: [], title_block: { drawn: '', checked: '', approved: '' } }),
   );
   return { 'project.yaml': project, 'README.md': `# ${name}\n`, ...stdLibraryFiles() };
 }
@@ -184,7 +186,8 @@ function GearIcon() {
 function TopBar({ panels }: { panels: PanelsApi }) {
   const name = useEditor((s) => s.model.meta.name);
   const [exporting, setExporting] = useState(false);
-  const [settings, setSettings] = useState(false);
+  const [settings, setSettings] = useState<false | { tab?: SettingsTab }>(false);
+  useEffect(() => onOpenSettings((tab) => setSettings({ tab })), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
@@ -192,7 +195,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         setExporting(true);
       } else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ',') {
         e.preventDefault();
-        setSettings(true);
+        setSettings({});
       }
     };
     window.addEventListener('keydown', onKey, true);
@@ -229,10 +232,14 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       },
       'separator',
       {
-        label: 'Open demo project',
-        onClick: () => {
-          void openSession(newProjectId(), demoProjectFiles(), undefined, { save: true });
-        },
+        label: 'Open example',
+        submenu: availableExamples().map(
+          (ex): MenuEntry => ({
+            label: ex.name,
+            description: ex.description,
+            onClick: () => void openSession(newProjectId(), ex.files(), undefined, { save: true }).then(() => store().toast(`Opened example "${ex.name}" as a new project in this browser`)),
+          }),
+        ),
       },
       { section: 'In this browser' },
       ...recent.slice(0, 12).map(
@@ -249,7 +256,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         onClick: async () => {
           if (!(await confirmDialog({ title: 'Remove project?', message: `"${name}" will be deleted from this browser. Save it as ZIP first if you want to keep it.`, okLabel: 'Remove', danger: true }))) return;
           await browserStore.remove(s.getState().projectId);
-          await openSession(newProjectId(), demoProjectFiles(), undefined, { save: true });
+          await openSession(newProjectId(), defaultProjectFiles(), undefined, { save: true });
         },
       },
     ];
@@ -298,11 +305,11 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       <button className="btn primary" title="Export PDF, interactive HTML, JSON or TOML (Ctrl+E)" onClick={() => setExporting(true)}>
         Export…
       </button>
-      <button className="btn ghost icon" title="Settings: drawing style and editor (Ctrl+,)" aria-label="Settings" onClick={() => setSettings(true)}>
+      <button className="btn ghost icon" title="Settings: project, drawing style and editor (Ctrl+,)" aria-label="Settings" onClick={() => setSettings({})}>
         <GearIcon />
       </button>
       {exporting && <ExportDialog onClose={() => setExporting(false)} />}
-      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
+      {settings && <SettingsDialog initialTab={settings.tab} onClose={() => setSettings(false)} />}
       <input
         ref={fileInput}
         type="file"

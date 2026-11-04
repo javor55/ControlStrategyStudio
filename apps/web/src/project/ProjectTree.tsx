@@ -135,6 +135,14 @@ function TreeRow(p: TreeRowProps) {
   );
 }
 
+/** Menu entries to create either type of strategy in `folder`. */
+function newStrategyItems(folder: string): MenuEntry[] {
+  return [
+    { label: 'New continuous strategy…', hint: 'FBD', description: 'Function blocks and links', onClick: () => newStrategy(folder) },
+    { label: 'New sequence strategy…', hint: 'SFC', description: 'Steps, transitions and actions', onClick: () => newSequence(folder) },
+  ];
+}
+
 function ActBtn(props: { title: string; onClick: (el: HTMLElement) => void; children: ReactNode }) {
   return (
     <button
@@ -214,8 +222,8 @@ export function ProjectTree() {
 
   const folderMenu = (node: FolderNode): MenuEntry[] => [
     { section: node.level ? `${node.level} · ${node.name}` : node.name },
-    { label: 'New strategy…', onClick: () => newStrategy(node.path) },
-    { label: 'New sequence…', hint: 'SFC', onClick: () => newSequence(node.path) },
+    { label: 'New continuous strategy…', hint: 'FBD', onClick: () => newStrategy(node.path) },
+    { label: 'New sequence strategy…', hint: 'SFC', onClick: () => newSequence(node.path) },
     {
       label: 'New subfolder…',
       hint: levels[node.depth] ?? undefined,
@@ -257,7 +265,7 @@ export function ProjectTree() {
         depth={depth}
         icon={Icon.strategy}
         label={s?.name ?? basename(file)}
-        title={[s?.title, s?.description].filter(Boolean).join('\n') || file}
+        title={[`Continuous strategy (FBD)${s?.title ? ': ' + s.title : ''}`, s?.description, file].filter(Boolean).join('\n')}
         active={active === file || active === md}
         className="strategy"
         testId={`strategy-${s?.name}`}
@@ -291,7 +299,7 @@ export function ProjectTree() {
         depth={depth}
         icon={Icon.sequence}
         label={s?.name ?? basename(file)}
-        title={[`Sequence (SFC)${s?.title ? ': ' + s.title : ''}`, s?.description].filter(Boolean).join('\n') || file}
+        title={[`Sequence strategy (SFC)${s?.title ? ': ' + s.title : ''}`, s?.description, file].filter(Boolean).join('\n')}
         active={active === file || active === md}
         className="strategy sequence"
         testId={`sequence-${s?.name}`}
@@ -363,7 +371,7 @@ export function ProjectTree() {
             </>
           }
           actions={
-            <ActBtn title="New strategy here" onClick={() => newStrategy(node.path)}>
+            <ActBtn title="New strategy here (continuous or sequence)" onClick={(el) => menu.openBelow(el, newStrategyItems(node.path))}>
               {Icon.plus}
             </ActBtn>
           }
@@ -523,7 +531,7 @@ export function ProjectTree() {
             <ActBtn title={`New top-level folder${levels[0] ? ` (${levels[0]})` : ''}`} onClick={() => newFolder(root, levels[0])}>
               {Icon.newFolder}
             </ActBtn>
-            <ActBtn title="New strategy at top level" onClick={() => newStrategy('')}>
+            <ActBtn title="New strategy at top level (continuous or sequence)" onClick={(el) => menu.openBelow(el, newStrategyItems(''))}>
               {Icon.newFile}
             </ActBtn>
           </>
@@ -534,8 +542,7 @@ export function ProjectTree() {
             if (e.target !== e.currentTarget) return;
             menu.open(e, [
               { label: 'New top-level folder…', hint: levels[0], onClick: () => newFolder(root, levels[0]) },
-              { label: 'New strategy…', onClick: () => newStrategy('') },
-              { label: 'New sequence…', onClick: () => newSequence('') },
+              ...newStrategyItems(''),
             ]);
           }}
           className="tree-group"
@@ -548,10 +555,14 @@ export function ProjectTree() {
               No strategies yet.{' '}
               <button className="linkish" onClick={() => newFolder(root, levels[0])}>
                 Add a {levels[0] ?? 'folder'}
+              </button>
+              ,{' '}
+              <button className="linkish" onClick={() => newStrategy('')}>
+                a continuous strategy
               </button>{' '}
               or{' '}
-              <button className="linkish" onClick={() => newStrategy('')}>
-                a strategy
+              <button className="linkish" onClick={() => newSequence('')}>
+                a sequence strategy
               </button>
               .
             </div>

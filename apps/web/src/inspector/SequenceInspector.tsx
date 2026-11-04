@@ -144,7 +144,7 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
   const sd = useSeqDiff(seq);
   return (
     <div className="insp-scroll seq-fill" data-testid="seq-panel">
-      <Head kind="Sequence" title={seq.name} sub={seq.title} diags={diags} />
+      <Head kind="Sequence strategy" title={seq.name} sub={seq.title} diags={diags} />
       {sd && (sd.header.length > 0 || sd.inputs.length > 0) && <Changes kind={sd.kind} changes={[...sd.header, ...sd.inputs]} />}
       <Row label="Name">
         <Field
