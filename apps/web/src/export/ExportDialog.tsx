@@ -25,6 +25,7 @@ const SECTIONS: { key: keyof ExportSections; label: string; formats: ExportForma
   { key: 'links', label: 'Links and cross references', formats: ['pdf', 'html'] },
   { key: 'library', label: 'Library appendix (block types used)', formats: ['pdf', 'html'] },
   { key: 'librarySource', label: 'Implementation source code', formats: ['pdf', 'html'] },
+  { key: 'history', label: 'Revision history', formats: ['pdf', 'html'] },
 ];
 
 const key = (projectId: string, f: ExportFormat) => `css:export:${projectId}:${f}`;

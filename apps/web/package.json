@@ -20,6 +20,7 @@
     "@csd/core": "0.1.0",
     "@csd/export": "^0.1.0",
     "@csd/render": "0.1.0",
+    "@csd/vcs": "^0.1.0",
     "@lezer/highlight": "^1.2.5",
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.17",

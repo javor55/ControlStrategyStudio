@@ -2,6 +2,7 @@
 // an `Op` from @csd/core applied through `dispatch`, which records undo data,
 // re-derives the project model and schedules autosave.
 import { useSyncExternalStore } from 'react';
+import { EMPTY_VCS, type VcsStatus } from './vcsStatus';
 import { applyOp, classify, inverseOf, loadProject, OpError, type Files, type Op, type ProjectModel, type Selection } from '@csd/core';
 
 export interface Toast {
@@ -52,6 +53,8 @@ export interface EditorState {
   /** Files changed since the last save to browser storage. */
   unsaved: boolean;
   viewMode: ViewMode;
+  /** Version control status (branch, last commit, uncommitted changes). */
+  vcs: VcsStatus;
 }
 
 export interface DispatchOptions {
@@ -91,6 +94,7 @@ export class EditorStore {
       toasts: [],
       unsaved: false,
       viewMode: this.state?.viewMode ?? initialViewMode(),
+      vcs: this.state?.vcs ?? EMPTY_VCS,
     };
   }
 
@@ -120,6 +124,10 @@ export class EditorStore {
     this.state = { ...this.fresh(projectId, files), toasts: this.state.toasts };
     this.state.fitRequest = 1;
     this.listeners.forEach((l) => l());
+  }
+
+  setVcs(vcs: VcsStatus) {
+    this.set({ vcs });
   }
 
   markSaved() {

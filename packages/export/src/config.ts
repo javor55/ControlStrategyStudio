@@ -24,6 +24,8 @@ export interface ExportSections {
   library: boolean;
   /** Implementation source code in the library appendix. */
   librarySource: boolean;
+  /** Revision history (commits and revision tags). */
+  history: boolean;
 }
 
 export interface ExportDisplay extends Pick<DisplayOptions, 'params' | 'comments'> {
@@ -67,6 +69,7 @@ export function defaultExportConfig(format: ExportFormat = 'pdf'): ExportConfig 
       links: true,
       library: format === 'html',
       librarySource: false,
+      history: true,
     },
     parameters: 'set',
     display: { ports: 'auto', params: true, comments: true, order: true, feedback: true, labels: true, categories: true },

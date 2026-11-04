@@ -4,7 +4,7 @@
 // (no CSS classes), so the same drawing works on screen, in svg2pdf for PDF,
 // in a CLI and in any other tool. Interactive mode adds `data-*` attributes and
 // invisible hit areas that an editor uses for event delegation.
-import { M, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
+import { M, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
 
 export interface Theme {
   paper: string;
@@ -77,6 +77,15 @@ export interface CategoryStyle {
   width?: number;
 }
 
+export interface RenderDiff {
+  blocks?: Readonly<Record<string, 'added' | 'changed'>>;
+  links?: Readonly<Record<number, 'added' | 'changed'>>;
+  /** Geometry of removed blocks / wires (from the older version's layout). */
+  ghosts?: { blocks: BlockGeom[]; wires: WireGeom[] };
+}
+
+export const DIFF_COLORS = { added: '#2f7d4a', changed: '#d08700', removed: '#b3261e' } as const;
+
 export interface RenderOptions {
   theme?: Theme;
   /** Styles of link categories (project `signal_categories`). */
@@ -87,6 +96,8 @@ export interface RenderOptions {
   showOrder?: boolean;
   /** Signal names and comments along links (default true). */
   showLabels?: boolean;
+  /** Visual diff: highlight added / changed items and draw removed ones as ghosts. */
+  diff?: RenderDiff;
   /** Adds data-* attributes and hit areas for editors. */
   interactive?: boolean;
   selection?: RenderSelection;
@@ -275,10 +286,58 @@ export function renderSheetSvg(layout: SheetLayout, opts: RenderOptions = {}): s
     for (let y = Math.ceil(vb.y / step) * step; y < vb.y + vb.h; y += step) d += `M${n(vb.x)} ${y}H${n(vb.x + vb.w)}`;
     s += `<path${attrs({ d, stroke: t.grid, 'stroke-width': 0.6, fill: 'none' })}/>`;
   }
+  const diff = opts.diff;
+  if (diff?.ghosts) {
+    for (const w of diff.ghosts.wires) {
+      s += `<path${attrs({ d: 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L'), fill: 'none', stroke: DIFF_COLORS.removed, 'stroke-width': 1.5, 'stroke-dasharray': '4 3', 'stroke-opacity': 0.7 })}/>`;
+    }
+    for (const b of diff.ghosts.blocks) {
+      s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: b.h, fill: DIFF_COLORS.removed, 'fill-opacity': 0.06, stroke: DIFF_COLORS.removed, 'stroke-width': 1.5, 'stroke-dasharray': '5 3' })}/>`;
+      s += text(b.x + 6, b.y + 14, b.id, { 'font-family': t.fontSans, 'font-size': 12, 'font-weight': 'bold', fill: DIFF_COLORS.removed, 'text-decoration': 'line-through' });
+      s += text(b.x + 6, b.y + 27, 'removed', { 'font-family': t.fontMono, 'font-size': 9.5, fill: DIFF_COLORS.removed });
+    }
+  }
+  if (diff?.links) {
+    for (const w of layout.wires) {
+      const k = w.link !== undefined ? diff.links[w.link] : undefined;
+      if (!k) continue;
+      s += `<path${attrs({ d: 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L'), fill: 'none', stroke: DIFF_COLORS[k], 'stroke-width': 7, 'stroke-opacity': 0.3, 'stroke-linejoin': 'round' })}/>`;
+    }
+  }
+  if (diff?.blocks) {
+    for (const b of layout.blocks) {
+      const k = diff.blocks[b.id];
+      if (!k) continue;
+      s += `<rect${attrs({ x: b.x - 5, y: b.y - 5, width: b.w + 10, height: b.h + 10, rx: 4, fill: DIFF_COLORS[k], 'fill-opacity': 0.1, stroke: DIFF_COLORS[k], 'stroke-width': 2.5 })}/>`;
+      s += text(b.x + b.w + 5, b.y - 8, k === 'added' ? 'added' : 'changed', { 'font-family': t.fontSans, 'font-size': 9.5, 'font-weight': 'bold', fill: DIFF_COLORS[k], 'text-anchor': 'end' });
+    }
+  }
   for (const w of layout.wires) s += renderWire(w, t, opts);
   for (const [x, y] of layout.junctions) s += `<circle${attrs({ cx: x, cy: y, r: 2.8, fill: t.ink })}/>`;
   for (const c of layout.connectors) s += renderConnector(c, t, opts);
   for (const b of layout.blocks) s += renderBlock(b, t, opts);
   for (const nt of layout.notes) s += renderNote(nt, t, opts);
   return s + '</svg>';
+}
+
+/**
+ * Visual diff of one sheet: `after` is the current layout, `before` the layout
+ * of the same sheet in the older version (for ghosts of removed items).
+ */
+export function renderDiffFor(sd: StrategyDiff, after: SheetLayout, before?: SheetLayout): RenderDiff {
+  const blocks: Record<string, 'added' | 'changed'> = {};
+  for (const b of sd.blocks) if (b.kind === 'added' || (b.kind === 'changed' && b.changes.length)) blocks[b.id] = b.kind;
+  const links: Record<number, 'added' | 'changed'> = {};
+  for (const l of sd.links) if ((l.kind === 'added' || l.kind === 'changed') && l.after) links[l.after.index] = l.kind;
+  const removedBlocks = new Set(sd.blocks.filter((b) => b.kind === 'removed').map((b) => b.id));
+  const removedLinks = new Set(sd.links.filter((l) => l.kind === 'removed' && l.before).map((l) => l.before!.index));
+  // Rewired links: show the old route as a ghost too.
+  for (const l of sd.links) if (l.kind === 'changed' && l.before && l.changes.some((c) => c.field === 'from')) removedLinks.add(l.before.index);
+  const ghosts = before
+    ? {
+        blocks: before.blocks.filter((b) => removedBlocks.has(b.id) && !b.iface),
+        wires: before.wires.filter((w) => w.link !== undefined && removedLinks.has(w.link)),
+      }
+    : undefined;
+  return { blocks, links, ghosts };
 }

@@ -3,7 +3,8 @@ import { demoProjectFiles, formatTag, newUid, stdLibraryFiles, stringifyDoc, DEF
 import { Document } from 'yaml';
 import { store, useEditor, type ViewMode } from './state/store';
 import { activeView } from './state/selectors';
-import { browserStore, download, filesToZip, newProjectId, rememberLast, safeFileName, zipToFiles, type ProjectSummary } from './state/persist';
+import { browserStore, download, newProjectId, safeFileName, type ProjectSummary } from './state/persist';
+import { openSession, openStoredProject, openZip, projectZip } from './state/session';
 import { LogoMark } from './ui/Logo';
 import { DialogHost, confirmDialog, promptDialog } from './ui/dialogs';
 import { useMenu, type MenuEntry } from './ui/kit';
@@ -28,10 +29,7 @@ export function emptyProjectFiles(name: string): Files {
 }
 
 async function openProject(id: string) {
-  const p = await browserStore.load(id);
-  if (!p) return store().toast('Project not found in this browser', 'error');
-  store().loadProject(p.id, p.files);
-  rememberLast(p.id);
+  if (!(await openStoredProject(id))) store().toast('Project not found in this browser', 'error');
 }
 
 // --- layout preferences (remembered per browser) --------------------------------------------
@@ -204,9 +202,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         onClick: async () => {
           const n = await promptDialog({ title: 'New project', label: 'Project name', validate: (v) => (v ? undefined : 'Enter a name') });
           if (!n) return;
-          const id = newProjectId();
-          s.loadProject(id, emptyProjectFiles(n));
-          rememberLast(id);
+          await openSession(newProjectId(), emptyProjectFiles(n), undefined, { save: true });
         },
       },
       { label: 'Open ZIP…', onClick: () => fileInput.current?.click() },
@@ -219,9 +215,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       {
         label: 'Open demo project',
         onClick: () => {
-          const id = newProjectId();
-          s.loadProject(id, demoProjectFiles());
-          rememberLast(id);
+          void openSession(newProjectId(), demoProjectFiles(), undefined, { save: true });
         },
       },
       { section: 'In this browser' },
@@ -239,9 +233,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         onClick: async () => {
           if (!(await confirmDialog({ title: 'Remove project?', message: `"${name}" will be deleted from this browser. Save it as ZIP first if you want to keep it.`, okLabel: 'Remove', danger: true }))) return;
           await browserStore.remove(s.getState().projectId);
-          const id = newProjectId();
-          s.loadProject(id, demoProjectFiles());
-          rememberLast(id);
+          await openSession(newProjectId(), demoProjectFiles(), undefined, { save: true });
         },
       },
     ];
@@ -300,10 +292,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           e.target.value = '';
           if (!f) return;
           try {
-            const files = await zipToFiles(f);
-            const id = newProjectId();
-            store().loadProject(id, files);
-            rememberLast(id);
+            await openZip(f, newProjectId());
             store().toast(`Opened ${f.name}`);
           } catch (err) {
             store().toast(`Cannot open ${f.name}: ${(err as Error).message}`, 'error');
@@ -317,7 +306,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
 
 async function saveZip() {
   const s = store().getState();
-  download(await filesToZip(s.files), `${safeFileName(s.model.meta.name)}.csd.zip`);
+  download(await projectZip(), `${safeFileName(s.model.meta.name)}.csd.zip`);
 }
 
 function CenterView() {

@@ -126,6 +126,17 @@ export interface TypePlan {
   sheets: SheetPlan[];
 }
 
+export interface HistoryEntry {
+  oid: string;
+  /** ISO date. */
+  date: string;
+  author: string;
+  summary: string;
+  message: string;
+  /** Revision tags of this commit. */
+  tags: string[];
+}
+
 export interface ExportPlan {
   config: ExportConfig;
   meta: ProjectMeta;
@@ -142,6 +153,10 @@ export interface ExportPlan {
   types: TypePlan[];
   categories: Record<string, SignalCategory>;
   diags: { errors: number; warnings: number; items: Diag[] };
+  /** Commits, newest first (when the history section is enabled and a history exists). */
+  history: HistoryEntry[];
+  /** Uncommitted changes existed when exporting. */
+  uncommitted: boolean;
 }
 
 function text(files: ProjectModel['files'], file?: string): MarkdownDoc | undefined {
@@ -230,7 +245,11 @@ function walk(node: FolderNode, visit: (n: FolderNode) => void) {
   node.folders.forEach((f) => walk(f, visit));
 }
 
-export function planExport(model: ProjectModel, config: ExportConfig, opts: { date?: string; revision?: string } = {}): ExportPlan {
+export function planExport(
+  model: ProjectModel,
+  config: ExportConfig,
+  opts: { date?: string; revision?: string; history?: HistoryEntry[]; uncommitted?: boolean } = {},
+): ExportPlan {
   const scope = new Set(config.strategies.length ? config.strategies : model.strategies.map((s) => s.file));
   const display = layoutDisplay(config);
 
@@ -327,6 +346,8 @@ export function planExport(model: ProjectModel, config: ExportConfig, opts: { da
     types,
     categories: model.meta.signalCategories,
     diags: { errors: items.filter((d) => d.severity === 'error').length, warnings: items.filter((d) => d.severity === 'warning').length, items },
+    history: config.sections.history ? opts.history ?? [] : [],
+    uncommitted: !!opts.uncommitted,
   };
 }
 

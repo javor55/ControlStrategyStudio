@@ -9,6 +9,8 @@ export interface StoredProject {
   name: string;
   updated: number;
   files: Record<string, string | Uint8Array>;
+  /** Git history: files of the `.git` directory (relative paths). */
+  git?: Record<string, Uint8Array>;
 }
 
 export interface ProjectSummary {
@@ -98,7 +100,7 @@ export function newProjectId(): string {
 
 // --- ZIP ------------------------------------------------------------------------------
 
-const TEXT = /\.(ya?ml|md|txt|json|csv|svg|scl|st)$/i;
+const TEXT = /\.(ya?ml|md|txt|json|csv|svg|scl|st|toml)$/i;
 
 export async function filesToZip(files: Files): Promise<Blob> {
   const zip = new JSZip();
@@ -108,18 +110,28 @@ export async function filesToZip(files: Files): Promise<Blob> {
 
 /** Reads a project ZIP. A single top-level folder wrapping everything is stripped. */
 export async function zipToFiles(data: Blob | ArrayBuffer): Promise<Files> {
+  return (await zipToProject(data)).files;
+}
+
+/** Reads a project ZIP including its git history (`.git/`). */
+export async function zipToProject(data: Blob | ArrayBuffer): Promise<{ files: Files; git: Record<string, Uint8Array> }> {
   const zip = await JSZip.loadAsync(data);
   const entries = Object.values(zip.files).filter((f) => !f.dir && !f.name.startsWith('__MACOSX/'));
   const names = entries.map((e) => e.name);
   const first = names[0]?.split('/')[0];
   const wrapped = first && !names.includes('project.yaml') && names.every((n) => n.startsWith(first + '/'));
   const out: Record<string, string | Uint8Array> = {};
+  const git: Record<string, Uint8Array> = {};
   for (const e of entries) {
     const path = wrapped ? e.name.slice(first!.length + 1) : e.name;
-    if (!path || path.startsWith('.git/')) continue; // git history arrives in phase 4
+    if (!path) continue;
+    if (path.startsWith('.git/')) {
+      git[path.slice(5)] = await e.async('uint8array');
+      continue;
+    }
     out[path] = TEXT.test(path) ? await e.async('string') : await e.async('uint8array');
   }
-  return out;
+  return { files: out, git };
 }
 
 /** Triggers a browser download. */

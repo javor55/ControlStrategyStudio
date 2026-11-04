@@ -25,3 +25,27 @@ describe('renderSheetSvg', () => {
     expect(svg).toContain('a &lt; b &amp; &quot;c&quot;');
   });
 });
+
+describe('visual diff', () => {
+  it('highlights added and changed items and ghosts removed ones', async () => {
+    const { applyOp, diffProjects } = await import('@csd/core');
+    const FIC = 'strategies/ACME/Brno/WaterTreatment/U100/FIC101.yaml';
+    const before = demoProjectFiles();
+    let f = applyOp(before, { op: 'removeBlock', file: FIC, id: 'FV101' }).files;
+    f = applyOp(f, { op: 'addBlock', file: FIC, id: 'FAH101', type: 'LIM_ALM' }).files;
+    f = applyOp(f, { op: 'setParam', file: FIC, id: 'FIC101', name: 'GAIN', value: 2 }).files;
+    const pa = loadProject(before);
+    const pb = loadProject(f);
+    const sd = diffProjects(pa, pb).strategies.find((s) => s.name === 'FIC101')!;
+    const { renderDiffFor } = await import('../src');
+    const after = layoutDiagram(pb.strategyByName.get('FIC101')!)[0];
+    const old = layoutDiagram(pa.strategyByName.get('FIC101')!)[0];
+    const d = renderDiffFor(sd, after, old);
+    expect(d.blocks).toEqual({ FAH101: 'added', FIC101: 'changed' });
+    expect(d.ghosts!.blocks.map((b) => b.id)).toEqual(['FV101']);
+    expect(d.ghosts!.wires.length).toBeGreaterThanOrEqual(2);
+    const svg = renderSheetSvg(after, { diff: d });
+    expect(svg).toContain('removed');
+    expect(svg).toContain('#2f7d4a');
+  });
+});
