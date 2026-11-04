@@ -4,7 +4,7 @@
 // (no CSS classes), so the same drawing works on screen, in svg2pdf for PDF,
 // in a CLI and in any other tool. Interactive mode adds `data-*` attributes and
 // invisible hit areas that an editor uses for event delegation.
-import { M, type DrawingStyle, type LineStyle, type WireKind, type WireStyle, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
+import { M, lineCategories, type ProjectMeta, type DrawingStyle, type LineStyle, type WireKind, type WireStyle, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
 
 export interface Theme {
   paper: string;
@@ -82,6 +82,16 @@ export function drawingRenderOptions(d: DrawingStyle): Pick<RenderOptions, 'wire
   return { wireStyles: d.signals, feedbackStyle: d.feedback };
 }
 
+/**
+ * Line styling of a project: all line categories (built-in `bool` / `numeric`
+ * / `other` by signal type, plus the project's own) and the z⁻¹ style.
+ */
+export function lineStyleOptions(meta: ProjectMeta): Pick<RenderOptions, 'categories' | 'feedbackStyle'> {
+  return { categories: lineCategories(meta), feedbackStyle: meta.drawing.feedback };
+}
+
+const BUILTIN_BY_KIND: Record<WireKind, string> = { bool: 'bool', real: 'numeric', other: 'other' };
+
 export interface RenderDiff {
   blocks?: Readonly<Record<string, 'added' | 'changed'>>;
   links?: Readonly<Record<number, 'added' | 'changed'>>;
@@ -149,7 +159,8 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const d = 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L');
   const selected = o.selection?.kind === 'link' && w.link !== undefined && o.selection.index === w.link;
   const error = w.link !== undefined && o.errorLinks?.has(w.link);
-  const cat = w.category ? o.categories?.[w.category] : undefined;
+  // Explicit category, else the built-in one of the signal type.
+  const cat = (w.category ? o.categories?.[w.category] : undefined) ?? (w.external ? undefined : o.categories?.[BUILTIN_BY_KIND[w.kind]]);
   const fb = o.showFeedback !== false ? w.feedback : undefined;
   const fbs = o.feedbackStyle;
   const ws = o.wireStyles?.[w.kind];

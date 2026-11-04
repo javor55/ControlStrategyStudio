@@ -207,6 +207,24 @@ export const DEFAULT_DRAWING: DrawingStyle = {
   params: 'show',
 };
 
+/**
+ * Built-in line categories: every link without an explicit category gets one
+ * of these by its signal type. They are stored and styled like user categories.
+ */
+export const BUILTIN_CATEGORIES = {
+  bool: 'BOOL signals',
+  numeric: 'Numeric signals (REAL, INT …)',
+  other: 'Other signals',
+} as const;
+export type BuiltinCategory = keyof typeof BUILTIN_CATEGORIES;
+
+/** Hierarchy level presets (names by folder depth). Levels are optional. */
+export const LEVEL_PRESETS: Record<string, string[]> = {
+  none: [],
+  'ISA-95': ['Enterprise', 'Site', 'Area', 'Line / Unit', 'Work Cell'],
+  'ISA-88': ['Enterprise', 'Site', 'Area', 'Process Cell', 'Unit', 'Equipment Module', 'Control Module'],
+};
+
 export interface ProjectMeta {
   uid?: string;
   name: string;

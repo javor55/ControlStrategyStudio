@@ -172,3 +172,38 @@ describe('sequence diff and strategy tags', () => {
     expect(sheet.connectors.find((c) => c.kind === 'written-by')).toMatchObject({ label: '← FILL_T100' });
   });
 });
+
+describe('sequence clipboard, levels and line categories', () => {
+  it('copies steps with actions and inner transitions and pastes them renumbered', async () => {
+    const { extractSequenceFragment } = await import('../src');
+    const frag = extractSequenceFragment(demo[SEQ] as string, ['S10', 'S20', 'S25'], { positions: { S10: [100, 100] } });
+    expect(frag).toContain('csd-sequence-fragment: 1');
+    expect(frag).not.toContain('S0:');
+    const f = run(demo, { op: 'insertSequenceFragment', file: SEQ, fragment: frag, offset: [20, 20] });
+    const q = loadProject(f).sequenceByName.get('FILL_T100')!;
+    expect(q.steps.map((s) => s.id)).toEqual(['S0', 'S10', 'S20', 'S25', 'S30', 'S40', 'S50', 'S60']);
+    expect(q.steps.find((s) => s.id === 'S40')).toMatchObject({ pos: [120, 120], initial: false });
+    expect(q.steps.find((s) => s.id === 'S40')!.actions).toHaveLength(2);
+    expect(q.transitions.at(-1)).toMatchObject({ from: ['S40'], to: ['S50', 'S60'], condition: 'FIC101:FT101.PV > 5' });
+    expect(() => applyOp(demo, { op: 'insertSequenceFragment', file: SEQ, fragment: 'x' })).toThrow(/clipboard/);
+  });
+  it('makes hierarchy levels optional', () => {
+    const f = run(demo, { op: 'setLevels', levels: [] });
+    expect(f['project.yaml']).toContain('levels: []');
+    const p = loadProject(f);
+    expect(p.meta.levels).toEqual([]);
+    expect(p.root.folders[0].level).toBeUndefined();
+    const g = run(demo, { op: 'setLevels', levels: ['Plant', 'Area'] });
+    expect(loadProject(g).root.folders[0].folders[0].level).toBe('Area');
+  });
+  it('styles links by built-in category of their signal type or by their own category', async () => {
+    const { lineCategories } = await import('../src');
+    let f = run(demo, { op: 'setSignalCategory', name: 'bool', category: { color: '#00aa00', style: 'dashed' } });
+    const meta = loadProject(f).meta;
+    expect(lineCategories(meta).bool).toMatchObject({ color: '#00aa00', style: 'dashed' });
+    expect(lineCategories(meta).numeric.description).toMatch(/Numeric/);
+    expect(lineCategories(meta).interlock.color).toBe('#b3261e');
+    f = run(f, { op: 'setLinkField', file: `${U100}/P101.yaml`, index: 0, field: 'category', value: 'numeric' });
+    expect(loadProject(f).diags.filter((d) => d.code === 'unknown-category')).toEqual([]);
+  });
+});

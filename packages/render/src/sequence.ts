@@ -1,5 +1,5 @@
 // SVG renderer for sequence sheets (SFC / Grafcet).
-import { SFC, type SfcLayout, type SfcStepGeom, type SfcTransitionGeom } from '@csd/core';
+import { SFC, type SequenceDiff, type SfcLayout, type SfcStepGeom, type SfcTransitionGeom } from '@csd/core';
 import { DIFF_COLORS, PRINT_THEME, type RenderDiff, type RenderSelection, type Theme } from './index';
 
 export interface SequenceRenderOptions {
@@ -9,8 +9,8 @@ export interface SequenceRenderOptions {
   selection?: RenderSelection;
   errorSteps?: ReadonlySet<string>;
   errorTransitions?: ReadonlySet<number>;
-  /** Visual diff: `blocks` = steps, `links` = transitions. */
-  diff?: Pick<RenderDiff, 'blocks' | 'links'>;
+  /** Visual diff: `blocks` = steps, `links` = transitions; ghosts = removed items (older layout). */
+  diff?: Pick<RenderDiff, 'blocks' | 'links'> & { ghosts?: { steps: SfcStepGeom[]; transitions: SfcTransitionGeom[] } };
   grid?: boolean;
   background?: boolean;
   viewBox?: { x: number; y: number; w: number; h: number };
@@ -127,6 +127,19 @@ export function renderSequenceSvg(layout: SfcLayout, opts: SequenceRenderOptions
       s += `<line${attrs({ x1: b.x1 - 10, y1: b.y + 2, x2: b.x2 + 10, y2: b.y + 2, stroke: t.ink, 'stroke-width': 1.5 })}/>`;
     } else s += `<line${attrs({ x1: b.x1, y1: b.y, x2: b.x2, y2: b.y, stroke: t.ink, 'stroke-width': 1.5 })}/>`;
   }
+  const ghosts = opts.diff?.ghosts;
+  if (ghosts) {
+    const red = DIFF_COLORS.removed;
+    for (const g of ghosts.steps) {
+      s += `<rect${attrs({ x: g.x, y: g.y, width: g.w, height: g.h, fill: red, 'fill-opacity': 0.06, stroke: red, 'stroke-width': 1.5, 'stroke-dasharray': '5 3' })}/>`;
+      s += text(g.x + g.w / 2, g.y + 17, g.id, { 'font-family': t.fontSans, 'font-size': 13, 'font-weight': 'bold', fill: red, 'text-anchor': 'middle', 'text-decoration': 'line-through' });
+      s += text(g.x + g.w / 2, g.y + 31, 'removed', { 'font-family': t.fontMono, 'font-size': 9.5, fill: red, 'text-anchor': 'middle' });
+    }
+    for (const tr of ghosts.transitions) {
+      s += `<line${attrs({ x1: tr.x - SFC.BAR_W / 2, y1: tr.y, x2: tr.x + SFC.BAR_W / 2, y2: tr.y, stroke: red, 'stroke-width': 2.6, 'stroke-dasharray': '4 2' })}/>`;
+      s += text(tr.x + 20, tr.y + 4, tr.conditionLines[0] ?? '', { 'font-family': t.fontMono, 'font-size': 10, fill: red, 'text-decoration': 'line-through' });
+    }
+  }
   for (const tr of layout.transitions) s += renderTransition(tr, t, opts);
   for (const g of layout.steps) s += renderStep(g, t, opts);
   for (const nt of layout.notes) {
@@ -137,4 +150,19 @@ export function renderSequenceSvg(layout: SfcLayout, opts: SequenceRenderOptions
     s += '</g>';
   }
   return s + '</svg>';
+}
+
+/** Visual diff options for one sequence sheet (`before` = same sheet of the older version, for ghosts). */
+export function renderSequenceDiffFor(sd: SequenceDiff, after: SfcLayout, before?: SfcLayout): NonNullable<SequenceRenderOptions['diff']> {
+  const blocks: Record<string, 'added' | 'changed'> = {};
+  for (const st of sd.steps) if (st.kind === 'added' || (st.kind === 'changed' && st.changes.length)) blocks[st.id] = st.kind;
+  const links: Record<number, 'added' | 'changed'> = {};
+  for (const tr of sd.transitions) if ((tr.kind === 'added' || tr.kind === 'changed') && tr.afterIndex !== undefined) links[tr.afterIndex] = tr.kind;
+  const removedSteps = new Set(sd.steps.filter((x) => x.kind === 'removed').map((x) => x.id));
+  const removedTrans = new Set(sd.transitions.filter((x) => x.kind === 'removed' && x.beforeIndex !== undefined).map((x) => x.beforeIndex!));
+  return {
+    blocks,
+    links,
+    ghosts: before ? { steps: before.steps.filter((g) => removedSteps.has(g.id)), transitions: before.transitions.filter((g) => removedTrans.has(g.index)) } : undefined,
+  };
 }

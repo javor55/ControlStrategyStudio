@@ -13,7 +13,7 @@ import { bumpVersion, parseTypeRef } from './library';
 import { blockTypeFile, classify, folderReadme, joinPath, libraryFile, sequenceFile, strategyDocFile, strategyFile } from './paths';
 import type { ActionQualifier, Endpoint, FileContent, Files } from './types';
 import { newUid } from './uid';
-import { parseFragment, renameFragmentLinks, renameMap } from './fragment';
+import { parseFragment, parseSequenceFragment, renameFragmentLinks, renameMap, stepRenameMap } from './fragment';
 import { loadProject } from './project';
 import { parseForEdit, stringifyDoc, type YamlPath } from './yamlutil';
 
@@ -75,6 +75,9 @@ export type Op =
   | { op: 'setTransition'; file: string; index: number; from?: string | string[]; to?: string | string[]; condition?: string; comment?: string }
   | { op: 'removeTransition'; file: string; index: number }
   | { op: 'addSeqInput'; file: string; name: string; type: string; description?: string }
+  | { op: 'insertSequenceFragment'; file: string; fragment: string; offset?: [number, number]; sheet?: number }
+  | { op: 'removeSteps'; file: string; ids: string[] }
+  | { op: 'setLevels'; levels: string[] }
   | { op: 'removeSeqInput'; file: string; name: string }
   | ({ op: 'setBlockDisplay'; id: string; params?: boolean } & DiagramTarget)
   | { op: 'setSignalCategory'; name: string; category?: { color?: string; style?: 'solid' | 'dashed' | 'dotted' | 'dashdot'; width?: number; description?: string } }
@@ -913,6 +916,14 @@ function run(tx: Tx, op: Op): void {
         }
       });
       return;
+    case 'setLevels':
+      tx.edit('project.yaml', (doc) => {
+        const s = new YAMLSeq();
+        for (const l of op.levels.map((x) => x.trim()).filter(Boolean)) s.items.push(new Scalar(l));
+        if (!s.items.length) s.flow = true; // `levels: []` = no level names
+        setOrdered(ensureMap(doc, [], PROJECT_KEYS), 'levels', s, PROJECT_KEYS);
+      });
+      return;
     case 'setSignalCategory':
       if (!TAG_RE.test(op.name)) throw new OpError(`Invalid category name "${op.name}"`);
       tx.edit('project.yaml', (doc) => {
@@ -1497,6 +1508,66 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
         if (!isSeq(s) || !s.items[op.index]) throw new OpError(`Transition ${op.index + 1} does not exist`);
         s.items.splice(op.index, 1);
       });
+      return true;
+    case 'insertSequenceFragment': {
+      seqFileOf(tx, op.file);
+      const frag = parseSequenceFragment(op.fragment);
+      if (!frag || !Object.keys(frag.steps).length) throw new OpError('The clipboard does not contain sequence steps');
+      const [dx, dy] = op.offset ?? [0, 0];
+      tx.edit(op.file, (doc) => {
+        const steps = ensureMap(doc, ['steps'], SEQ_KEYS);
+        const map = stepRenameMap(steps.items.map((p) => String(keyOf(p))), Object.keys(frag.steps));
+        const ren = (cond: string) => {
+          try {
+            let text = cond;
+            for (const r of exprRefs(parseExpr(cond)).sort((x, y) => y.at - x.at)) {
+              if (!r.scope && r.port && map[r.name] && map[r.name] !== r.name) text = text.slice(0, r.at) + `${map[r.name]}.${r.port}` + text.slice(r.at + r.text.length);
+            }
+            return text;
+          } catch {
+            return cond;
+          }
+        };
+        for (const [id, raw] of Object.entries(frag.steps)) {
+          const data: Record<string, unknown> = { ...raw };
+          const pos = Array.isArray(data.pos) && data.pos.length === 2 ? (data.pos as number[]) : undefined;
+          delete data.pos;
+          delete data.initial;
+          const m = new YAMLMap();
+          for (const k of STEP_KEYS) {
+            if (data[k] === undefined) continue;
+            if (k === 'actions' && Array.isArray(data.actions)) {
+              const s = new YAMLSeq();
+              for (const a of data.actions) if (isPlainObject(a)) s.items.push(actionNode(doc, a as Partial<ActionSpec>));
+              m.items.push(new Pair(new Scalar('actions'), s));
+            } else if (k === 'time' && isPlainObject(data.time)) {
+              const t = doc.createNode(data.time) as YAMLMap;
+              t.flow = true;
+              m.items.push(new Pair(new Scalar('time'), t));
+            } else m.items.push(new Pair(new Scalar(k), doc.createNode(data[k])));
+          }
+          if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, STEP_KEYS, doc);
+          if (pos) setOrdered(m, 'pos', [Math.round(pos[0] + dx), Math.round(pos[1] + dy)], STEP_KEYS, doc);
+          steps.items.push(new Pair(new Scalar(map[id]), m));
+        }
+        if (frag.transitions.length) {
+          const seq = ensureSeq(doc, ['transitions'], SEQ_KEYS);
+          for (const t of frag.transitions) {
+            const n = new YAMLMap();
+            n.flow = true;
+            const from = (Array.isArray(t.from) ? t.from : [t.from]).map((s) => map[String(s)] ?? String(s));
+            const to = (Array.isArray(t.to) ? t.to : [t.to]).map((s) => map[String(s)] ?? String(s));
+            n.items.push(new Pair(new Scalar('from'), stepsNode(doc, from)), new Pair(new Scalar('to'), stepsNode(doc, to)));
+            if (typeof t.condition === 'string') n.items.push(new Pair(new Scalar('condition'), doc.createNode(ren(t.condition))));
+            if (typeof t.comment === 'string') n.items.push(new Pair(new Scalar('comment'), doc.createNode(t.comment)));
+            seq.items.push(n);
+          }
+        }
+      });
+      return true;
+    }
+    case 'removeSteps':
+      for (const id of op.ids) runSequenceOp(tx, { op: 'removeStep', file: op.file, id });
       return true;
     case 'addSeqInput':
       seqFileOf(tx, op.file);

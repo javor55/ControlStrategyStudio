@@ -6,7 +6,7 @@ import { validateSchema } from './schema';
 import { parseDiagram } from './diagram';
 import { validateDiagram } from './validate';
 import { parseSequence, sequenceRefs, validateSequence, type SequenceRef } from './sequence';
-import { DEFAULT_DRAWING, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
+import { BUILTIN_CATEGORIES, DEFAULT_DRAWING, type BuiltinCategory, type SignalCategory, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
 import { isObj, lineAt, parseYaml, pickExt, str } from './yamlutil';
 
 export const DEFAULT_LEVELS = ['Enterprise', 'Site', 'Area', 'Unit', 'Equipment Module', 'Control Module'];
@@ -62,7 +62,8 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
     name: str(d.name) ?? meta.name,
     description: str(d.description),
     author: str(d.author),
-    levels: Array.isArray(d.levels) && d.levels.length ? d.levels.map(String) : DEFAULT_LEVELS,
+    // `levels: []` = no level names; a missing key keeps the historic default.
+    levels: Array.isArray(d.levels) ? d.levels.map(String) : DEFAULT_LEVELS,
     titleBlock: { logo: str(tb.logo), drawn: str(tb.drawn), checked: str(tb.checked), approved: str(tb.approved) },
     signalCategories: isObj(d.signal_categories)
       ? Object.fromEntries(
@@ -76,6 +77,24 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
     drawing: parseDrawing(d.drawing),
     ext: pickExt(d),
   };
+}
+
+/**
+ * Line categories with the built-in ones (bool / numeric / other) always
+ * present. Older projects styled lines in `drawing.signals`; those settings
+ * are used when the built-in category is not defined.
+ */
+export function lineCategories(meta: ProjectMeta): Record<string, SignalCategory> {
+  const legacy = { bool: meta.drawing.signals.bool, numeric: meta.drawing.signals.real, other: meta.drawing.signals.other };
+  const out: Record<string, SignalCategory> = {};
+  for (const k of Object.keys(BUILTIN_CATEGORIES) as BuiltinCategory[]) {
+    const own = meta.signalCategories[k];
+    const l = legacy[k];
+    out[k] = own ?? { color: l.color, style: l.style, width: l.width, description: BUILTIN_CATEGORIES[k] };
+    if (!out[k].description) out[k] = { ...out[k], description: BUILTIN_CATEGORIES[k] };
+  }
+  for (const [k, v] of Object.entries(meta.signalCategories)) if (!(k in out)) out[k] = v;
+  return out;
 }
 
 const LINE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot'] as const;
@@ -247,7 +266,7 @@ export function loadProject(files: Files): ProjectModel {
     if (!p || p.error) continue;
     diags.push(...validateDiagram(s, { file: s.file, parsed: p, base: [], strategies: byName, sequences: seqByName }));
     for (const l of s.links) {
-      if (l.category && !meta.signalCategories[l.category]) {
+      if (l.category && !meta.signalCategories[l.category] && !(l.category in BUILTIN_CATEGORIES)) {
         diags.push({ severity: 'warning', code: 'unknown-category', message: `Link ${l.index + 1}: signal category "${l.category}" is not defined in project.yaml`, file: s.file, line: lineAt(p, ['links', l.index, 'category']), link: l.index });
       }
     }

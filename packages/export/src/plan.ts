@@ -2,7 +2,9 @@
 // project model and the export configuration. Writers only draw it.
 import {
   exprRefs,
+  BUILTIN_CATEGORIES,
   feedbackOrders,
+  lineCategories,
   formatEndpoint,
   formatValue,
   layoutDiagram,
@@ -23,7 +25,7 @@ import {
   type SignalCategory,
   type Strategy,
 } from '@csd/core';
-import { drawingRenderOptions, type RenderOptions } from '@csd/render';
+import type { RenderOptions } from '@csd/render';
 import { layoutDisplay, type ExportConfig } from './config';
 
 export interface MarkdownDoc {
@@ -601,9 +603,10 @@ export function planExport(
 export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'wireStyles' | 'feedbackStyle' | 'paramsToggles'> {
   const d = plan.config.display;
   return {
-    ...drawingRenderOptions(plan.meta.drawing),
+    feedbackStyle: plan.meta.drawing.feedback,
     paramsToggles: false,
-    categories: d.categories ? plan.categories : undefined,
+    // Built-in categories (by signal type) always apply; the project's own only when enabled.
+    categories: d.categories ? lineCategories(plan.meta) : Object.fromEntries(Object.entries(lineCategories(plan.meta)).filter(([k]) => k in BUILTIN_CATEGORIES)),
     showFeedback: d.feedback,
     showOrder: d.order,
     showLabels: d.labels,

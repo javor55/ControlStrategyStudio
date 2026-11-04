@@ -137,3 +137,72 @@ export function renameFragmentLinks(links: Fragment['links'], map: Record<string
     return { ...l, from: ren(String(l.from)), to: ren(String(l.to)) };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Sequence fragments (steps with their actions and the transitions between them)
+// ---------------------------------------------------------------------------
+
+export const SEQ_FRAGMENT_KEY = 'csd-sequence-fragment';
+
+export interface SequenceFragment {
+  steps: Record<string, Record<string, unknown>>;
+  transitions: Record<string, unknown>[];
+}
+
+const stepsOf = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? [v] : []);
+
+/** Copies steps `ids` and the transitions whose ends are all among them. */
+export function extractSequenceFragment(text: string, ids: string[], opts: { positions?: Record<string, [number, number]> } = {}): string {
+  const data = parseYaml(text).data;
+  const src = isObj(data) && isObj(data.steps) ? data.steps : {};
+  const steps: Record<string, Record<string, unknown>> = {};
+  for (const id of ids) {
+    const s = src[id];
+    const copy: Record<string, unknown> = isObj(s) ? { ...s } : {};
+    delete copy.initial;
+    delete copy.sheet;
+    const p = opts.positions?.[id];
+    if (p) copy.pos = [Math.round(p[0]), Math.round(p[1])];
+    steps[id] = copy;
+  }
+  const set = new Set(ids);
+  const transitions = (isObj(data) && Array.isArray(data.transitions) ? data.transitions : []).filter((t) => {
+    if (!isObj(t)) return false;
+    const ends = [...stepsOf(t.from), ...stepsOf(t.to)];
+    return ends.length > 0 && ends.every((e) => set.has(e));
+  }) as Record<string, unknown>[];
+  const out: Record<string, unknown> = { [SEQ_FRAGMENT_KEY]: 1, steps };
+  if (transitions.length) out.transitions = transitions;
+  return stringifyDoc(new Document(out));
+}
+
+export function parseSequenceFragment(text: string): SequenceFragment | undefined {
+  if (!text.includes(SEQ_FRAGMENT_KEY)) return undefined;
+  const p = parseYaml(text);
+  if (p.error || !isObj(p.data) || p.data[SEQ_FRAGMENT_KEY] === undefined) return undefined;
+  const steps: SequenceFragment['steps'] = {};
+  if (isObj(p.data.steps)) for (const [id, s] of Object.entries(p.data.steps)) if (TAG_RE.test(id)) steps[id] = isObj(s) ? s : {};
+  return { steps, transitions: Array.isArray(p.data.transitions) ? (p.data.transitions.filter(isObj) as Record<string, unknown>[]) : [] };
+}
+
+/** New step names: `S10` → next free multiple of 10 above the highest existing step. */
+export function stepRenameMap(existing: Iterable<string>, incoming: string[]): Record<string, string> {
+  const taken = new Set(existing);
+  let next = Math.max(0, ...[...taken].map((s) => Number(/^S(\d+)$/.exec(s)?.[1] ?? 0))) + 10;
+  next = Math.ceil(next / 10) * 10;
+  const out: Record<string, string> = {};
+  for (const id of incoming) {
+    if (!taken.has(id)) {
+      out[id] = id;
+      taken.add(id);
+      continue;
+    }
+    if (/^S\d+$/.test(id)) {
+      while (taken.has(`S${next}`)) next += 10;
+      out[id] = `S${next}`;
+      next += 10;
+    } else out[id] = renameMap(taken, [id])[id];
+    taken.add(out[id]);
+  }
+  return out;
+}
