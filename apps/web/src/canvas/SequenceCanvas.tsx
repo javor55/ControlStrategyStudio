@@ -20,6 +20,7 @@ import {
   findTransition,
   freshNames,
   insertStepInto,
+  insertStepRelative,
   moveStepsToSheet,
   nextStepName,
   openDescription,
@@ -79,6 +80,7 @@ const HELP: HelpGroup[] = [
       [`${MOD}+D`, 'Duplicate selected steps'],
       [`/ · ${MOD}+Space`, 'Quick insert at the mouse: step, transition, branch, jump, note'],
       ['Enter', 'Edit the description of the selected step'],
+      [`${MOD}+Enter · ${MOD}+Shift+Enter`, 'Insert a step after · before the selected step (into the existing chain)'],
       ['Arrows · Shift+arrows', 'Move selected steps 10 px · 50 px'],
       [`${MOD}+Z · ${MOD}+Y`, 'Undo · redo'],
       ['Escape', 'Clear selection / cancel drag'],
@@ -351,6 +353,9 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     { label: 'Duplicate', hint: 'Ctrl+D', onClick: duplicate },
   ];
 
+  /** Step after: inserted into the chain, or a new transition when the step has no successor yet. */
+  const insertOrAdd = (id: string) => addSfcElement(seq, 'transition', { from: id, sheet });
+
   /** Quick insert at the mouse (or the centre of the view): "/" and Ctrl+Space. */
   const openQuick = () => {
     const r = hostRef.current!.getBoundingClientRect();
@@ -360,11 +365,14 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     const from = sel1 && seq.steps.some((x) => x.id === sel1) ? sel1 : undefined;
     const need = from ? undefined : 'Select a step first';
     menu.open({ clientX: m.x, clientY: m.y }, [
-      { section: from ? `Insert (after ${from})` : 'Insert' },
+      { section: from ? `Insert (relative to ${from})` : 'Insert' },
       { label: 'Step here', onClick: () => addStepAt(x, y) },
-      { label: 'Transition to a new step', disabled: !from, description: need, onClick: () => addSfcElement(seq, 'transition', { from, sheet }) },
-      { label: 'Parallel branch', disabled: !from, onClick: () => addSfcElement(seq, 'parallel', { from, sheet }) },
-      { label: 'Alternative branch', disabled: !from, onClick: () => addSfcElement(seq, 'alternative', { from, sheet }) },
+      { label: 'Step after', hint: `${MOD}+Enter`, disabled: !from, description: need, onClick: () => from && insertOrAdd(from) },
+      { label: 'Step before', hint: `${MOD}+Shift+Enter`, disabled: !from, onClick: () => from && insertStepRelative(seq, 'before', from) },
+      { label: 'Parallel step beside', disabled: !from, onClick: () => from && insertStepRelative(seq, 'parallel', from) },
+      { label: 'Alternative step beside', disabled: !from, onClick: () => from && insertStepRelative(seq, 'alternative', from) },
+      { label: 'Parallel branch after', disabled: !from, onClick: () => addSfcElement(seq, 'parallel', { from, sheet }) },
+      { label: 'Alternative branch after', disabled: !from, onClick: () => addSfcElement(seq, 'alternative', { from, sheet }) },
       { label: 'Jump to initial step', disabled: !from, onClick: () => addSfcElement(seq, 'jump', { from, sheet }) },
       'separator',
       { label: 'Note here', onClick: () => addNote([x, y]) },
@@ -714,6 +722,11 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     } else if (key === 'Delete' || key === 'Backspace') {
       done();
       removeSelection();
+    } else if (key === 'Enter' && mod && singleSelected()) {
+      done();
+      const id = singleSelected()!;
+      if (e.shiftKey) insertStepRelative(seq, 'before', id);
+      else insertOrAdd(id);
     } else if (key === 'Enter' && singleSelected()) {
       done();
       setInline({ kind: 'desc', id: singleSelected()! });
@@ -779,11 +792,12 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       const items: MenuEntry[] = [
         { section: `Step ${id}` },
         { label: 'Set as initial step', disabled: st.initial, onClick: () => dispatch({ op: 'setStepField', file, id, field: 'initial', value: true }, { label: `Initial step ${id}` }) },
-        outgoing.length === 1
-          ? { label: 'Insert step after', onClick: () => insertStepInto(seq, outgoing[0].index) }
-          : { label: 'Add step after', onClick: () => addSfcElement(seq, 'transition', { from: id, sheet }) },
-        { label: 'Add parallel branch', onClick: () => addSfcElement(seq, 'parallel', { from: id, sheet }) },
-        { label: 'Add alternative branch', onClick: () => addSfcElement(seq, 'alternative', { from: id, sheet }) },
+        { label: 'Insert step after', hint: `${MOD}+Enter`, onClick: () => insertOrAdd(id) },
+        { label: 'Insert step before', hint: `${MOD}+Shift+Enter`, onClick: () => insertStepRelative(seq, 'before', id) },
+        { label: 'Add parallel step beside', onClick: () => insertStepRelative(seq, 'parallel', id) },
+        { label: 'Add alternative step beside', onClick: () => insertStepRelative(seq, 'alternative', id) },
+        { label: 'Start parallel branch after', disabled: outgoing.length > 0, description: outgoing.length ? 'The step already continues — use "parallel step beside" on the next step' : undefined, onClick: () => addSfcElement(seq, 'parallel', { from: id, sheet }) },
+        { label: 'Start alternative branch after', onClick: () => addSfcElement(seq, 'alternative', { from: id, sheet }) },
         { label: 'Add action', onClick: () => addAction(id) },
         'separator',
         { label: 'Edit description', hint: 'Enter', onClick: () => setInline({ kind: 'desc', id }) },
@@ -1004,11 +1018,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
           <button className="btn small" title="Add a step (double-click empty paper to place it)" onClick={() => addSfcElement(seq, 'step', { sheet })}>
             Add step
           </button>
-          <button className="btn small" disabled={!sel} title={sel ? `Transition from ${sel} to a new step` : 'Select a step first'} onClick={() => addSfcElement(seq, 'transition', { from: sel, sheet })}>
-            Add transition
+          <button className="btn small" disabled={!sel} title={sel ? `New step after ${sel}, inserted into the chain (${MOD}+Enter)` : 'Select a step first'} onClick={() => sel && insertOrAdd(sel)}>
+            Step after
           </button>
-          <button className="btn small" disabled={!sel} title={sel ? `Parallel branch after ${sel}: one transition to two new steps` : 'Select a step first'} onClick={() => addSfcElement(seq, 'parallel', { from: sel, sheet })}>
-            Add parallel branch
+          <button className="btn small" disabled={!sel} title={sel ? `New step before ${sel} (${MOD}+Shift+Enter)` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'before', sel)}>
+            Step before
+          </button>
+          <button className="btn small" disabled={!sel} title={sel ? `New step running in parallel with ${sel}` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'parallel', sel)}>
+            Parallel ∥
+          </button>
+          <button className="btn small" disabled={!sel} title={sel ? `New alternative path next to ${sel}` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'alternative', sel)}>
+            Alternative
           </button>
           <button className="btn small" title="Remove all hand-placed step positions" onClick={() => autoLayout(seq)}>
             Auto layout

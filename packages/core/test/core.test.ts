@@ -279,3 +279,41 @@ describe('layout', () => {
     expect(order.get('P101')!).toBeLessThan(order.get('P101_CMD')!);
   });
 });
+
+import { Occupancy, RouteGrid } from '../src/router';
+describe('wire router', () => {
+  it('goes around a block standing between source and target', () => {
+    const obstacles = [
+      { x0: 40, x1: 200, y0: 40, y1: 120, owner: 'b:A' },
+      { x0: 300, x1: 400, y0: 20, y1: 160, owner: 'b:X' },
+      { x0: 500, x1: 650, y0: 40, y1: 120, owner: 'b:B' },
+    ];
+    const grid = new RouteGrid(obstacles, [200, 500], [82]);
+    const pts = grid.route({ from: [200, 82], to: [500, 82], source: 'A.OUT', fromOwner: 'b:A', toOwner: 'b:B' }, new Occupancy())!;
+    expect(pts[0]).toEqual([200, 82]);
+    expect(pts[pts.length - 1]).toEqual([500, 82]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [p, q] = [pts[i], pts[i + 1]];
+      const hits = p[0] === q[0] ? p[0] > 300 && p[0] < 400 && Math.max(p[1], q[1]) > 20 && Math.min(p[1], q[1]) < 160 : p[1] > 20 && p[1] < 160 && Math.max(p[0], q[0]) > 300 && Math.min(p[0], q[0]) < 400;
+      expect(hits).toBe(false);
+    }
+  });
+
+  it('keeps a distance from a line of another signal', () => {
+    const obstacles = [
+      { x0: 40, x1: 200, y0: 40, y1: 120, owner: 'b:A' },
+      { x0: 500, x1: 650, y0: 40, y1: 120, owner: 'b:B' },
+    ];
+    const occ = new Occupancy();
+    occ.add([[250, 0], [250, 300]], 'OTHER');
+    occ.add([[200, 82], [240, 82]], 'OTHER2');
+    const grid = new RouteGrid(obstacles, [200, 500], [82]);
+    const pts = grid.route({ from: [200, 82], to: [500, 82], source: 'A.OUT', fromOwner: 'b:A', toOwner: 'b:B' }, occ);
+    // The only exit runs on top of OTHER2 — allowed only as the last resort, never along OTHER.
+    expect(pts).toBeDefined();
+    for (let i = 0; i < pts!.length - 1; i++) {
+      const [p, q] = [pts![i], pts![i + 1]];
+      if (p[0] === q[0]) expect(Math.abs(p[0] - 250)).toBeGreaterThanOrEqual(6);
+    }
+  });
+});

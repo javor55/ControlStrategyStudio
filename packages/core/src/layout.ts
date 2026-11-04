@@ -5,6 +5,7 @@
 import { IFACE_IN, IFACE_OUT, formatEndpoint } from './diagram';
 import { formatValue, wireKind, type WireKind } from './signals';
 import type { BlockInst, BlockTypeDef, Diagram, LinkInst, PortDef } from './types';
+import { Occupancy, RouteGrid, routeIsClean, type Rect, type RouteRequest } from './router';
 
 /** Layout metrics (px). Renderers use the same numbers for fonts. */
 export const M = {
@@ -369,7 +370,9 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
         return connW(c.label) + M.CONN_GAP + (text ? text.length * M.CH_TEXT + 8 : 0);
       }),
     );
-    p.rightNeed = Math.max(0, ...p.right.map((c) => connW(c.label) + M.CONN_GAP));
+    const tagPorts = new Set(p.right.map((c) => c.port)).size;
+    const tagGap = p.right.length > tagPorts || tagPorts > 1 ? Math.max(M.CONN_GAP, 8 + 4 * tagPorts + 10) : M.CONN_GAP;
+    p.rightNeed = Math.max(0, ...p.right.map((c) => connW(c.label) + tagGap));
   }
 
   // --- layering (longest path, feedback edges ignored) ------------------------
@@ -457,7 +460,9 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   const final = new Map<string, [number, number]>();
   const box = (id: string, x: number, y: number) => {
     const p = pre.get(id)!;
-    return { id, x: x - p.leftNeed - M.STUB, y, w: p.w + p.leftNeed + p.rightNeed + 2 * M.STUB, h: p.h + p.commentLines.length * M.COMMENT_LINE };
+    // Stacked tags right of the outputs may reach below the block.
+    const tagsH = p.right.length ? M.HEADER + M.ROW / 2 + p.right.length * (M.CONN_H + 4) : 0;
+    return { id, x: x - p.leftNeed - M.STUB, y, w: p.w + p.leftNeed + p.rightNeed + 2 * M.STUB, h: Math.max(tagsH, p.h + p.commentLines.length * M.COMMENT_LINE) };
   };
   const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
     a.x < b.x + b.w + 10 && b.x < a.x + a.w + 10 && a.y < b.y + b.h + 16 && b.y < a.y + a.h + 16;
@@ -568,17 +573,30 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
         label: text ? { x: cx - 6 - text.length * M.CH_TEXT, y: port.y + 3.5, text, name: lk?.label, comment } : undefined,
       });
     }
-    const stack = new Map<string, number>();
-    for (const c of p.right) {
-      const port = portAt.get(`${g.id}.out.${c.port}`);
-      if (!port) continue;
-      const k = stack.get(c.port) ?? 0;
-      stack.set(c.port, k + 1);
+    // Tags right of the outputs are stacked downwards without overlapping; a port
+    // whose tags are pushed below its row gets a vertical branch. Branches of
+    // upper ports run further right, so the branches never cross or overlap.
+    const right = p.right
+      .map((c) => ({ c, port: portAt.get(`${g.id}.out.${c.port}`) }))
+      .filter((r): r is { c: (typeof p.right)[number]; port: PortGeom } => !!r.port)
+      .sort((a, b) => a.port.y - b.port.y);
+    const placedTags: { r: (typeof right)[number]; cy: number }[] = [];
+    let lastBottom = -Infinity;
+    for (const r of right) {
+      const cy = Math.max(r.port.y, lastBottom + 4 + M.CONN_H / 2);
+      lastBottom = cy + M.CONN_H / 2;
+      placedTags.push({ r, cy });
+    }
+    const detourPorts = [...new Set(placedTags.filter((t) => t.cy !== t.r.port.y).map((t) => t.r.c.port))];
+    const branchX = new Map(detourPorts.map((name, i) => [name, 8 + 4 * (detourPorts.length - 1 - i)]));
+    const gap = Math.max(M.CONN_GAP, 8 + 4 * detourPorts.length + 10);
+    for (const { r, cy } of placedTags) {
+      const { c, port } = r;
       const w = connW(c.label);
-      const cy = port.y + k * (M.CONN_H + 4);
-      const cx = port.x + M.CONN_GAP;
+      const cx = port.x + gap;
       connectors.push({ kind: c.kind, side: 'right', label: c.label, x: cx, y: cy, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
-      const pts: [number, number][] = k === 0 ? [[port.x, port.y], [cx, cy]] : [[port.x, port.y], [port.x + 10, port.y], [port.x + 10, cy], [cx, cy]];
+      const bx = port.x + (branchX.get(c.port) ?? 10);
+      const pts: [number, number][] = cy === port.y ? [[port.x, port.y], [cx, cy]] : [[port.x, port.y], [bx, port.y], [bx, cy], [cx, cy]];
       wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by', points: pts, source: `${g.id}.${c.port}` });
     }
   }
@@ -622,6 +640,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     sources.forEach((src, k) => laneOf.set(`${tx}|${src}`, tx - constNeed - 12 - k * 8));
   }
   let feedbackLane = 0;
+  const routed: { wire: WireGeom; req: RouteRequest; name?: string; comment?: string }[] = [];
   for (const l of internal) {
     const tid = l.to.block;
     const tp = pre.get(tid)!;
@@ -645,7 +664,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
         points = [[s.x, s.y], [s.x + 12 + off, s.y], [s.x + 12 + off, yb], [tin, yb], [tin, t.y], [t.x, t.y]];
       }
       const fb = isFeedback(l) ? { sourceOrder: orderOf.get(l.from.block)!, targetOrder: orderOf.get(l.to.block)! } : undefined;
-      wires.push({
+      const wire: WireGeom = {
         link: l.index,
         kind,
         external: false,
@@ -655,11 +674,19 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
         category: l.category,
         label: wireLabel(points, l.label, l.comment, !!fb),
         feedback: fb ? { ...fb, tick: [Math.max(points[points.length - 2][0] + 4, t.x - 12), t.y] } : undefined,
+      };
+      wires.push(wire);
+      routed.push({
+        wire,
+        req: { from: [s.x, s.y], to: [t.x, t.y], source: wire.source!, fromOwner: `b:${l.from.block}`, toOwner: `b:${tid}` },
+        name: l.label,
+        comment: l.comment,
       });
     }
   }
 
   nudgeParallelSegments(wires);
+  rerouteBlockedWires(wires, routed, blocks, connectors, (id) => pre.get(id)!.constNeed);
   const junctions = junctionPoints(wires);
 
   // --- notes ----------------------------------------------------------------------
@@ -706,6 +733,61 @@ function wireLabel(points: [number, number][], name?: string, comment?: string, 
   }
   const text = [delayed ? 'z⁻¹' : '', name, comment].filter(Boolean).join(' · ');
   return { x: Math.min(points[seg][0], points[seg + 1][0]) + 6, y: points[seg][1] - 4, text, name, comment, delayed };
+}
+
+/**
+ * Wires that run through a block / connector or on top of another signal are
+ * routed again around the obstacles (see router.ts).
+ */
+function rerouteBlockedWires(
+  wires: WireGeom[],
+  routed: { wire: WireGeom; req: RouteRequest; name?: string; comment?: string }[],
+  blocks: BlockGeom[],
+  connectors: ConnectorGeom[],
+  constNeed: (id: string) => number,
+): void {
+  if (!routed.length) return;
+  const obstacles: Rect[] = [
+    ...blocks.map((b) => ({
+      x0: b.x - M.STUB - constNeed(b.id),
+      x1: b.x + b.w + M.STUB,
+      y0: b.y,
+      y1: b.y + b.h + b.comment.length * M.COMMENT_LINE,
+      owner: `b:${b.id}`,
+    })),
+    ...connectors.map((c, i) => ({ x0: c.x, x1: c.x + c.w, y0: c.y - c.h / 2, y1: c.y + c.h / 2, owner: `c:${i}` })),
+  ];
+  const meta = new Map(routed.map((r) => [r.wire, r]));
+  const occ = new Occupancy();
+  const dirty: typeof routed = [];
+  // Fixed wires first (connector stubs), then template wires that are clean.
+  for (const w of wires) if (!meta.has(w)) occ.add(w.points, w.source ?? `w:${wires.indexOf(w)}`);
+  for (const w of wires) {
+    const r = meta.get(w);
+    if (!r) continue;
+    if (routeIsClean(w.points, r.req, obstacles, occ)) occ.add(w.points, r.req.source);
+    else dirty.push(r);
+  }
+  if (!dirty.length) return;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const r of routed) {
+    xs.push(r.req.from[0], r.req.from[0] + 8, r.req.from[0] + 10, r.req.from[0] + 12, r.req.from[0] + 16, r.req.from[0] + 20, r.req.to[0], r.req.to[0] - 12);
+    ys.push(r.req.from[1], r.req.to[1]);
+  }
+  for (const o of obstacles) xs.push(o.x0 - 10, o.x1 + 10), ys.push(o.y0 - 10, o.y1 + 10);
+  const grid = new RouteGrid(obstacles, xs, ys);
+  // Shorter wires first: they have the fewest alternatives.
+  dirty.sort((a, b) => Math.abs(a.req.to[0] - a.req.from[0]) + Math.abs(a.req.to[1] - a.req.from[1]) - (Math.abs(b.req.to[0] - b.req.from[0]) + Math.abs(b.req.to[1] - b.req.from[1])));
+  for (const r of dirty) {
+    const pts = grid.route(r.req, occ);
+    if (pts) {
+      r.wire.points = pts;
+      r.wire.label = wireLabel(pts, r.name, r.comment, !!r.wire.feedback);
+      if (r.wire.feedback) r.wire.feedback.tick = [Math.max(pts[pts.length - 2][0] + 4, r.req.to[0] - 12), r.req.to[1]];
+    }
+    occ.add(r.wire.points, r.req.source);
+  }
 }
 
 const NUDGE = 6;

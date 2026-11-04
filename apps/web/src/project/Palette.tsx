@@ -252,6 +252,9 @@ function SfcIcon({ kind }: { kind: SfcElement }) {
       {kind === 'transition' && <path d="M8 1v14 M4 8h8" {...p} strokeWidth={1.6} />}
       {kind === 'parallel' && <path d="M8 1v4 M2 5.5h12 M2 7.5h12 M4 7.5v7 M12 7.5v7" {...p} />}
       {kind === 'alternative' && <path d="M8 1v4 M3 5h10 M4 5v10 M12 5v10 M2 10h4 M10 10h4" {...p} />}
+      {kind === 'before' && <path d="M8 15V1 M4 4h8 M8 1l-2.5 2.5 M8 1l2.5 2.5" {...p} />}
+      {kind === 'beside-parallel' && <path d="M2 2h12 M2 4h12 M2 12h12 M2 14h12 M5 4v8 M11 4v8" {...p} />}
+      {kind === 'beside-alternative' && <path d="M2 3h12 M2 13h12 M5 3v10 M11 3v10 M9 8h4" {...p} />}
       {kind === 'jump' && <path d="M8 1v8 M4 9l4 5 4-5z" {...p} />}
     </svg>
   );

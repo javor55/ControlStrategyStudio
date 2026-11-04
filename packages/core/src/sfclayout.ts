@@ -211,6 +211,10 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   const condOf = (t: SeqTransition) => (t.condition ? wrapText(t.condition, SFC.COND_CHARS, 4) : ['(no condition)']);
   const commentOf = (t: SeqTransition) => (t.comment ? wrapText(t.comment, SFC.COND_CHARS, 2) : []);
 
+  // Lowest point of a step with its monitoring time and action box: transition
+  // bars, branch lines and condition texts stay below it.
+  const contentBottomOf = (g: SfcStepGeom) => Math.max(g.y + g.h + (g.time ? 14 : 0), g.actionBox ? g.actionBox.y + g.actionBox.h : 0);
+
   // y per layer: step row, then the transitions leaving it
   let y = SFC.MARGIN + 30;
   const barY = new Map<number, number>();
@@ -227,7 +231,7 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
     for (const t of transitions) {
       const fromLayers = t.from.filter((f) => here.has(f)).map((f) => layer.get(f)!);
       if (Math.max(...fromLayers) !== layer.get(ids[0])) continue;
-      const bottom = Math.max(...t.from.filter((f) => geo.has(f)).map((f) => geo.get(f)!.y + geo.get(f)!.h + (geo.get(f)!.time ? 14 : 0)));
+      const bottom = Math.max(...t.from.filter((f) => geo.has(f)).map((f) => contentBottomOf(geo.get(f)!)));
       const by = bottom + (t.from.length > 1 ? 34 : 24);
       barY.set(t.index, by);
       const text = (condOf(t).length + commentOf(t).length - 1) * 13;
@@ -267,7 +271,7 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
       lines.push([[x, dy], [x, by]]);
     } else if (!single) {
       const g = froms[0];
-      const sy = bottomOf(g) + (g.time ? 14 : 0) + 8;
+      const sy = contentBottomOf(g) + 8;
       if (!altDivDone.has(g.id)) {
         altDivDone.add(g.id);
         const xs = outgoingForward(g.id).map((o) => {

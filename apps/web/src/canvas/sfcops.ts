@@ -1,17 +1,20 @@
 // Sequence (SFC) editing helpers shared by the sequence canvas, its toolbar,
 // the palette and the inspector. Every change is one core Op (or a batch).
-import type { Op, Selection, Sequence } from '@csd/core';
+import { sfcInsertOps, SFC_INSERT_LABELS, type Op, type Selection, type Sequence, type SfcInsertKind } from '@csd/core';
 import { store } from '../state/store';
 
 /** Palette / toolbar elements of a sequence. */
-export type SfcElement = 'step' | 'transition' | 'parallel' | 'alternative' | 'jump';
+export type SfcElement = 'step' | 'transition' | 'before' | 'beside-parallel' | 'beside-alternative' | 'parallel' | 'alternative' | 'jump';
 export const SFC_MIME = 'application/x-csd-sfc';
 
 export const SFC_ELEMENTS: { kind: SfcElement; label: string; description: string }[] = [
   { kind: 'step', label: 'Step', description: 'A new step (drop it where you want it)' },
-  { kind: 'transition', label: 'Transition', description: 'Transition from the selected (or dropped-on) step to a new step' },
-  { kind: 'parallel', label: 'Parallel branch', description: 'Fork: one transition to two new steps that run simultaneously (AND)' },
-  { kind: 'alternative', label: 'Alternative branch', description: 'Two transitions to two new steps; the first true one wins (OR)' },
+  { kind: 'transition', label: 'Step after', description: 'New step after the selected (or dropped-on) step — inserted into the chain when the step already has a successor' },
+  { kind: 'before', label: 'Step before', description: 'New step before the selected (or dropped-on) step; its incoming transitions lead to the new step' },
+  { kind: 'beside-parallel', label: 'Parallel step beside', description: 'New step running simultaneously with the selected one (joins its fork and join)' },
+  { kind: 'beside-alternative', label: 'Alternative step beside', description: 'New alternative path next to the selected step (same predecessor and successor)' },
+  { kind: 'parallel', label: 'Parallel branch after', description: 'Fork after the step: one transition to two new steps that run simultaneously (AND)' },
+  { kind: 'alternative', label: 'Alternative branch after', description: 'Two transitions after the step to two new steps; the first true one wins (OR)' },
   { kind: 'jump', label: 'Jump to initial step', description: 'Transition from the selected step back to the initial step (drawn as a jump arrow)' },
 ];
 
@@ -111,8 +114,13 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
     return ok;
   }
   if (!from) return (s.toast('Select a step first: the new element starts there'), false);
+  const rel: Partial<Record<SfcElement, SfcInsertKind>> = { before: 'before', 'beside-parallel': 'parallel', 'beside-alternative': 'alternative' };
+  if (rel[kind]) return !!insertStepRelative(seq, rel[kind]!, from);
+  // "Step after" a step that already continues: insert into the chain instead of branching.
+  if (kind === 'transition' && seq.transitions.some((t) => t.from.includes(from))) return !!insertStepRelative(seq, 'after', from);
   const sheet = sheetOf(from);
   const n = kind === 'transition' ? 1 : 2;
+  if (kind !== 'transition' && kind !== 'parallel' && kind !== 'alternative') return false;
   const ids = freshNames(seq, n);
   const ops: Op[] = ids.map((id) => ({ op: 'addStep', file, id, sheet }));
   if (kind === 'transition') ops.push({ op: 'addTransition', file, from, to: ids[0] });
@@ -149,6 +157,24 @@ export function insertStepInto(seq: Sequence, index: number): string | undefined
   if (!t) return undefined;
   const id = betweenStepName(t.from[0], t.to[0], seq.steps.map((s) => s.id));
   return store().dispatch({ op: 'insertStep', file: seq.file, transition: index, id }, { label: `Insert step ${id}`, select: { kind: 'block', id } }) ? id : undefined;
+}
+
+/**
+ * Inserts a new step after / before / beside `stepId` into the existing
+ * structure (see core sfcedit). Selects and returns the new step.
+ */
+export function insertStepRelative(seq: Sequence, kind: SfcInsertKind, stepId: string): string | undefined {
+  const ids = seq.steps.map((s) => s.id);
+  const next = seq.transitions.find((t) => t.from.includes(stepId))?.to[0];
+  const prev = seq.transitions.find((t) => t.to.includes(stepId))?.from[0];
+  const id = kind === 'after' ? betweenStepName(stepId, next, ids) : kind === 'before' ? betweenStepName(prev, stepId, ids) : nextStepName(ids);
+  const r = sfcInsertOps(seq, kind, stepId, id);
+  if ('error' in r) {
+    store().toast(r.error);
+    return undefined;
+  }
+  const label = `${SFC_INSERT_LABELS[kind]} ${stepId}: ${id}`;
+  return store().dispatch({ op: 'batch', label, ops: r.ops }, { label, select: { kind: 'block', id } }) ? id : undefined;
 }
 
 /** Clears hand-placed positions of all steps (one undo step). */

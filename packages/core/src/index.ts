@@ -20,3 +20,4 @@ export * from './expr';
 export * from './sequence';
 export * from './sfclayout';
 export * from './examples';
+export * from './sfcedit';

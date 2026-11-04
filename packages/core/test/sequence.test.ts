@@ -207,3 +207,60 @@ describe('sequence clipboard, levels and line categories', () => {
     expect(loadProject(f).diags.filter((d) => d.code === 'unknown-category')).toEqual([]);
   });
 });
+
+import { sfcInsertOps } from '../src/sfcedit';
+describe('inserting steps into an existing sequence', () => {
+  const base = () => demoProjectFiles();
+  const file = () => loadProject(base()).sequences[0].file;
+  const run = (kind: 'after' | 'before' | 'parallel' | 'alternative', step: string, files = base()) => {
+    const seq = loadProject(files).sequences[0];
+    const r = sfcInsertOps(seq, kind, step, 'S99');
+    if ('error' in r) throw new Error(r.error);
+    const out = applyOp(files, { op: 'batch', label: kind, ops: r.ops });
+    const p = loadProject(out.files);
+    expect(p.diags.filter((d) => d.severity === 'error'), kind).toEqual([]);
+    return p.sequences[0];
+  };
+  const edges = (q: ReturnType<typeof run>) => q.transitions.map((t) => `${t.from.join('+')}>${t.to.join('+')}`);
+
+  it('inserts after a step, keeping the condition on the original transition', () => {
+    const before = loadProject(base()).sequences[0];
+    const t10 = before.transitions.find((t) => t.from[0] === 'S0')!;
+    const q = run('after', 'S0');
+    expect(edges(q)).toContain('S0>S99');
+    expect(q.transitions.find((t) => t.from[0] === 'S0')!.condition).toBe(t10.condition);
+    expect(edges(q)).toContain(`S99>${t10.to.join('+')}`);
+  });
+
+  it('inserts before a step, redirecting the incoming transitions', () => {
+    const q = run('before', 'S10');
+    expect(edges(q)).toContain('S99>S10');
+    expect(edges(q).some((e) => e.endsWith('>S10') && !e.startsWith('S99'))).toBe(false);
+  });
+
+  it('adds a parallel step beside a step inside a parallel branch', () => {
+    const q = run('parallel', 'S20');
+    expect(edges(q).some((e) => /^S10>.*S20\+S25\+S99$/.test(e))).toBe(true);
+    expect(edges(q).some((e) => /^S20\+S25\+S99>/.test(e))).toBe(true);
+  });
+
+  it('adds an alternative path beside a step', () => {
+    const q = run('alternative', 'S10');
+    expect(edges(q)).toContain('S0>S10');
+    expect(edges(q)).toContain('S0>S99');
+    expect(edges(q)).toContain('S99>S20+S25');
+  });
+
+  it('moves hand-placed steps down to make room', () => {
+    let files = base();
+    const seq = loadProject(files).sequences[0];
+    const ops = seq.steps.map((s, i) => ({ op: 'moveStep' as const, file: file(), id: s.id, pos: [100, 100 + i * 150] as [number, number] }));
+    files = applyOp(files, { op: 'batch', label: 'pin', ops }).files;
+    const q = run('after', 'S10', files);
+    const pos = Object.fromEntries(q.steps.map((s) => [s.id, s.pos]));
+    expect(pos.S10).toEqual([100, 250]);
+    expect(pos.S99).toEqual([100, 390]);
+    expect(pos.S20).toEqual([100, 540]);
+    expect(pos.S0).toEqual([100, 100]);
+  });
+});

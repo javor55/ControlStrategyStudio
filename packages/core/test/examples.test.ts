@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderSequenceSvg, renderSheetSvg } from '@csd/render';
 import { defaultExportConfig, planExport, renderChartSvg } from '@csd/export';
+import { wireViolations } from './wirecheck';
 import { demoProjectFiles, exampleProjects, feedbackOrders, layoutDiagram, layoutSequence, loadProject } from '../src';
 
 type Box = { id: string; x: number; y: number; w: number; h: number };
@@ -54,6 +55,22 @@ describe('example projects', () => {
         for (const t of p.types.all.filter((t) => t.diagram)) {
           for (const l of layoutDiagram(t.diagram!, { composite: t })) expect(overlaps(l.blocks), `${t.library}/${t.type}`).toEqual([]);
         }
+      });
+
+      it('routes wires around blocks and never on top of another signal', () => {
+        const bad: string[] = [];
+        for (const s of p.strategies) {
+          const ctx = {
+            usedBy: (b: string, port: string) => [
+              ...p.usedBy(s.name, b).filter((r) => r.link.from.port === port).map((r) => r.strategy.name),
+              ...p.sequenceRefs(s.name, b).filter((r) => r.kind === 'reads' && r.port === port).map((r) => r.sequence),
+            ],
+            writtenBy: (b: string, port: string) => p.sequenceRefs(s.name, b).filter((r) => r.kind === 'writes' && r.port === port).map((r) => r.sequence),
+          };
+          for (const l of layoutDiagram(s, ctx)) bad.push(...wireViolations(l, `${s.name}/${l.sheet}`));
+        }
+        for (const t of p.types.all.filter((t) => t.diagram)) for (const l of layoutDiagram(t.diagram!, { composite: t })) bad.push(...wireViolations(l, t.type));
+        expect(bad).toEqual([]);
       });
 
       it('renders every sheet to SVG', () => {
