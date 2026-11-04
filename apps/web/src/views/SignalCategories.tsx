@@ -8,9 +8,9 @@ import { Field } from '../ui/kit';
 import { confirmDialog } from '../ui/dialogs';
 import { askCategoryName, categoryUsage, defaultCategoryColor } from '../project/actions';
 
-const STYLES = ['solid', 'dashed', 'dotted'] as const;
+const STYLES = ['solid', 'dashed', 'dotted', 'dashdot'] as const;
 const FALLBACK_COLOR = '#5b6670';
-const DASH: Record<string, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5' };
+const DASH: Record<string, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5', dashdot: '8 3 2 3' };
 
 function setCategory(name: string, category: SignalCategory | undefined, label: string) {
   return store().dispatch({ op: 'setSignalCategory', name, category: category && { ...category } }, { label });

@@ -5,7 +5,7 @@ import { blockParams, feedbackOf, linkSignalType, sheetOfBlock, signalLinks, typ
 import { go, routeHash, type Route, type Sel } from './route';
 import { Markdown } from './Markdown';
 
-const DASH = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5' } as const;
+const DASH: Record<string, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5', dashdot: '8 3 2 3' };
 
 export function CategorySwatch({ cat }: { cat?: SignalCategory }) {
   return (

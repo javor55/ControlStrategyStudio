@@ -187,3 +187,36 @@ describe('canvas engineering features', () => {
     expect(() => applyOp(demo, { op: 'renameFolder', from: 'ACME', to: 'ACME/X' })).toThrow(/itself/);
   });
 });
+
+describe('drawing style and block display', () => {
+  it('stores the project drawing style', () => {
+    let f = run(demo, { op: 'setDrawing', path: ['signals', 'bool', 'color'], value: '#00aa00' });
+    f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'style'], value: 'dashed' });
+    f = run(f, { op: 'setDrawing', path: ['feedback', 'mark'], value: false });
+    f = run(f, { op: 'setDrawing', path: ['params'], value: 'hide' });
+    expect(f['project.yaml']).toContain('drawing:\n  signals:\n    bool: { color: "#00aa00", style: dashed }');
+    const m = loadProject(f).meta.drawing;
+    expect(m).toMatchObject({ signals: { bool: { color: '#00aa00', style: 'dashed' } }, feedback: { mark: false, style: 'dashdot' }, params: 'hide' });
+    expect(loadProject(f).diags).toEqual([]);
+    f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'color'] });
+    f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'style'] });
+    expect(f['project.yaml']).not.toContain('bool:');
+    expect(() => applyOp(f, { op: 'setDrawing', path: ['nope'], value: 1 })).toThrow(/Unknown/);
+  });
+  it('collapses parameters per block with a footer to expand them', () => {
+    const f = run(demo, { op: 'setBlockDisplay', file: FIC, id: 'FIC101', params: false });
+    expect(f[FIC]).toContain('display: { params: false }');
+    const s = loadProject(f).strategyByName.get('FIC101')!;
+    const pid = layoutDiagram(s)[0].blocks.find((b) => b.id === 'FIC101')!;
+    expect(pid.params).toEqual([]);
+    expect(pid.paramsToggle).toEqual(expect.objectContaining({ expanded: false, count: 5 }));
+    const ft = layoutDiagram(s)[0].blocks.find((b) => b.id === 'FT101')!;
+    expect(ft.paramsToggle?.expanded).toBe(true);
+    // project default "hide" collapses blocks without their own setting
+    const hidden = layoutDiagram(s, { paramsDefault: false })[0].blocks.find((b) => b.id === 'FT101')!;
+    expect(hidden.paramsToggle?.expanded).toBe(false);
+    const all = layoutDiagram(s, { display: { paramsMode: 'all' } })[0].blocks.find((b) => b.id === 'FIC101')!;
+    expect(all.params.length).toBe(5);
+    expect(all.paramsToggle).toBeUndefined();
+  });
+});

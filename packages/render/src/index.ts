@@ -4,7 +4,7 @@
 // (no CSS classes), so the same drawing works on screen, in svg2pdf for PDF,
 // in a CLI and in any other tool. Interactive mode adds `data-*` attributes and
 // invisible hit areas that an editor uses for event delegation.
-import { M, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
+import { M, type DrawingStyle, type LineStyle, type WireKind, type WireStyle, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
 
 export interface Theme {
   paper: string;
@@ -73,8 +73,13 @@ export type RenderSelection =
 
 export interface CategoryStyle {
   color?: string;
-  style?: 'solid' | 'dashed' | 'dotted';
+  style?: LineStyle;
   width?: number;
+}
+
+/** Render options from the project drawing style. */
+export function drawingRenderOptions(d: DrawingStyle): Pick<RenderOptions, 'wireStyles' | 'feedbackStyle'> {
+  return { wireStyles: d.signals, feedbackStyle: d.feedback };
 }
 
 export interface RenderDiff {
@@ -98,6 +103,10 @@ export interface RenderOptions {
   showLabels?: boolean;
   /** Visual diff: highlight added / changed items and draw removed ones as ghosts. */
   diff?: RenderDiff;
+  /** Line style per signal kind (project drawing style). Default: solid, colour by kind. */
+  wireStyles?: Readonly<Record<WireKind, WireStyle>>;
+  /** Previous-cycle links: z⁻¹ mark and line style. Default: mark, dash-dot. */
+  feedbackStyle?: DrawingStyle['feedback'];
   /** Adds data-* attributes and hit areas for editors. */
   interactive?: boolean;
   selection?: RenderSelection;
@@ -132,7 +141,7 @@ function wireColor(w: WireGeom, t: Theme): string {
   return w.kind === 'bool' ? t.bool : w.kind === 'real' ? t.real : t.other;
 }
 
-const DASH = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5' } as const;
+const DASH: Record<LineStyle, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5', dashdot: '8 3 2 3' };
 
 function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const d = 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L');
@@ -140,16 +149,20 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const error = w.link !== undefined && o.errorLinks?.has(w.link);
   const cat = w.category ? o.categories?.[w.category] : undefined;
   const fb = o.showFeedback !== false ? w.feedback : undefined;
-  const dash = w.derived ? '3 3' : fb ? '8 3 2 3' : cat?.style ? DASH[cat.style] : w.kind === 'bool' ? '6 3' : undefined;
-  const color = error ? t.error : cat?.color ?? wireColor(w, t);
-  const width = (cat?.width ?? 1.5) + (selected ? 0.7 : 0);
+  const fbs = o.feedbackStyle;
+  const ws = o.wireStyles?.[w.kind];
+  const fbDash = fb && fbs?.style !== 'same' ? DASH[(fbs?.style as LineStyle | undefined) ?? 'dashdot'] : undefined;
+  const dash = w.derived ? '3 3' : fbDash ?? (cat?.style ? DASH[cat.style] : ws?.style ? DASH[ws.style] : undefined);
+  const color = error ? t.error : (fb && fbs?.color) || cat?.color || (w.external ? undefined : ws?.color) || wireColor(w, t);
+  const width = (cat?.width ?? ws?.width ?? 1.5) + (selected ? 0.7 : 0);
+  const mark = fb && fbs?.mark !== false;
   let s = '';
   if (selected) s += `<path${attrs({ d, fill: 'none', stroke: t.accent, 'stroke-width': width + 4, 'stroke-opacity': 0.25, 'stroke-linejoin': 'round' })}/>`;
   s += `<path${attrs({ d, fill: 'none', stroke: color, 'stroke-width': width, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' })}>`;
   if (fb) s += `<title>${esc(`Value from the previous cycle: the source block (#${fb.sourceOrder}) runs after the target block (#${fb.targetOrder}).`)}</title>`;
   s += '</path>';
-  if (fb) {
-    const [x, y] = fb.tick;
+  if (mark) {
+    const [x, y] = fb!.tick;
     // Delay mark as in CFC: a bar across the line before the input, labelled z⁻¹.
     s += `<line${attrs({ x1: x, y1: y - 5, x2: x, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
     s += `<line${attrs({ x1: x + 3, y1: y - 5, x2: x + 3, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
@@ -157,12 +170,13 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   if (w.label && o.showLabels !== false) {
     const fill = w.external ? t.ext : t.ink2;
     const parts: string[] = [];
-    const delayed = w.label.delayed && fb;
+    const delayed = w.label.delayed && mark;
     // "z" with a raised "-1": works with fonts that lack the superscript minus (PDF).
     if (delayed) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-weight': 'bold', 'font-style': 'normal', fill: color })}>z</tspan><tspan${attrs({ dy: -4, 'font-size': 7, 'font-weight': 'bold', fill: color })}>-1</tspan><tspan${attrs({ dy: 4 })}></tspan>`);
     if (w.label.name) parts.push(`<tspan${attrs({ 'font-family': t.fontMono, 'font-weight': 'bold', 'font-style': 'normal', fill: cat?.color ?? t.ink })}>${esc(w.label.name)}</tspan>`);
     if (w.label.comment) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-style': 'italic', fill })}>${esc(w.label.comment)}</tspan>`);
     if (!parts.length && !w.label.delayed) parts.push(esc(w.label.text));
+    if (!parts.length && w.label.delayed && !mark) parts.length = 0;
     if (parts.length) s += `<text${attrs({ x: w.label.x, y: w.label.y, 'font-size': 10, fill })}>${parts.join(`<tspan${attrs({ fill: t.ink3 })}> · </tspan>`)}</text>`;
   }
   if (o.interactive && w.link !== undefined && !w.derived) {
@@ -242,6 +256,23 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
     const sy = b.y + M.HEADER + rows * M.ROW + 4;
     s += `<line${attrs({ x1: b.x, y1: sy, x2: b.x + b.w, y2: sy, stroke: t.rule, 'stroke-width': 0.8 })}/>`;
     b.params.forEach((line, i) => (s += text(b.x + 6, sy + 12 + i * M.PARAM_ROW, line, { ...mono, 'font-size': 9.5, fill: t.ink2 })));
+  }
+  if (b.paramsToggle) {
+    const tg = b.paramsToggle;
+    const hit = o.interactive ? { 'data-params-toggle': b.id, style: 'cursor:pointer' } : {};
+    if (tg.expanded) {
+      // ▾ at the right end of the parameter separator
+      const cx = b.x + b.w - 9;
+      const cy = tg.y + 1;
+      s += `<path${attrs({ d: `M${n(cx - 4)} ${n(cy - 2)} L${n(cx)} ${n(cy + 2.5)} L${n(cx + 4)} ${n(cy - 2)}`, fill: 'none', stroke: t.ink3, 'stroke-width': 1.3 })}/>`;
+      if (o.interactive) s += `<rect${attrs({ x: cx - 8, y: cy - 7, width: 16, height: 13, fill: 'transparent', ...hit })}><title>Hide parameters</title></rect>`;
+    } else {
+      const fy = b.y + b.h - M.PARAM_ROW - 2;
+      s += `<line${attrs({ x1: b.x, y1: fy - 1, x2: b.x + b.w, y2: fy - 1, stroke: t.rule, 'stroke-width': 0.8 })}/>`;
+      s += `<path${attrs({ d: `M${n(b.x + 7)} ${n(fy + 2)} L${n(b.x + 11)} ${n(fy + 6)} L${n(b.x + 7)} ${n(fy + 10)}`, fill: 'none', stroke: t.ink3, 'stroke-width': 1.3 })}/>`;
+      s += text(b.x + 16, fy + 9.5, `${tg.count} parameter${tg.count > 1 ? 's' : ''}`, { ...sans, 'font-size': 9.5, fill: t.ink3 });
+      if (o.interactive) s += `<rect${attrs({ x: b.x, y: fy - 1, width: b.w, height: M.PARAM_ROW + 3, fill: 'transparent', ...hit })}><title>Show parameters</title></rect>`;
+    }
   }
   b.comment.forEach((line, i) => (s += text(b.x, b.y + b.h + 13 + i * M.COMMENT_LINE, line, { ...sans, 'font-size': 10.5, 'font-style': 'italic', fill: t.ink2 })));
   return s + '</g>';

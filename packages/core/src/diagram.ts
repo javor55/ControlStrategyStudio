@@ -95,6 +95,7 @@ export function parseDiagram(
         sheet: num(b.sheet) ?? 1,
         params: isObj(b.params) ? { ...b.params } : {},
         pos: pos2(b.pos),
+        display: isObj(b.display) && typeof b.display.params === 'boolean' ? { params: b.display.params } : undefined,
         ext: pickExt(b),
       });
     }

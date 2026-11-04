@@ -108,6 +108,8 @@ export interface BlockInst {
   params: Record<string, unknown>;
   /** Only present when the block was positioned by hand. */
   pos?: [number, number];
+  /** Per-block display overrides (e.g. parameters collapsed). */
+  display?: { params?: boolean };
   ext: Ext;
 }
 
@@ -176,10 +178,34 @@ export interface TitleBlock {
 
 export interface SignalCategory {
   color?: string;
-  style?: 'solid' | 'dashed' | 'dotted';
+  style?: 'solid' | 'dashed' | 'dotted' | 'dashdot';
   width?: number;
   description?: string;
 }
+
+export type LineStyle = 'solid' | 'dashed' | 'dotted' | 'dashdot';
+
+export interface WireStyle {
+  color?: string;
+  style?: LineStyle;
+  width?: number;
+}
+
+/** Project-wide drawing style (editor, PDF and HTML exports look the same). */
+export interface DrawingStyle {
+  /** Line style per signal kind. */
+  signals: { bool: WireStyle; real: WireStyle; other: WireStyle };
+  /** Links carrying a value from the previous cycle (z⁻¹). */
+  feedback: { mark: boolean; style: LineStyle | 'same'; color?: string };
+  /** Parameter values on blocks unless a block says otherwise. */
+  params: 'show' | 'hide';
+}
+
+export const DEFAULT_DRAWING: DrawingStyle = {
+  signals: { bool: {}, real: {}, other: {} },
+  feedback: { mark: true, style: 'dashdot' },
+  params: 'show',
+};
 
 export interface ProjectMeta {
   uid?: string;
@@ -190,6 +216,7 @@ export interface ProjectMeta {
   titleBlock: TitleBlock;
   /** Line styles for link categories, e.g. interlock / tracking. */
   signalCategories: Record<string, SignalCategory>;
+  drawing: DrawingStyle;
   ext: Ext;
 }
 

@@ -72,6 +72,7 @@ export function activeDiagramOf(s: EditorState): ActiveDiagram | undefined {
       strategy: st,
       layoutContext: {
         defaultScan: st.scan,
+        paramsDefault: model.meta.drawing.params !== 'hide',
         usedBy: (block, port) =>
           model
             .usedBy(st.name, block)
@@ -86,7 +87,7 @@ export function activeDiagramOf(s: EditorState): ActiveDiagram | undefined {
       root: ['diagram'],
       diagram: v.type.diagram ?? { sheets: [{ id: 1 }], blocks: [], links: [], notes: [] },
       composite: v.type,
-      layoutContext: { composite: v.type },
+      layoutContext: { composite: v.type, paramsDefault: s.model.meta.drawing.params !== 'hide' },
     };
   }
   return undefined;

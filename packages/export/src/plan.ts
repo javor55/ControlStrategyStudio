@@ -15,7 +15,7 @@ import {
   type SignalCategory,
   type Strategy,
 } from '@csd/core';
-import type { RenderOptions } from '@csd/render';
+import { drawingRenderOptions, type RenderOptions } from '@csd/render';
 import { layoutDisplay, type ExportConfig } from './config';
 
 export interface MarkdownDoc {
@@ -287,6 +287,7 @@ export function planExport(
     const layouts = layoutDiagram(s, {
       defaultScan: s.scan,
       display,
+      paramsDefault: model.meta.drawing.params !== 'hide',
       usedBy: (block, port) =>
         model
           .usedBy(s.name, block)
@@ -321,7 +322,7 @@ export function planExport(
   const addType = (def: BlockTypeDef, use?: TypePlan['usedIn'][number]) => {
     let t = used.get(def);
     if (!t) {
-      t = { def, usedIn: [], sheets: def.diagram ? layoutDiagram(def.diagram, { composite: def, display }).map((layout) => ({ id: layout.sheet, layout })) : [] };
+      t = { def, usedIn: [], sheets: def.diagram ? layoutDiagram(def.diagram, { composite: def, display, paramsDefault: model.meta.drawing.params !== 'hide' }).map((layout) => ({ id: layout.sheet, layout })) : [] };
       used.set(def, t);
       for (const b of def.diagram?.blocks ?? []) if (b.def) addType(b.def);
     }
@@ -352,9 +353,10 @@ export function planExport(
 }
 
 /** Renderer options matching the export configuration. */
-export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels'> {
+export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'wireStyles' | 'feedbackStyle'> {
   const d = plan.config.display;
   return {
+    ...drawingRenderOptions(plan.meta.drawing),
     categories: d.categories ? plan.categories : undefined,
     showFeedback: d.feedback,
     showOrder: d.order,

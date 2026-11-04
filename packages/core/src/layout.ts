@@ -31,8 +31,13 @@ export const M = {
 
 /** What blocks show. All default to true. */
 export interface DisplayOptions {
-  /** Parameter values in the lower part of the block. */
+  /** Parameter values in the lower part of the block: false hides them on all blocks. */
   params?: boolean;
+  /**
+   * `block` (default): each block's own setting (`display.params`, toggled by its
+   * arrow), falling back to `LayoutContext.paramsDefault`; `all` / `none` override.
+   */
+  paramsMode?: 'block' | 'all' | 'none';
   /** Ports that are neither linked nor set to a constant (like hidden pins in CFC). */
   unusedPorts?: boolean;
   /**
@@ -47,6 +52,8 @@ export interface DisplayOptions {
 
 export interface LayoutContext {
   display?: DisplayOptions;
+  /** Parameters shown on blocks without their own setting (project drawing style). Default true. */
+  paramsDefault?: boolean;
   /** Scan inherited by blocks without their own. */
   defaultScan?: string;
   /** Interface of the composite type whose internals are laid out. */
@@ -84,6 +91,8 @@ export interface BlockGeom {
   composite: boolean;
   unknownType: boolean;
   params: string[];
+  /** Expand / collapse arrow for the parameter section (present when the block sets parameters). */
+  paramsToggle?: { expanded: boolean; count: number; y: number };
   comment: string[];
   pinned: boolean;
   /** Interface bar of a composite block's internals (`in` / `out`); not movable. */
@@ -196,6 +205,9 @@ interface Pre {
   leftNeed: number;
   constNeed: number;
   rightNeed: number;
+  params: string[];
+  paramCount: number;
+  collapsed: boolean;
 }
 
 const connW = (label: string) => Math.max(56, Math.ceil(label.length * M.CH_PORT + 20));
@@ -241,7 +253,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     (dir === 'in' ? b?.def?.inputs : b?.def?.outputs)?.find((p) => p.name === port)?.type;
 
   // --- per-block geometry ---------------------------------------------------
-  const show = { params: ctx.display?.params !== false, comments: ctx.display?.comments !== false };
+  const show = { comments: ctx.display?.comments !== false };
+  const paramsMode = ctx.display?.paramsMode ?? (ctx.display?.params === false ? 'none' : 'block');
   const portMode = ctx.display?.ports ?? (ctx.display?.unusedPorts === false ? 'used' : 'auto');
   const usedIn = new Set<string>();
   const usedOut = new Set<string>();
@@ -270,12 +283,16 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       inputs = inputs.filter((p) => keep(p, usedIn.has(`${b.id}.${p.name}`) || p.name in b.params));
       outputs = outputs.filter((p) => keep(p, usedOut.has(`${b.id}.${p.name}`) || usedBy(p.name)));
     }
-    const params: string[] = [];
-    if (show.params) for (const [k, v] of Object.entries(b.params)) {
+    const allParams: string[] = [];
+    for (const [k, v] of Object.entries(b.params)) {
       if (inputs.some((p) => p.name === k)) continue;
       const unit = b.def?.params.find((p) => p.name === k)?.unit;
-      params.push(`${k} = ${formatValue(v)}${unit ? ' ' + unit : ''}`);
+      allParams.push(`${k} = ${formatValue(v)}${unit ? ' ' + unit : ''}`);
     }
+    const expanded = paramsMode === 'all' || (paramsMode === 'block' && (b.display?.params ?? ctx.paramsDefault ?? true));
+    const params = expanded && !isIface(b) ? allParams : [];
+    // Collapsed blocks keep a one-line "▸ N parameters" footer to expand them.
+    const collapsedFooter = paramsMode === 'block' && !expanded && allParams.length > 0;
     const label = typeLabel(b);
     const maxIn = Math.max(0, ...inputs.map((p) => p.name.length));
     const maxOut = Math.max(0, ...outputs.map((p) => p.name.length));
@@ -290,11 +307,12 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       );
     w = Math.ceil(w / 10) * 10;
     const rows = Math.max(inputs.length, outputs.length, 1);
-    const h = M.HEADER + rows * M.ROW + M.PAD + (params.length ? params.length * M.PARAM_ROW + 6 : 0);
+    const h = M.HEADER + rows * M.ROW + M.PAD + (params.length ? params.length * M.PARAM_ROW + 6 : 0) + (collapsedFooter ? M.PARAM_ROW + 4 : 0);
     const commentLines = b.comment && show.comments ? wrapText(b.comment, Math.floor(w / M.CH_TEXT), 4) : [];
-    pre.set(b.id, { b, inputs, outputs, w, h, commentLines, left: [], right: [], leftNeed: 0, constNeed: 0, rightNeed: 0 });
-    // stash params on the object for later
-    (pre.get(b.id) as Pre & { params: string[] }).params = params;
+    pre.set(b.id, {
+      b, inputs, outputs, w, h, commentLines, left: [], right: [], leftNeed: 0, constNeed: 0, rightNeed: 0,
+      params, paramCount: allParams.length, collapsed: collapsedFooter,
+    });
   }
 
   // --- connectors -------------------------------------------------------------
@@ -457,7 +475,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   const blocks: BlockGeom[] = [];
   const portAt = new Map<string, PortGeom>();
   for (const id of ids) {
-    const p = pre.get(id)! as Pre & { params: string[] };
+    const p = pre.get(id)!;
     const [x, y] = final.get(id)!;
     const ports: PortGeom[] = [];
     p.inputs.forEach((d, i) => {
@@ -501,6 +519,10 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       composite: p.b.def?.kind === 'composite',
       unknownType: !p.b.def,
       params: p.params,
+      paramsToggle:
+        p.paramCount && paramsMode === 'block' && !isIface(p.b)
+          ? { expanded: !p.collapsed, count: p.paramCount, y: y + M.HEADER + Math.max(1, p.inputs.length, p.outputs.length) * M.ROW + 4 }
+          : undefined,
       comment: p.commentLines,
       pinned,
       iface: isIface(p.b) ? (p.b.id as 'in' | 'out') : undefined,

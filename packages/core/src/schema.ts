@@ -13,6 +13,12 @@ const ext = { patternProperties: { '^x-': {} } };
 const text = { type: 'string' };
 const pos = { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 };
 
+const wireStyle = {
+  type: 'object',
+  properties: { color: { type: 'string' }, style: { enum: ['solid', 'dashed', 'dotted', 'dashdot'] }, width: { type: 'number', minimum: 0.5, maximum: 6 } },
+  additionalProperties: false,
+};
+
 const portDef = {
   type: 'object',
   required: ['name', 'type'],
@@ -42,6 +48,7 @@ const blockInst = {
     sheet: { type: 'integer', minimum: 1 },
     params: { type: ['object', 'null'] },
     pos,
+    display: { type: 'object', properties: { params: { type: 'boolean' } }, additionalProperties: false },
   },
   ...ext,
   additionalProperties: false,
@@ -93,6 +100,24 @@ export const SCHEMAS: Record<DocKind, object> = {
       description: text,
       author: text,
       levels: { type: 'array', items: { type: 'string' } },
+      drawing: {
+        type: 'object',
+        properties: {
+          signals: {
+            type: 'object',
+            properties: Object.fromEntries(['bool', 'real', 'other'].map((k) => [k, wireStyle])),
+            additionalProperties: false,
+          },
+          feedback: {
+            type: 'object',
+            properties: { mark: { type: 'boolean' }, style: { enum: ['solid', 'dashed', 'dotted', 'dashdot', 'same'] }, color: text },
+            additionalProperties: false,
+          },
+          params: { enum: ['show', 'hide'] },
+        },
+        ...ext,
+        additionalProperties: false,
+      },
       signal_categories: {
         type: 'object',
         propertyNames: { pattern: TAG },
@@ -100,7 +125,7 @@ export const SCHEMAS: Record<DocKind, object> = {
           type: 'object',
           properties: {
             color: text,
-            style: { enum: ['solid', 'dashed', 'dotted'] },
+            style: { enum: ['solid', 'dashed', 'dotted', 'dashdot'] },
             width: { type: 'number', minimum: 0.5, maximum: 6 },
             description: text,
           },

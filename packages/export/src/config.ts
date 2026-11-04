@@ -95,5 +95,6 @@ export function normalizeExportConfig(raw: unknown, format: ExportFormat): Expor
 
 /** Layout display options for an export. */
 export function layoutDisplay(c: ExportConfig): DisplayOptions {
-  return { ports: c.display.ports, params: c.display.params, comments: c.display.comments };
+  // Parameters: per block (as drawn in the editor) unless switched off for the export.
+  return { ports: c.display.ports, paramsMode: c.display.params ? 'block' : 'none', comments: c.display.comments };
 }

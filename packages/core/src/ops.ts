@@ -55,7 +55,10 @@ export type Op =
   | ({ op: 'setLinkComment'; index: number; comment?: string } & DiagramTarget)
   | ({ op: 'setLinkField'; index: number; field: 'comment' | 'label' | 'category'; value?: string } & DiagramTarget)
   | { op: 'renameFolder'; from: string; to: string }
-  | { op: 'setSignalCategory'; name: string; category?: { color?: string; style?: 'solid' | 'dashed' | 'dotted'; width?: number; description?: string } }
+  /** Project drawing style, e.g. path ['signals','bool','color']; undefined removes the value. */
+  | { op: 'setDrawing'; path: string[]; value?: string | number | boolean }
+  | ({ op: 'setBlockDisplay'; id: string; params?: boolean } & DiagramTarget)
+  | { op: 'setSignalCategory'; name: string; category?: { color?: string; style?: 'solid' | 'dashed' | 'dotted' | 'dashdot'; width?: number; description?: string } }
   | ({ op: 'addNote'; text: string; sheet?: number; pos?: [number, number] } & DiagramTarget)
   | ({ op: 'setNote'; index: number; text?: string; sheet?: number; pos?: [number, number] | null; width?: number } & DiagramTarget)
   | ({ op: 'removeNote'; index: number } & DiagramTarget)
@@ -110,7 +113,15 @@ export class OpError extends Error {
 // YAML helpers
 // ---------------------------------------------------------------------------
 
-const BLOCK_KEYS = ['type', 'description', 'doc', 'sheet', 'order', 'scan', 'params', 'comment', 'pos'];
+const BLOCK_KEYS = ['type', 'description', 'doc', 'sheet', 'order', 'scan', 'params', 'display', 'comment', 'pos'];
+const PROJECT_KEYS = ['format', 'uid', 'name', 'description', 'author', 'levels', 'title_block', 'drawing', 'signal_categories'];
+const DRAWING_PATHS = new Set([
+  ...['bool', 'real', 'other'].flatMap((k) => ['color', 'style', 'width'].map((f) => `signals.${k}.${f}`)),
+  'feedback.mark',
+  'feedback.style',
+  'feedback.color',
+  'params',
+]);
 const STRATEGY_KEYS = ['format', 'uid', 'strategy', 'title', 'description', 'revision', 'author', 'scan', 'sheets', 'blocks', 'links', 'notes'];
 const LINK_KEYS = ['from', 'to', 'label', 'category', 'comment'];
 const NOTE_KEYS = ['text', 'sheet', 'pos', 'width'];
@@ -754,6 +765,46 @@ function run(tx: Tx, op: Op): void {
       }
       return;
     }
+    case 'setDrawing': {
+      const key = op.path.join('.');
+      if (!DRAWING_PATHS.has(key)) throw new OpError(`Unknown drawing setting "${key}"`);
+      tx.edit('project.yaml', (doc) => {
+        ensureMap(doc, [], PROJECT_KEYS);
+        const full = ['drawing', ...op.path];
+        if (op.value === undefined || op.value === '') {
+          if (getNode(doc, full) !== undefined) doc.deleteIn(full);
+          // Drop empty parents so the file stays tidy.
+          for (let i = full.length - 1; i > 0; i--) {
+            const n = getNode(doc, full.slice(0, i));
+            if (isMap(n) && !n.items.length) doc.deleteIn(full.slice(0, i));
+          }
+          return;
+        }
+        let parent: YamlPath = [];
+        for (const k of full.slice(0, -1)) {
+          const next = [...parent, k];
+          const n = getNode(doc, next);
+          if (!isMap(n)) setOrdered(ensureMap(doc, parent, PROJECT_KEYS), k, new YAMLMap(), PROJECT_KEYS);
+          parent = next;
+        }
+        const target = getNode(doc, parent) as YAMLMap;
+        if (full.length > 2) target.flow = true;
+        setOrdered(target, full[full.length - 1], op.value, PROJECT_KEYS, doc);
+      });
+      return;
+    }
+    case 'setBlockDisplay':
+      tx.edit(op.file, (doc) => {
+        const b = blockMap(doc, root, op.id);
+        if (op.params === undefined) b.delete('display');
+        else {
+          const d = new YAMLMap();
+          d.flow = true;
+          d.set('params', op.params);
+          setOrdered(b, 'display', d, BLOCK_KEYS);
+        }
+      });
+      return;
     case 'setSignalCategory':
       if (!TAG_RE.test(op.name)) throw new OpError(`Invalid category name "${op.name}"`);
       tx.edit('project.yaml', (doc) => {

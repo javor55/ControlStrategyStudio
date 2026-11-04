@@ -5,7 +5,7 @@ import { classify, PROJECT_FILE, strategyDocFile } from './paths';
 import { validateSchema } from './schema';
 import { parseDiagram } from './diagram';
 import { validateDiagram } from './validate';
-import type { Diag, Files, FolderNode, LibraryDef, LinkInst, ProjectMeta, Strategy } from './types';
+import { DEFAULT_DRAWING, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Strategy, type WireStyle } from './types';
 import { isObj, lineAt, parseYaml, pickExt, str } from './yamlutil';
 
 export const DEFAULT_LEVELS = ['Enterprise', 'Site', 'Area', 'Unit', 'Equipment Module', 'Control Module'];
@@ -36,7 +36,7 @@ export interface ProjectModel {
 }
 
 function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
-  const meta: ProjectMeta = { name: 'Untitled project', levels: DEFAULT_LEVELS, titleBlock: {}, signalCategories: {}, ext: {} };
+  const meta: ProjectMeta = { name: 'Untitled project', levels: DEFAULT_LEVELS, titleBlock: {}, signalCategories: {}, drawing: DEFAULT_DRAWING, ext: {} };
   const text = files[PROJECT_FILE];
   if (typeof text !== 'string') {
     diags.push({ severity: 'warning', code: 'missing-project-file', message: `${PROJECT_FILE} is missing`, file: PROJECT_FILE });
@@ -61,12 +61,39 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
       ? Object.fromEntries(
           Object.entries(d.signal_categories).map(([k, v]) => {
             const c = isObj(v) ? v : {};
-            const style = c.style === 'dashed' || c.style === 'dotted' || c.style === 'solid' ? c.style : undefined;
+            const style = c.style === 'dashed' || c.style === 'dotted' || c.style === 'solid' || c.style === 'dashdot' ? c.style : undefined;
             return [k, { color: str(c.color), style, width: typeof c.width === 'number' ? c.width : undefined, description: str(c.description) }];
           }),
         )
       : {},
+    drawing: parseDrawing(d.drawing),
     ext: pickExt(d),
+  };
+}
+
+const LINE_STYLES = ['solid', 'dashed', 'dotted', 'dashdot'] as const;
+
+function parseWire(v: unknown): WireStyle {
+  const w = isObj(v) ? v : {};
+  return {
+    color: str(w.color),
+    style: LINE_STYLES.includes(w.style as never) ? (w.style as LineStyle) : undefined,
+    width: typeof w.width === 'number' ? w.width : undefined,
+  };
+}
+
+function parseDrawing(v: unknown): DrawingStyle {
+  const d = isObj(v) ? v : {};
+  const sig = isObj(d.signals) ? d.signals : {};
+  const fb = isObj(d.feedback) ? d.feedback : {};
+  return {
+    signals: { bool: parseWire(sig.bool), real: parseWire(sig.real), other: parseWire(sig.other) },
+    feedback: {
+      mark: fb.mark !== false,
+      style: fb.style === 'same' || LINE_STYLES.includes(fb.style as never) ? (fb.style as LineStyle | 'same') : DEFAULT_DRAWING.feedback.style,
+      color: str(fb.color),
+    },
+    params: d.params === 'hide' ? 'hide' : 'show',
   };
 }
 
