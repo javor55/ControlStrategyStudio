@@ -687,7 +687,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   for (const c of connectors) xs.push(c.x, c.x + c.w), ys.push(c.y - c.h / 2 - (c.side === 'left' ? 16 : 0), c.y + c.h / 2);
   for (const n of notes) xs.push(n.x, n.x + n.w), ys.push(n.y, n.y + n.h);
   for (const w of wires) for (const [x, y] of w.points) xs.push(x), ys.push(y);
-  for (const w of wires) if (w.label) xs.push(w.label.x + w.label.text.length * M.CH_TEXT);
+  for (const w of wires) if (w.label) xs.push(w.label.x, w.label.x + w.label.text.length * M.CH_TEXT);
   const pad = 24;
   const x0 = xs.length ? Math.min(...xs) - pad : 0;
   const y0 = ys.length ? Math.min(...ys) - pad : 0;

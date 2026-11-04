@@ -19,3 +19,4 @@ export * from './diff';
 export * from './expr';
 export * from './sequence';
 export * from './sfclayout';
+export * from './examples';

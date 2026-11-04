@@ -38,7 +38,9 @@
 | **Canvas** | CFC-like blocks with ports, constants and parameters · drag blocks · draw links port to port · several sheets per strategy with off-sheet connectors · links to other strategies with “used by” tags · automatic layout, positions stored only for blocks you move · execution order (auto order) · notes |
 | **Text** | YAML editor with syntax check, problem markers, context-aware completion and hover help · selection follows between text and drawing · Diagram / Split / Text modes |
 | **Blocks** | Standard library `std` (41 blocks: I/O, logic, timers, comparators, math, selectors, filters, PID, ratio, split range, motor, valve, interlock) · your own libraries as plain folders · versioned block types · composite blocks with an inner diagram · graphical block type editor |
-| **Project** | ISA-95 / ISA-88 hierarchy (Enterprise → Site → Area → Unit → …) · Markdown documentation with images · validation with clear messages (unknown ports, type mismatch, double drivers, wrong references …) |
+| **Two strategy types** | **Continuous strategies** (function block diagrams, `NAME.yaml`) and **sequence strategies** (SFC / Grafcet, `NAME.seq.yaml`) — both editable as drawing or text; sequences read and write signals of continuous strategies, and strategies can read sequence states (`SEQ:S20.X`, `SEQ:SEQ.RUNNING`) |
+| **Line categories** | BOOL / Numeric / Other plus your own (interlock, alarm, tracking …) with colour, line style and width — one table in Settings → Drawing style |
+| **Project** | free folder hierarchy; optional level names (none, ISA-95, ISA-88 or your own — only labels, never enforced) · Markdown documentation with images and charts · validation with clear messages (unknown ports, type mismatch, double drivers, wrong references …) |
 | **Files** | Runs in the browser, works offline · autosave in the browser · projects travel as ZIP · git-friendly text files |
 
 ## Use it
@@ -49,20 +51,23 @@
   [`control-strategy-studio.html`](https://javor55.github.io/ControlStrategyStudio/control-strategy-studio.html)
   and open it by double-click. The whole application is this one file.
 
-The first start opens a demo project (a water intake with a level/flow cascade and a
-pump with dry-run protection). **Project ▾ → New project** starts an empty one.
+The first start opens a small demo project. **Project ▾ → Open example** offers also
+*Dosing & CIP Plant Ostrava* — 13 continuous strategies, 3 sequences (CIP with parallel
+branches, batch, start-up), a company library with composite blocks, split range, ratio,
+feed-forward, interlocks and documentation with charts. **Project ▾ → New project**
+starts an empty one.
 
 ### Keyboard
 
 | Keys | Action |
 |---|---|
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
-| `Ctrl+C` `Ctrl+X` `Ctrl+V` | Copy, cut, paste blocks (also between strategies and projects; the clipboard holds YAML) |
+| `Ctrl+C` `Ctrl+X` `Ctrl+V` | Copy, cut, paste blocks or sequence steps (also between strategies and projects; the clipboard holds YAML) |
 | `Ctrl+D` / `Ctrl+A` | Duplicate / select all |
 | `Delete` | Delete selection |
 | Arrows | Move selection (with `Shift` by 50 px) |
 | Wheel / `Ctrl`+wheel | Scroll / zoom |
-| Double-click on paper | Insert a block |
+| Double-click on paper / `/` | Insert a block or a step |
 | `Alt+1` `Alt+2` `Alt+3` | Diagram / Split / Text mode |
 | `Ctrl+B` / `Ctrl+Alt+B` | Hide the left / right panel |
 | `Ctrl+S` | Save project as ZIP |
