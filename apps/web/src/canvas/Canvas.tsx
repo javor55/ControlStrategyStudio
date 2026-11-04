@@ -1036,7 +1036,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       return;
     dispatch({ op: 'unpinAll', ...target }, { label: 'Reset layout' });
   };
-  const toggleDisplay = (k: keyof DisplayOptions) =>
+  const toggleDisplay = (k: 'params' | 'unusedPorts' | 'comments') =>
     setDisplay((d) => {
       const next = { ...d, [k]: !d[k] };
       try {
