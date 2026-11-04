@@ -114,7 +114,7 @@ function typeRefFor(def: BlockTypeDef, all: readonly BlockTypeDef[]): string {
   return libs.size > 1 ? `${def.library}/${def.type}` : def.type;
 }
 
-function readDisplay(): Required<DisplayOptions> {
+function readDisplay(): { params: boolean; unusedPorts: boolean; comments: boolean } {
   const d = { params: true, unusedPorts: true, comments: true };
   try {
     const v = JSON.parse(localStorage.getItem(DISPLAY_KEY) ?? '{}');
@@ -166,7 +166,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
 
   // --- layout & render -----------------------------------------------------------
   // While a wire is dragged, every port is shown so hidden inputs can be targeted.
-  const effDisplay = useMemo<DisplayOptions>(() => (wire ? { ...display, unusedPorts: true } : display), [display, wire !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+  const effDisplay = useMemo<DisplayOptions>(() => (wire ? { ...display, ports: 'all' } : display), [display, wire !== null]); // eslint-disable-line react-hooks/exhaustive-deps
   const layout = useMemo(
     () => layoutActiveSheet(ad, activeSheet, { overrides, noteOverrides, display: effDisplay }),
     [ad, activeSheet, overrides, noteOverrides, effDisplay],
