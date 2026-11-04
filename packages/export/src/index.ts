@@ -4,3 +4,4 @@ export * from './plan';
 export * from './chart';
 export * from './viewer';
 export { APP_LOGO_SVG } from './logo';
+export * from './data';

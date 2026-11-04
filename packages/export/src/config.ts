@@ -1,7 +1,7 @@
 // Export configuration — what goes into a PDF or a read-only HTML export.
 import type { DisplayOptions } from '@csd/core';
 
-export type ExportFormat = 'pdf' | 'html';
+export type ExportFormat = 'pdf' | 'html' | 'json' | 'toml';
 
 export interface ExportSections {
   /** Title page with project data and problems summary. */

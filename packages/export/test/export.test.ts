@@ -117,3 +117,17 @@ describe('viewer payload', () => {
     expect(back['assets/x.bin']).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
+
+describe('data export', () => {
+  it('exports the project as JSON and TOML', async () => {
+    const { projectData, projectDataJson, projectDataToml } = await import('../src');
+    const { parse } = await import('smol-toml');
+    const d = projectData(files, defaultExportConfig('json'), '2026-11-04T00:00:00Z');
+    expect(Object.keys(d.strategies)).toEqual(expect.arrayContaining(['ACME/Brno/WaterTreatment/U100/FIC101']));
+    expect(d.strategies['ACME/Brno/WaterTreatment/U100/FIC101'].doc).toContain('## Function');
+    expect(Object.keys(d.libraries)).toEqual(expect.arrayContaining(['std', 'acme']));
+    expect(JSON.parse(projectDataJson(d)).project.name).toBe('Water Treatment Brno');
+    const toml = parse(projectDataToml(d)) as { strategies: Record<string, { strategy: { strategy: string } }> };
+    expect(toml.strategies['ACME/Brno/WaterTreatment/U100/P101'].strategy.strategy).toBe('P101');
+  });
+});
