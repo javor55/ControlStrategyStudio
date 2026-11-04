@@ -377,3 +377,4 @@ export function renderDiffFor(sd: StrategyDiff, after: SheetLayout, before?: She
     : undefined;
   return { blocks, links, ghosts };
 }
+export * from './sequence';

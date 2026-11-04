@@ -1,8 +1,8 @@
 // Renders every sheet of the demo project (and composite internals) to out/.
 // Usage: npm run demo
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { demoProjectFiles, layoutDiagram, loadProject } from '@csd/core';
-import { renderSheetSvg } from '@csd/render';
+import { demoProjectFiles, layoutDiagram, layoutSequence, loadProject } from '@csd/core';
+import { renderSequenceSvg, renderSheetSvg } from '@csd/render';
 
 const project = loadProject(demoProjectFiles());
 mkdirSync('out', { recursive: true });
@@ -16,6 +16,13 @@ for (const s of project.strategies) {
     writeFileSync(`out/${name}.svg`, svg);
     const title = s.sheets.find((x) => x.id === l.sheet)?.title ?? '';
     parts.push(`<h2>${s.name} — ${s.title ?? ''} · sheet ${l.sheet} ${title}</h2>${svg}`);
+  }
+}
+for (const q of project.sequences) {
+  for (const l of layoutSequence(q)) {
+    const svg = renderSequenceSvg(l, { width: l.bounds.w, height: l.bounds.h });
+    writeFileSync(`out/${q.name}-sheet${l.sheet}.svg`, svg);
+    parts.push(`<h2>${q.name} — ${q.title ?? ''} (sequence) · sheet ${l.sheet}</h2>${svg}`);
   }
 }
 for (const t of project.types.all.filter((t) => t.diagram)) {

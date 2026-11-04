@@ -18,3 +18,4 @@ export { parseYaml, lineAt, rangeAt, stringifyDoc, type ParsedYaml, type YamlPat
 export * from './diff';
 export * from './expr';
 export * from './sequence';
+export * from './sfclayout';

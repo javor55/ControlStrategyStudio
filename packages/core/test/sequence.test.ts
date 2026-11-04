@@ -119,3 +119,32 @@ describe('sequence operations', () => {
     expect(layoutDiagram(loadProject(demo).strategyByName.get('FIC101')!)[0].blocks).toHaveLength(3);
   });
 });
+
+describe('SFC layout', () => {
+  it('lays out steps top-down with parallel bars and a jump back to the initial step', async () => {
+    const { layoutSequence } = await import('../src');
+    const q = loadProject(demo).sequenceByName.get('FILL_T100')!;
+    const [l] = layoutSequence(q);
+    const y = (id: string) => l.steps.find((s) => s.id === id)!.y;
+    expect(y('S0')).toBeLessThan(y('S10'));
+    expect(y('S10')).toBeLessThan(y('S20'));
+    expect(y('S20')).toBe(y('S25')); // parallel branches side by side
+    expect(y('S20')).toBeLessThan(y('S30'));
+    expect(l.bars.filter((b) => b.double)).toHaveLength(2); // fork + join
+    const back = l.transitions.find((t) => t.transition.from[0] === 'S30')!;
+    expect(back.jumps.map((j) => j.step)).toEqual(['S0']);
+    expect(l.steps.find((s) => s.id === 'S0')!.jumpsIn).toEqual(['S30']);
+    expect(l.steps.find((s) => s.id === 'S10')!.actions.map((a) => a.lines[0])).toEqual(['FIC101:FIC101.MAN_ON := TRUE', 'FIC101:FIC101.MAN_VAL := 30']);
+  });
+  it('respects manual positions and renders SVG', async () => {
+    const { layoutSequence } = await import('../src');
+    const f = run(demo, { op: 'moveStep', file: SEQ, id: 'S25', pos: [900, 400] });
+    const [l] = layoutSequence(loadProject(f).sequenceByName.get('FILL_T100')!);
+    expect(l.steps.find((s) => s.id === 'S25')).toMatchObject({ x: 900, y: 400, pinned: true });
+    const { renderSequenceSvg } = await import('@csd/render');
+    const svg = renderSequenceSvg(l, { interactive: true, selection: { kind: 'block', id: 'S10' } });
+    expect(svg).toContain('data-step="S10"');
+    expect(svg).toContain('data-transition="0"');
+    expect(svg).toContain('LIC100:LT100.PV &gt;= 2.5');
+  });
+});
