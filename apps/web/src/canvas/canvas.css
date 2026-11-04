@@ -87,3 +87,9 @@
 .cv-header .seq-kind { font: 600 10px var(--f-mono); letter-spacing: .06em; padding: 1px 5px; border: 1px solid var(--accent); border-radius: 2px; color: var(--accent); }
 .cv-overlay circle.seq-handle { fill: var(--accent); stroke: var(--sheet); stroke-width: 1.5; }
 .cv-overlay rect.seq-target { fill: none; stroke: #1e8a46; stroke-width: 2; stroke-dasharray: 5 3; }
+.cv-overlay .seq-drop line { stroke: var(--accent); stroke-width: 3; stroke-dasharray: none; }
+.cv-overlay .seq-drop circle { fill: var(--accent); }
+.cv-overlay rect.seq-drop-box { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 2; }
+.cv-overlay rect.seq-drop-box.ghost { stroke-dasharray: 5 3; }
+.cv-overlay .seq-drop-label rect { fill: var(--accent); }
+.cv-overlay .seq-drop-label text { fill: #fff; font: 600 11.5px var(--font-sans, system-ui); }

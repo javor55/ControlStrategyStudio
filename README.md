@@ -68,6 +68,8 @@ starts an empty one.
 | Arrows | Move selection (with `Shift` by 50 px) |
 | Wheel / `Ctrl`+wheel | Scroll / zoom |
 | Double-click on paper / `/` | Insert a block or a step |
+| Drag from the palette | Sequences: drop onto a step (top = before, bottom = after, middle = beside) or onto a transition to insert a step or a whole branch there — the target is highlighted while dragging |
+| `Ctrl+Enter` / `Ctrl+Shift+Enter` | Sequences: insert a step after / before the selected step |
 | `Alt+1` `Alt+2` `Alt+3` | Diagram / Split / Text mode |
 | `Ctrl+B` / `Ctrl+Alt+B` | Hide the left / right panel |
 | `Ctrl+S` | Save project as ZIP |

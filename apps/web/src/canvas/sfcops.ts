@@ -1,11 +1,16 @@
 // Sequence (SFC) editing helpers shared by the sequence canvas, its toolbar,
 // the palette and the inspector. Every change is one core Op (or a batch).
-import { sfcInsertOps, SFC_INSERT_LABELS, type Op, type Selection, type Sequence, type SfcInsertKind } from '@csd/core';
+import { sfcInsertIntoTransitionOps, sfcInsertOps, SFC_INSERT_LABELS, type SfcBlockKind, type Op, type Selection, type Sequence, type SfcInsertKind } from '@csd/core';
 import { store } from '../state/store';
 
 /** Palette / toolbar elements of a sequence. */
 export type SfcElement = 'step' | 'transition' | 'before' | 'beside-parallel' | 'beside-alternative' | 'parallel' | 'alternative' | 'jump';
 export const SFC_MIME = 'application/x-csd-sfc';
+
+/** Element being dragged from the palette (drag events hide the data until drop). */
+let dragging: SfcElement | undefined;
+export const setDraggingSfc = (k: SfcElement | undefined) => void (dragging = k);
+export const draggingSfc = () => dragging;
 
 export const SFC_ELEMENTS: { kind: SfcElement; label: string; description: string }[] = [
   { kind: 'step', label: 'Step', description: 'A new step (drop it where you want it)' },
@@ -175,6 +180,23 @@ export function insertStepRelative(seq: Sequence, kind: SfcInsertKind, stepId: s
   }
   const label = `${SFC_INSERT_LABELS[kind]} ${stepId}: ${id}`;
   return store().dispatch({ op: 'batch', label, ops: r.ops }, { label, select: { kind: 'block', id } }) ? id : undefined;
+}
+
+/** Inserts a step or a whole parallel / alternative branch into transition `index`. */
+export function insertIntoTransition(seq: Sequence, kind: SfcBlockKind, index: number): string | undefined {
+  const t = seq.transitions.find((x) => x.index === index);
+  if (!t) return undefined;
+  const ids = seq.steps.map((s) => s.id);
+  const a = betweenStepName(t.from[0], t.to[0], ids);
+  const b = kind === 'step' ? undefined : betweenStepName(a, t.to[0], [...ids, a]);
+  const r = sfcInsertIntoTransitionOps(seq, kind, index, b ? [a, b] : [a]);
+  if ('error' in r) {
+    store().toast(r.error);
+    return undefined;
+  }
+  const what = kind === 'step' ? `step ${a}` : `${kind} branch ${a} / ${b}`;
+  const label = `Insert ${what} into ${t.from.join('+')} → ${t.to.join('+')}`;
+  return store().dispatch({ op: 'batch', label, ops: r.ops }, { label, select: b ? stepSelection([a, b]) : { kind: 'block', id: a } }) ? a : undefined;
 }
 
 /** Clears hand-placed positions of all steps (one undo step). */

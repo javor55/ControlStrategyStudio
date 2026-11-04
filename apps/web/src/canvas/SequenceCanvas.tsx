@@ -21,6 +21,10 @@ import {
   freshNames,
   insertStepInto,
   insertStepRelative,
+  insertIntoTransition,
+  draggingSfc,
+  setDraggingSfc,
+  SFC_ELEMENTS,
   moveStepsToSheet,
   nextStepName,
   openDescription,
@@ -836,22 +840,136 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   };
 
   // --- palette drop -----------------------------------------------------------------------------
-  const onDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes(SFC_MIME)) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
+  /**
+   * Where a palette element dropped at drawing point (x, y) goes. Steps: top part
+   * = before, bottom part = after, middle = beside (branches) / after (steps).
+   * Transitions and the lines through them: insert into the transition.
+   */
+  type DropHint = {
+    key: string;
+    label: string;
+    shape: { kind: 'line'; x1: number; x2: number; y: number } | { kind: 'box'; x: number; y: number; w: number; h: number; ghost?: boolean };
+    run: () => void;
+  };
+  const dropTarget = (kind: SfcElement, x: number, y: number): DropHint | undefined => {
+    const L = layoutRef.current;
+    const pad = 8;
+    const g = L.steps.find((st) => x >= st.x - pad && x <= st.x + st.w + pad && y >= st.y - pad && y <= st.y + st.h + pad);
+    if (g) {
+      const rel = (y - g.y) / g.h;
+      const id = g.id;
+      const bottom = g.y + g.h + (g.time ? 14 : 0);
+      const above = { kind: 'line' as const, x1: g.x - 14, x2: g.x + g.w + 14, y: g.y - 10 };
+      const below = { kind: 'line' as const, x1: g.x - 14, x2: g.x + g.w + 14, y: bottom + 8 };
+      // Right of the last step in this row — where the new step will appear.
+      const rowRight = Math.max(...L.steps.filter((st) => Math.abs(st.y - g.y) < g.h).map((st) => (st.actionBox ? st.actionBox.x + st.actionBox.w : st.x + st.w)));
+      const besideBox = { kind: 'box' as const, ghost: true, x: rowRight + 30, y: g.y, w: g.w, h: g.h };
+      const hasOut = seq.transitions.some((t) => t.from.includes(id));
+      if (kind === 'jump') return { key: `jump:${id}`, label: `Jump from ${id} to the initial step`, shape: { kind: 'box', x: g.x, y: g.y, w: g.w, h: g.h }, run: () => addSfcElement(seq, 'jump', { from: id, sheet }) };
+      if (kind === 'before' || ((kind === 'step' || kind === 'transition') && rel < 0.4))
+        return { key: `before:${id}`, label: `Insert step before ${id}`, shape: above, run: () => insertStepRelative(seq, 'before', id) };
+      if (kind === 'step' || kind === 'transition')
+        return { key: `after:${id}`, label: `Insert step after ${id}`, shape: below, run: () => addSfcElement(seq, 'transition', { from: id, sheet }) };
+      const par = kind === 'parallel' || kind === 'beside-parallel';
+      if ((kind === 'parallel' || kind === 'alternative') && !hasOut && rel > 0.6)
+        return { key: `branch:${kind}:${id}`, label: `${par ? 'Parallel' : 'Alternative'} branch after ${id}`, shape: below, run: () => addSfcElement(seq, kind, { from: id, sheet }) };
+      return {
+        key: `beside:${kind}:${id}`,
+        label: `${par ? 'Parallel' : 'Alternative'} step beside ${id}`,
+        shape: besideBox,
+        run: () => insertStepRelative(seq, par ? 'parallel' : 'alternative', id),
+      };
     }
+    // Transitions: the bar with its text, and the vertical line from the step above to the step below.
+    for (const t of L.transitions) {
+      const from = L.steps.find((st) => t.transition.from.includes(st.id));
+      const to = L.steps.find((st) => t.transition.to.includes(st.id));
+      const top = from ? Math.min(t.y - 20, from.y + from.h) : t.y - 20;
+      const bot = to && to.y > t.y ? to.y : t.y + 22;
+      const onBar = Math.abs(y - t.y) <= 12 && x >= t.x - 30 && x <= t.x + 200;
+      const onLine = Math.abs(x - t.x) <= 14 && y >= top && y <= bot;
+      if (!onBar && !onLine) continue;
+      const name = `${t.transition.from.join('+')} → ${t.transition.to.join('+')}`;
+      const shape = { kind: 'line' as const, x1: t.x - 40, x2: t.x + 40, y: t.y };
+      if (kind === 'step' || kind === 'transition' || kind === 'before')
+        return { key: `t:step:${t.index}`, label: `Insert step into ${name}`, shape, run: () => insertIntoTransition(seq, 'step', t.index) };
+      if (kind === 'parallel' || kind === 'alternative' || kind === 'beside-parallel' || kind === 'beside-alternative') {
+        const k = kind.endsWith('parallel') ? 'parallel' : 'alternative';
+        return { key: `t:${k}:${t.index}`, label: `Insert ${k} branch into ${name}`, shape, run: () => insertIntoTransition(seq, k, t.index) };
+      }
+      return undefined;
+    }
+    if (kind === 'step') return { key: 'paper', label: 'New step here', shape: { kind: 'box', ghost: true, x: x - 66, y: y - 23, w: 132, h: 46 }, run: () => addStepAt(x, y) };
+    const sel1 = singleSelected();
+    if (sel1 && seq.steps.some((st) => st.id === sel1))
+      return { key: `sel:${kind}`, label: `${SFC_ELEMENTS.find((e) => e.kind === kind)?.label ?? kind} — at the selected step ${sel1}`, shape: { kind: 'box', x, y, w: 0, h: 0 }, run: () => addSfcElement(seq, kind, { from: sel1, sheet }) };
+    return undefined;
+  };
+  const [dropHint, setDropHint] = useState<(DropHint & { mx: number; my: number }) | null>(null);
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(SFC_MIME)) return;
+    e.preventDefault();
+    const kind = draggingSfc();
+    if (!kind) {
+      e.dataTransfer.dropEffect = 'copy';
+      return;
+    }
+    const [x, y] = toDrawing(e.clientX, e.clientY);
+    const h = dropTarget(kind, x, y);
+    e.dataTransfer.dropEffect = h ? 'copy' : 'none';
+    const host = hostRef.current!.getBoundingClientRect();
+    const mx = e.clientX - host.left;
+    const my = e.clientY - host.top;
+    setDropHint((cur) => (h ? (cur && cur.key === h.key && Math.abs(cur.mx - mx) < 6 && Math.abs(cur.my - my) < 6 ? cur : { ...h, mx, my }) : null));
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!hostRef.current?.contains(e.relatedTarget as Node | null)) setDropHint(null);
   };
   const onDrop = (e: React.DragEvent) => {
     const kind = e.dataTransfer.getData(SFC_MIME) as SfcElement;
+    setDropHint(null);
+    setDraggingSfc(undefined);
     if (!kind) return;
     e.preventDefault();
     const [x, y] = toDrawing(e.clientX, e.clientY);
-    const on = stepAt(x, y)?.id;
-    if (kind === 'step') addStepAt(x, y);
-    else addSfcElement(seq, kind, { from: on ?? singleSelected(), sheet });
+    const h = dropTarget(kind, x, y);
+    if (h) h.run();
+    else store().toast('Drop onto a step or a transition, or select a step first');
     focusHost();
   };
+  const dropOverlay = dropHint
+    ? (() => {
+        const k = view.current.k;
+        const sh = dropHint.shape;
+        let mark: React.ReactNode = null;
+        if (sh.kind === 'line') {
+          const [x1, y] = toScreen(sh.x1, sh.y);
+          const [x2] = toScreen(sh.x2, sh.y);
+          mark = (
+            <g className="seq-drop">
+              <line x1={x1} y1={y} x2={x2} y2={y} />
+              <circle cx={x1} cy={y} r={4} />
+              <circle cx={x2} cy={y} r={4} />
+            </g>
+          );
+        } else if (sh.w > 0) {
+          const [x, y] = toScreen(sh.x, sh.y);
+          mark = <rect className={`seq-drop-box${sh.ghost ? ' ghost' : ''}`} x={x - 3} y={y - 3} width={sh.w * k + 6} height={sh.h * k + 6} rx={3} />;
+        }
+        const w = dropHint.label.length * 6.6 + 16;
+        return (
+          <>
+            {mark}
+            <g className="seq-drop-label" transform={`translate(${dropHint.mx + 16} ${dropHint.my + 14})`}>
+              <rect width={w} height={22} rx={4} />
+              <text x={8} y={15}>
+                {dropHint.label}
+              </text>
+            </g>
+          </>
+        );
+      })()
+    : null;
 
   // --- toolbar -------------------------------------------------------------------------------------
   const addNote = (at?: [number, number]) => {
@@ -951,6 +1069,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
           }}
           onContextMenu={onContextMenu}
           onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
           onDrop={onDrop}
           onAuxClick={(e) => e.button === 1 && e.preventDefault()}
         >
@@ -971,6 +1090,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
                 const k = view.current.k;
                 return <rect className="seq-target" x={x - 3} y={y - 3} width={targetBox.w * k + 6} height={targetBox.h * k + 6} />;
               })()}
+            {dropOverlay}
             {marquee && <rect className="cv-marquee" x={marquee.x + 0.5} y={marquee.y + 0.5} width={marquee.w} height={marquee.h} />}
           </svg>
         </div>

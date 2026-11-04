@@ -5,7 +5,7 @@ import { suggestBlockId, type BlockTypeDef } from '@csd/core';
 import { store, useEditor } from '../state/store';
 import { useActiveDiagram, useActiveSequence } from '../state/selectors';
 import { Icon } from './icons';
-import { addSfcElement, selectedSteps, SFC_ELEMENTS, SFC_MIME, type SfcElement } from '../canvas/sfcops';
+import { addSfcElement, selectedSteps, setDraggingSfc, SFC_ELEMENTS, SFC_MIME, type SfcElement } from '../canvas/sfcops';
 import './project.css';
 
 export const CSD_TYPE_MIME = 'application/x-csd-type';
@@ -138,12 +138,14 @@ export function Palette() {
                 tabIndex={0}
                 draggable
                 data-sfc={el.kind}
-                title={`${el.description}\n\nClick to add · drag onto the drawing (onto a step to start there)`}
+                title={`${el.description}\n\nClick to add · drag onto the drawing: onto a step (top = before, bottom = after, middle = beside) or onto a transition / line to insert there`}
                 onDragStart={(e) => {
                   e.dataTransfer.setData(SFC_MIME, el.kind);
                   e.dataTransfer.setData('text/plain', el.label);
                   e.dataTransfer.effectAllowed = 'copy';
+                  setDraggingSfc(el.kind);
                 }}
+                onDragEnd={() => setDraggingSfc(undefined)}
                 onClick={() => addSfc(el.kind)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {

@@ -264,3 +264,20 @@ describe('inserting steps into an existing sequence', () => {
     expect(pos.S0).toEqual([100, 100]);
   });
 });
+
+import { sfcInsertIntoTransitionOps } from '../src/sfcedit';
+describe('inserting a branch into a transition', () => {
+  const go = (kind: 'step' | 'parallel' | 'alternative') => {
+    const files = demoProjectFiles();
+    const seq = loadProject(files).sequences[0];
+    const t = seq.transitions.find((x) => x.from[0] === 'S0')!;
+    const r = sfcInsertIntoTransitionOps(seq, kind, t.index, ['S1', 'S2']);
+    if ('error' in r) throw new Error(r.error);
+    const p = loadProject(applyOp(files, { op: 'batch', label: kind, ops: r.ops }).files);
+    expect(p.diags.filter((d) => d.severity === 'error')).toEqual([]);
+    return p.sequences[0].transitions.map((x) => `${x.from.join('+')}>${x.to.join('+')}`);
+  };
+  it('parallel', () => expect(go('parallel')).toEqual(expect.arrayContaining(['S0>S1+S2', 'S1+S2>S10'])));
+  it('alternative', () => expect(go('alternative')).toEqual(expect.arrayContaining(['S0>S1', 'S0>S2', 'S1>S10', 'S2>S10'])));
+  it('step', () => expect(go('step')).toEqual(expect.arrayContaining(['S0>S1', 'S1>S10'])));
+});

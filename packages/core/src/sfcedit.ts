@@ -97,3 +97,46 @@ function room(seq: Sequence, step: SeqStep, where: 'below' | 'at' | 'beside', ne
   ops.push({ op: 'moveStep', file, id: newId, pos: [p[0], next] });
   return ops;
 }
+
+export type SfcBlockKind = 'step' | 'parallel' | 'alternative';
+
+/**
+ * Inserts into transition `index` (F ─T→ G):
+ *   step         F ─T→ A ─→ G
+ *   parallel     F ─T→ [A ∥ B] ═→ G      (T keeps its condition; the join gets a new one)
+ *   alternative  F ─T→ A ─→ G  and  F ─→ B ─→ G
+ * `ids` are the names of the new steps (one for a step, two for a branch).
+ */
+export function sfcInsertIntoTransitionOps(seq: Sequence, kind: SfcBlockKind, index: number, ids: string[]): { ops: Op[] } | { error: string } {
+  const file = seq.file;
+  const t = seq.transitions.find((x) => x.index === index);
+  if (!t) return { error: 'The transition does not exist' };
+  const fromStep = seq.steps.find((s) => s.id === t.from[0]);
+  const sheet = fromStep?.sheet ?? 1;
+  const one = (l: string[]) => (l.length === 1 ? l[0] : l);
+  const [a, b] = ids;
+  const ops: Op[] = [];
+  if (kind === 'step') {
+    ops.push({ op: 'insertStep', file, transition: index, id: a });
+    if (sheet !== 1) ops.push({ op: 'setStepField', file, id: a, field: 'sheet', value: sheet });
+  } else {
+    if (!b) return { error: 'A branch needs two new step names' };
+    ops.push({ op: 'addStep', file, id: a, sheet }, { op: 'addStep', file, id: b, sheet });
+    if (kind === 'parallel') {
+      ops.push({ op: 'setTransition', file, index, to: [a, b] });
+      ops.push({ op: 'addTransition', file, from: [a, b], to: one(t.to) });
+    } else {
+      ops.push({ op: 'setTransition', file, index, to: a });
+      ops.push({ op: 'addTransition', file, from: one(t.from), to: b });
+      ops.push({ op: 'addTransition', file, from: a, to: one(t.to) });
+      ops.push({ op: 'addTransition', file, from: b, to: one(t.to) });
+    }
+  }
+  if (fromStep?.pos) {
+    const r = room(seq, fromStep, 'below', a);
+    ops.push(...r);
+    const placed = r.find((o): o is Extract<Op, { op: 'moveStep' }> => o.op === 'moveStep' && o.id === a);
+    if (b && placed?.pos) ops.push({ op: 'moveStep', file, id: b, pos: [placed.pos[0] + COL_W, placed.pos[1]] });
+  }
+  return { ops };
+}
