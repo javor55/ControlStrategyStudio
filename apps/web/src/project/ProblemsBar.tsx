@@ -17,6 +17,20 @@ function Sev({ s }: { s: Severity }) {
 /** Where a diagnostic points: file + sheet + selection. */
 export function locate(model: ProjectModel, d: Diag): { file: string; sheet?: number; select?: Selection } {
   const file = d.file ?? 'project.yaml';
+  const seq = model.sequenceByFile.get(file);
+  if (seq) {
+    // Sequences: step id in `block`, transition index in `link`.
+    if (d.block) {
+      const s = seq.steps.find((x) => x.id === d.block);
+      return { file, sheet: s?.sheet, select: s ? { kind: 'block', id: s.id } : undefined };
+    }
+    if (d.link !== undefined) {
+      const t = seq.transitions.find((x) => x.index === d.link);
+      const from = t && seq.steps.find((x) => t.from.includes(x.id));
+      return { file, sheet: from?.sheet, select: t ? { kind: 'link', index: t.index } : undefined };
+    }
+    return { file };
+  }
   const diagram = model.strategyByFile.get(file) ?? model.types.all.find((t) => t.file === file)?.diagram;
   if (!diagram) return { file };
   if (d.block) {

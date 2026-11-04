@@ -25,7 +25,8 @@ import {
   type Selection,
 } from '@csd/core';
 import { store, useEditor } from '../state/store';
-import { activeView, diagsOf, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
+import { activeView, diagsOf, useActiveDiagram, useActiveSequence, type ActiveDiagram } from '../state/selectors';
+import { SequenceInspector } from './SequenceInspector';
 import { BlockTypeEditor } from './BlockTypeEditor';
 import { Field, Row, SectionHeader, SeverityBadge } from '../ui/kit';
 import { confirmDialog } from '../ui/dialogs';
@@ -62,6 +63,9 @@ function InspectorBody() {
     return v.kind === 'blocktype' && v.type?.kind === 'basic' && s.viewMode === 'text' ? v.type : undefined;
   });
   const basicInCentre = useEditor((s) => s.viewMode !== 'text' && activeView(s).kind === 'blocktype');
+  const sequence = useActiveSequence();
+
+  if (sequence) return <SequenceInspector seq={sequence} />;
 
   if (!d) {
     if (basicType) return <TypePanel def={basicType} file={basicType.file} />;
@@ -96,7 +100,7 @@ function InspectorBody() {
 
 // --- shared bits ------------------------------------------------------------------
 
-function Head(props: { title: ReactNode; sub?: ReactNode; kind: string; actions?: ReactNode; diags?: Diag[] }) {
+export function Head(props: { title: ReactNode; sub?: ReactNode; kind: string; actions?: ReactNode; diags?: Diag[] }) {
   return (
     <div className="insp-head">
       <span className="insp-kind">{props.kind}</span>
@@ -122,7 +126,7 @@ function FileHeader({ file }: { file: string | null }) {
   );
 }
 
-function DiagList({ diags }: { diags: Diag[] }) {
+export function DiagList({ diags }: { diags: Diag[] }) {
   if (!diags.length) return null;
   return (
     <ul className="insp-diags">

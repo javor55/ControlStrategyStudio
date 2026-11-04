@@ -16,9 +16,11 @@ import {
   type Diagram,
   type PortDef,
   type ProjectModel,
+  type Sequence,
 } from '@csd/core';
 import { store } from '../state/store';
 import { yamlContextAt, type YamlContext } from './yamlcontext';
+import { completeSequence, hoverSequence } from './seqassist';
 
 /** Path of the file shown in an editor state. */
 export const fileFacet = Facet.define<string | null, string | null>({ combine: (v) => v[0] ?? null });
@@ -103,7 +105,8 @@ const SIGNAL_INFO: Record<string, string> = {
 // --- model lookups ---------------------------------------------------------------------
 
 interface FileInfo {
-  kind: 'strategy' | 'blocktype' | 'other';
+  kind: 'strategy' | 'blocktype' | 'sequence' | 'other';
+  sequence?: Sequence;
   model: ProjectModel;
   /** Diagram of the file (strategy or composite inside). */
   diagram?: Diagram;
@@ -115,7 +118,7 @@ interface FileInfo {
 }
 
 /** Last parsed state of each file, used while the text is temporarily invalid YAML. */
-const lastGood = new Map<string, { diagram?: Diagram; def?: BlockTypeDef }>();
+const lastGood = new Map<string, { diagram?: Diagram; def?: BlockTypeDef; sequence?: Sequence }>();
 
 function fileInfo(file: string | null): FileInfo | undefined {
   if (!file) return undefined;
@@ -127,6 +130,12 @@ function fileInfo(file: string | null): FileInfo | undefined {
     if (broken) s = lastGood.get(file)?.diagram ?? s;
     else if (s) lastGood.set(file, { diagram: s });
     return { kind: 'strategy', model, diagram: s, strategyName: model.strategyByFile.get(file)?.name ?? role.name, root: [] };
+  }
+  if (role.kind === 'sequence') {
+    let seq = model.sequenceByFile.get(file);
+    if (broken) seq = lastGood.get(file)?.sequence ?? seq;
+    else if (seq) lastGood.set(file, { sequence: seq });
+    return { kind: 'sequence', model, sequence: seq, root: [] };
   }
   if (role.kind === 'blocktype') {
     let def = model.types.all.find((t) => t.file === file);
@@ -312,6 +321,8 @@ function complete(cx: CompletionContext): CompletionResult | null {
   let path = ctx.path;
   const model = info.model;
 
+  if (info.kind === 'sequence') return completeSequence(cx, ctx, model, info.sequence, () => usedKeys(cx.state, cx.pos, ctx), infoDom);
+
   if (info.kind === 'blocktype') {
     if (path[0] !== 'diagram') {
       if (!path.length && ctx.at === 'key') return result(keyOptions(TYPE_KEYS, usedKeys(cx.state, cx.pos, ctx)));
@@ -429,6 +440,11 @@ function hoverInfo(view: EditorView, pos: number): Tooltip | null {
     return infoDom(`${t.library}/${t.type}@${t.version}`, `${t.category} · ${t.kind}`, [t.description, ports('In', t.inputs), ports('Out', t.outputs), ports('Params', t.params)].filter(Boolean).join('\n'));
   };
   const portDom = (owner: string, kind: string, p: PortDef) => infoDom(`${owner}.${p.name}`, `${kind} · ${portLine(p)}`, p.description);
+
+  if (info.kind === 'sequence') {
+    const dom = hoverSequence(w.text, ctx, model, info.sequence, infoDom);
+    return dom ? out(dom) : null;
+  }
 
   if (info.kind === 'blocktype') {
     if (path[0] !== 'diagram') {

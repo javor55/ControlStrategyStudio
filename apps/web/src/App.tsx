@@ -9,6 +9,7 @@ import { LogoMark } from './ui/Logo';
 import { DialogHost, confirmDialog, promptDialog } from './ui/dialogs';
 import { useMenu, type MenuEntry } from './ui/kit';
 import { Canvas } from './canvas/Canvas';
+import { SequenceCanvas } from './canvas/SequenceCanvas';
 import { Inspector } from './inspector/Inspector';
 import { SourceEditor } from './editor/SourceEditor';
 import { ProjectTree } from './project/ProjectTree';
@@ -338,6 +339,8 @@ function CenterView() {
   switch (kind) {
     case 'canvas':
       return <Canvas />;
+    case 'sequence':
+      return <SequenceCanvas />;
     case 'blocktype':
       return <BlockTypeView />;
     case 'doc':

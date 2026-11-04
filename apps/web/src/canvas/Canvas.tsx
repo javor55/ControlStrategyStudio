@@ -541,7 +541,12 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
 
   const navigate = (t: { sheet?: number; strategy?: string; block?: string }) => {
     const s = store();
-    if (t.strategy) s.openStrategy(t.strategy, t.block ? { kind: 'block', id: t.block } : undefined);
+    const seq = t.strategy ? s.getState().model.sequenceByName.get(t.strategy) : undefined;
+    if (seq) {
+      // "← SEQ" / "→ SEQ" tags and signals read from a sequence: open the sequence (at the step, if one is named).
+      const step = t.block ? seq.steps.find((x) => x.id === t.block) : undefined;
+      s.open(seq.file, step ? { sheet: step.sheet, select: { kind: 'block', id: step.id } } : {});
+    } else if (t.strategy) s.openStrategy(t.strategy, t.block ? { kind: 'block', id: t.block } : undefined);
     else if (t.sheet !== undefined) {
       s.setSheet(t.sheet);
       if (t.block) s.select({ kind: 'block', id: t.block });

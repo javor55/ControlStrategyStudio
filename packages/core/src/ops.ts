@@ -1003,7 +1003,7 @@ function run(tx: Tx, op: Op): void {
           const items = isMap(n) ? n.items.map((p) => p.value) : isSeq(n) ? n.items : [];
           return items.some((v) => isMap(v) && Number(v.get('sheet') ?? 1) === op.id);
         };
-        if (used('blocks') || used('notes')) throw new OpError(`Sheet ${op.id} is not empty — move its blocks and notes first`);
+        if (used('blocks') || used('steps') || used('notes')) throw new OpError(`Sheet ${op.id} is not empty — move its blocks, steps and notes first`);
         seq.items.splice(i, 1);
       });
       return;

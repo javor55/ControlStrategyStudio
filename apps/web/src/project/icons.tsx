@@ -27,6 +27,15 @@ export const Icon = {
       <path d="M6.5 5H8v6h1.5" />
     </Svg>
   ),
+  /** SFC: two steps (the first one initial) joined by a transition bar. */
+  sequence: (
+    <Svg>
+      <rect x="4.5" y="1" width="7" height="4.5" />
+      <rect x="5.7" y="2.1" width="4.6" height="2.3" strokeWidth="0.9" />
+      <path d="M8 5.5v5 M5.5 8h5" />
+      <rect x="4.5" y="10.5" width="7" height="4.5" />
+    </Svg>
+  ),
   doc: (
     <Svg>
       <path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 8h5 M5.5 10.5h5" />

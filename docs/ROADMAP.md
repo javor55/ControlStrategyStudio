@@ -3,10 +3,20 @@
 What could come next, roughly by value for designing and handing over control
 strategies. Sizes: **S** small (≤ 1 day), **M** medium, **L** large.
 
-## Next
+## Done recently
 
-- [ ] **Sequences (SFC / Grafcet)** — second diagram kind for start-up,
-      shut-down, filling, batch phases. Design brief: [design/sequences.md](design/sequences.md). **L**
+- [x] **Sequences (SFC / Grafcet)** — editor, condition language, validation,
+      cross references with strategies, PDF / HTML / JSON exports, history and
+      visual diff. Design: [design/sequences.md](design/sequences.md).
+
+## Sequences — follow-ups
+
+- [ ] ISA-88 phase states (hold / restart / stop / abort paths). **M–L**
+- [ ] Sub-sequences (macro steps / calling another sequence). **M**
+- [ ] Copy / paste of steps (clipboard fragments as for blocks). **S**
+- [ ] Visual diff: ghosts of removed steps and transitions on the canvas. **S**
+- [ ] History summary should mention changes of the sequence description (.md). **S**
+- [ ] Sequence test mode (token player) — see Verification below. **L**
 
 ## Ideas
 

@@ -8,6 +8,7 @@ import {
   type Diagram,
   type LayoutContext,
   type ProjectModel,
+  type Sequence,
   type SheetLayout,
   type Strategy,
   type YamlPath,
@@ -18,6 +19,7 @@ export type ActiveView =
   | { kind: 'none' }
   | { kind: 'project'; file: string }
   | { kind: 'strategy'; file: string; strategy: Strategy }
+  | { kind: 'sequence'; file: string; sequence: Sequence }
   | { kind: 'blocktype'; file: string; type: BlockTypeDef | undefined }
   | { kind: 'library'; file: string; lib: string }
   | { kind: 'doc'; file: string }
@@ -34,6 +36,10 @@ export function activeView(s: EditorState): ActiveView {
     case 'strategy': {
       const strategy = s.model.strategyByFile.get(f);
       return strategy ? { kind: 'strategy', file: f, strategy } : { kind: 'other', file: f };
+    }
+    case 'sequence': {
+      const sequence = s.model.sequenceByFile.get(f);
+      return sequence ? { kind: 'sequence', file: f, sequence } : { kind: 'other', file: f };
     }
     case 'blocktype':
       return { kind: 'blocktype', file: f, type: s.model.types.all.find((t) => t.file === f) };
@@ -73,11 +79,23 @@ export function activeDiagramOf(s: EditorState): ActiveDiagram | undefined {
       layoutContext: {
         defaultScan: st.scan,
         paramsDefault: model.meta.drawing.params !== 'hide',
-        usedBy: (block, port) =>
-          model
+        usedBy: (block, port) => [
+          ...model
             .usedBy(st.name, block)
             .filter((r) => r.link.from.port === port)
             .map((r) => r.strategy.name),
+          // Sequences whose transition conditions read this output.
+          ...model
+            .sequenceRefs(st.name, block)
+            .filter((r) => r.kind === 'reads' && r.port === port)
+            .map((r) => r.sequence),
+        ],
+        // Sequences whose actions write this input ("← SEQ" tags).
+        writtenBy: (block, port) =>
+          model
+            .sequenceRefs(st.name, block)
+            .filter((r) => r.kind === 'writes' && r.port === port)
+            .map((r) => r.sequence),
       },
     };
   }
@@ -105,6 +123,16 @@ export function useActiveDiagram(): ActiveDiagram | undefined {
 export function layoutActiveSheet(d: ActiveDiagram, sheet: number, extra: Partial<LayoutContext> = {}): SheetLayout {
   const valid = d.diagram.sheets.some((x) => x.id === sheet) ? sheet : d.diagram.sheets[0]?.id ?? 1;
   return layoutSheet(d.diagram, valid, { ...d.layoutContext, ...extra });
+}
+
+/** The sequence shown in the centre, if the active file is one. */
+export function activeSequenceOf(s: Pick<EditorState, 'model' | 'activeFile'>): Sequence | undefined {
+  return s.activeFile ? s.model.sequenceByFile.get(s.activeFile) : undefined;
+}
+
+/** Active sequence; re-computed only when the model or active file changes. */
+export function useActiveSequence(): Sequence | undefined {
+  return useEditor((s) => activeSequenceOf(s));
 }
 
 const NO_DIAGS: Diag[] = [];

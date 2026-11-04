@@ -151,46 +151,54 @@ function keyOf(p: Pair): unknown {
   return isScalar(p.key) ? p.key.value : p.key;
 }
 
+/** YAML keys of the selectable lists: blocks / links in diagrams, steps / transitions in sequences. */
+export interface SelectionLists {
+  blocks: string;
+  links: string;
+}
+const DIAGRAM_LISTS: SelectionLists = { blocks: 'blocks', links: 'links' };
+export const SEQUENCE_LISTS: SelectionLists = { blocks: 'steps', links: 'transitions' };
+
 /** Text ranges of the selected blocks / link / note in the YAML text. */
-export function selectionRanges(text: string, root: YamlPath, sel: Selection): Range[] {
+export function selectionRanges(text: string, root: YamlPath, sel: Selection, lists: SelectionLists = DIAGRAM_LISTS): Range[] {
   if (!sel) return [];
   const p = parseYaml(text);
   if (p.error && !p.doc.contents) return [];
   if (sel.kind === 'block' || sel.kind === 'blocks') {
     const ids = new Set(sel.kind === 'block' ? [sel.id] : sel.ids);
-    const blocks = p.doc.getIn([...root, 'blocks'], true);
+    const blocks = p.doc.getIn([...root, lists.blocks], true);
     if (!isMap(blocks)) return [];
     return blocks.items.filter((it) => ids.has(String(keyOf(it as Pair)))).flatMap((it) => pairRange(it as Pair) ?? []);
   }
-  const seq = p.doc.getIn([...root, sel.kind === 'link' ? 'links' : 'notes'], true);
+  const seq = p.doc.getIn([...root, sel.kind === 'link' ? lists.links : 'notes'], true);
   if (!isSeq(seq)) return [];
   const r = nodeRange(seq.items[sel.index]);
   return r ? [r] : [];
 }
 
 /** Text range of a block / link / note in the YAML text (first block of a multi-selection). */
-export function selectionRange(text: string, root: YamlPath, sel: Selection): Range | undefined {
+export function selectionRange(text: string, root: YamlPath, sel: Selection, lists: SelectionLists = DIAGRAM_LISTS): Range | undefined {
   if (!sel) return undefined;
   const p = parseYaml(text);
   if (p.error && !p.doc.contents) return undefined;
   if (sel.kind === 'block' || sel.kind === 'blocks') {
     const id = sel.kind === 'block' ? sel.id : sel.ids[0];
-    const blocks = p.doc.getIn([...root, 'blocks'], true);
+    const blocks = p.doc.getIn([...root, lists.blocks], true);
     if (!isMap(blocks)) return undefined;
     const pair = blocks.items.find((it) => keyOf(it as Pair) === id) as Pair | undefined;
     return pair ? pairRange(pair) : undefined;
   }
-  const seq = p.doc.getIn([...root, sel.kind === 'link' ? 'links' : 'notes'], true);
+  const seq = p.doc.getIn([...root, sel.kind === 'link' ? lists.links : 'notes'], true);
   if (!isSeq(seq)) return undefined;
   return nodeRange(seq.items[sel.index]);
 }
 
 /** Which block / link / note contains `pos`. */
-export function selectionAt(text: string, root: YamlPath, pos: number): Selection {
+export function selectionAt(text: string, root: YamlPath, pos: number, lists: SelectionLists = DIAGRAM_LISTS): Selection {
   const p = parseYaml(text);
   if (!p.doc.contents) return null;
   const inside = (r: Range | undefined) => !!r && pos >= r.from && pos <= r.to;
-  const blocks = p.doc.getIn([...root, 'blocks'], true);
+  const blocks = p.doc.getIn([...root, lists.blocks], true);
   if (isMap(blocks)) {
     for (const it of blocks.items) {
       const pr = it as Pair;
@@ -198,7 +206,7 @@ export function selectionAt(text: string, root: YamlPath, pos: number): Selectio
     }
   }
   for (const kind of ['link', 'note'] as const) {
-    const seq = p.doc.getIn([...root, kind === 'link' ? 'links' : 'notes'], true);
+    const seq = p.doc.getIn([...root, kind === 'link' ? lists.links : 'notes'], true);
     if (!isSeq(seq)) continue;
     const i = seq.items.findIndex((it) => inside(nodeRange(it)));
     if (i >= 0) return { kind, index: i };
@@ -220,6 +228,8 @@ export interface DiagramInfo {
   root: YamlPath;
   /** Sheet of a block / note, to switch the canvas when the cursor selects it. */
   sheetOf: (s: Selection) => number | undefined;
+  /** List keys (default: blocks / links; sequences: steps / transitions). */
+  lists?: SelectionLists;
 }
 
 /** Problem navigation state reported to the component. */
@@ -423,7 +433,7 @@ export class SourceController {
   /** Highlights the selected element(s); scrolls to the first one when `scroll`. */
   highlight(sel: Selection, scroll: boolean) {
     const d = this.diagram;
-    const ranges = d && d.file === this.file ? selectionRanges(this.view.state.doc.toString(), d.root, sel) : [];
+    const ranges = d && d.file === this.file ? selectionRanges(this.view.state.doc.toString(), d.root, sel, d.lists) : [];
     const effects: StateEffect<unknown>[] = [setHighlight.of(ranges.length ? ranges : null)];
     const r = ranges.length ? ranges.reduce((a, b) => (b.from < a.from ? b : a)) : undefined;
     if (r && scroll && this.view.dom.offsetParent) {
@@ -440,7 +450,7 @@ export class SourceController {
     const d = this.diagram;
     if (!d || d.file !== this.file) return;
     const pos = this.view.state.selection.main.head;
-    const sel = selectionAt(this.view.state.doc.toString(), d.root, pos);
+    const sel = selectionAt(this.view.state.doc.toString(), d.root, pos, d.lists);
     const s = store().getState();
     if (selKey(sel) === selKey(s.selection)) return;
     // Keep a multi-selection while the cursor moves inside one of its blocks.

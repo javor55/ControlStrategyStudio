@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { suggestBlockId, type BlockTypeDef } from '@csd/core';
 import { store, useEditor } from '../state/store';
-import { useActiveDiagram } from '../state/selectors';
+import { useActiveDiagram, useActiveSequence } from '../state/selectors';
 import { Icon } from './icons';
+import { addSfcElement, selectedSteps, SFC_ELEMENTS, SFC_MIME, type SfcElement } from '../canvas/sfcops';
 import './project.css';
 
 export const CSD_TYPE_MIME = 'application/x-csd-type';
@@ -29,6 +30,7 @@ export function Palette() {
   const model = useEditor((s) => s.model);
   const activeSheet = useEditor((s) => s.activeSheet);
   const target = useActiveDiagram();
+  const seq = useActiveSequence();
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [height, setHeight] = useState<number | undefined>(readHeight);
@@ -95,8 +97,15 @@ export function Palette() {
   const disabled = !target;
   const count = groups.reduce((n, [, l]) => n + l.length, 0);
 
+  const addSfc = (kind: SfcElement) => {
+    if (!seq) return;
+    const sel = selectedSteps(store().getState().selection);
+    const sheet = seq.sheets.some((s) => s.id === activeSheet) ? activeSheet : seq.sheets[0]?.id ?? 1;
+    addSfcElement(seq, kind, { from: sel.length === 1 ? sel[0] : undefined, sheet });
+  };
+
   return (
-    <section className={`palette${disabled ? ' disabled' : ''}`} ref={rootRef} style={height ? { flex: `0 0 ${height}px` } : undefined} aria-label="Block palette">
+    <section className={`palette${disabled && !seq ? ' disabled' : ''}`} ref={rootRef} style={height ? { flex: `0 0 ${height}px` } : undefined} aria-label="Block palette">
       <div
         className="splitter"
         role="separator"
@@ -112,80 +121,138 @@ export function Palette() {
           }
         }}
       />
-      <div className="section-h">
-        <span>Blocks</span>
-        <span className="tree-count">{count}</span>
-        <span className="spacer" />
-      </div>
-      <div className="palette-search">
-        <span className="search-ico">{Icon.search}</span>
-        <input
-          className="input"
-          type="search"
-          placeholder="Search blocks…"
-          aria-label="Search blocks"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setQuery('');
-            if (e.key === 'Enter' && groups.length === 1 && groups[0][1].length === 1) add(groups[0][1][0].ref);
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              rootRef.current?.querySelector<HTMLElement>('.pal-item')?.focus();
-            }
-          }}
-        />
-      </div>
-      {disabled && <div className="palette-hint">Open a strategy or composite block to add blocks.</div>}
-      <div className="palette-list scroll" role="listbox" aria-label="Block types">
-        {groups.map(([cat, items]) => {
-          const closed = !query && collapsed[cat];
-          return (
-            <div key={cat} className="pal-group">
-              <div className="pal-cat" onClick={() => setCollapsed((c) => ({ ...c, [cat]: !c[cat] }))}>
-                <span className="twisty">{Icon.chevron(!closed)}</span>
-                {cat}
-                <span className="tree-count">{items.length}</span>
+      {seq ? (
+        <>
+          <div className="section-h">
+            <span>Sequence elements</span>
+            <span className="tree-count">{SFC_ELEMENTS.length}</span>
+            <span className="spacer" />
+          </div>
+          <div className="palette-hint">Click to add (transitions and branches start at the selected step) or drag onto the drawing.</div>
+          <div className="palette-list scroll" role="listbox" aria-label="Sequence elements">
+            {SFC_ELEMENTS.map((el) => (
+              <div
+                key={el.kind}
+                className="pal-item"
+                role="option"
+                tabIndex={0}
+                draggable
+                data-sfc={el.kind}
+                title={`${el.description}\n\nClick to add · drag onto the drawing (onto a step to start there)`}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(SFC_MIME, el.kind);
+                  e.dataTransfer.setData('text/plain', el.label);
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+                onClick={() => addSfc(el.kind)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    addSfc(el.kind);
+                  }
+                }}
+              >
+                <span className="pal-ico">
+                  <SfcIcon kind={el.kind} />
+                </span>
+                <span className="pal-name">{el.label}</span>
+                <span className="pal-desc">{el.description}</span>
               </div>
-              {!closed &&
-                items.map(({ def, ref }) => (
-                  <div
-                    key={def.file}
-                    className="pal-item"
-                    role="option"
-                    aria-disabled={disabled}
-                    tabIndex={0}
-                    draggable={!disabled}
-                    data-type={ref}
-                    title={`${def.library}/${def.type}@${def.version}${def.kind === 'composite' ? ' (composite)' : ''}\n${def.description}${disabled ? '' : '\n\nClick to add · drag onto the drawing'}`}
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData(CSD_TYPE_MIME, ref);
-                      e.dataTransfer.setData('text/plain', ref);
-                      e.dataTransfer.effectAllowed = 'copy';
-                    }}
-                    onClick={() => add(ref)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        add(ref);
-                      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        const all = [...(rootRef.current?.querySelectorAll<HTMLElement>('.pal-item') ?? [])];
-                        all[all.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus();
-                      }
-                    }}
-                  >
-                    <span className="pal-ico">{def.kind === 'composite' ? Icon.composite : Icon.type}</span>
-                    <span className="pal-name">{def.type}</span>
-                    {def.library !== 'std' && <span className="pal-lib">{def.library}</span>}
-                    <span className="pal-desc">{def.description}</span>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="section-h">
+            <span>Blocks</span>
+            <span className="tree-count">{count}</span>
+            <span className="spacer" />
+          </div>
+          <div className="palette-search">
+            <span className="search-ico">{Icon.search}</span>
+            <input
+              className="input"
+              type="search"
+              placeholder="Search blocks…"
+              aria-label="Search blocks"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setQuery('');
+                if (e.key === 'Enter' && groups.length === 1 && groups[0][1].length === 1) add(groups[0][1][0].ref);
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  rootRef.current?.querySelector<HTMLElement>('.pal-item')?.focus();
+                }
+              }}
+            />
+          </div>
+          {disabled && <div className="palette-hint">Open a strategy or composite block to add blocks.</div>}
+          <div className="palette-list scroll" role="listbox" aria-label="Block types">
+            {groups.map(([cat, items]) => {
+              const closed = !query && collapsed[cat];
+              return (
+                <div key={cat} className="pal-group">
+                  <div className="pal-cat" onClick={() => setCollapsed((c) => ({ ...c, [cat]: !c[cat] }))}>
+                    <span className="twisty">{Icon.chevron(!closed)}</span>
+                    {cat}
+                    <span className="tree-count">{items.length}</span>
                   </div>
-                ))}
-            </div>
-          );
-        })}
-        {!groups.length && <div className="tree-empty">No block type matches “{query}”.</div>}
-      </div>
+                  {!closed &&
+                    items.map(({ def, ref }) => (
+                      <div
+                        key={def.file}
+                        className="pal-item"
+                        role="option"
+                        aria-disabled={disabled}
+                        tabIndex={0}
+                        draggable={!disabled}
+                        data-type={ref}
+                        title={`${def.library}/${def.type}@${def.version}${def.kind === 'composite' ? ' (composite)' : ''}\n${def.description}${disabled ? '' : '\n\nClick to add · drag onto the drawing'}`}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData(CSD_TYPE_MIME, ref);
+                          e.dataTransfer.setData('text/plain', ref);
+                          e.dataTransfer.effectAllowed = 'copy';
+                        }}
+                        onClick={() => add(ref)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            add(ref);
+                          } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            const all = [...(rootRef.current?.querySelectorAll<HTMLElement>('.pal-item') ?? [])];
+                            all[all.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus();
+                          }
+                        }}
+                      >
+                        <span className="pal-ico">{def.kind === 'composite' ? Icon.composite : Icon.type}</span>
+                        <span className="pal-name">{def.type}</span>
+                        {def.library !== 'std' && <span className="pal-lib">{def.library}</span>}
+                        <span className="pal-desc">{def.description}</span>
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
+            {!groups.length && <div className="tree-empty">No block type matches “{query}”.</div>}
+          </div>
+        </>
+      )}
     </section>
+  );
+}
+
+/** Small SFC symbols for the sequence palette. */
+function SfcIcon({ kind }: { kind: SfcElement }) {
+  const p = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.3 } as const;
+  return (
+    <svg className="ico" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      {kind === 'step' && <rect x="3" y="4" width="10" height="8" {...p} />}
+      {kind === 'transition' && <path d="M8 1v14 M4 8h8" {...p} strokeWidth={1.6} />}
+      {kind === 'parallel' && <path d="M8 1v4 M2 5.5h12 M2 7.5h12 M4 7.5v7 M12 7.5v7" {...p} />}
+      {kind === 'alternative' && <path d="M8 1v4 M3 5h10 M4 5v10 M12 5v10 M2 10h4 M10 10h4" {...p} />}
+      {kind === 'jump' && <path d="M8 1v8 M4 9l4 5 4-5z" {...p} />}
+    </svg>
   );
 }

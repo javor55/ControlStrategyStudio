@@ -179,6 +179,6 @@ schema/     JSON Schemas (generated)
 | 2 · Editor | canvas, inspector, text editor (completion, hover), project tree, palette, settings, autosave, ZIP | done |
 | 3 · Hand-over | configurable export: PDF, interactive read-only HTML, JSON / TOML | done |
 | 4 · Versions | git in the project: commits, revisions, branches, text and visual diff, restore | done |
-| 5 · Sequences | SFC / Grafcet diagrams next to continuous strategies — [design brief](docs/design/sequences.md) | proposed |
+| 5 · Sequences | SFC / Grafcet diagrams next to continuous strategies: editor, validation, cross references, exports, diff — [design](docs/design/sequences.md) | done |
 
 More ideas and known gaps: [docs/ROADMAP.md](docs/ROADMAP.md).

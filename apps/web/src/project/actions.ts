@@ -8,6 +8,7 @@ import {
   folderReadme,
   joinPath,
   libraryFile,
+  sequenceFile,
   strategyDocFile,
   strategyFile,
   type BlockTypeDef,
@@ -28,9 +29,27 @@ function validateStrategyName(v: string, except?: string): string | undefined {
   if (!v) return 'Enter a name';
   if (!TAG.test(v)) return 'Use letters, digits, "_" or "-", starting with a letter or "_"';
   if (v === 'in' || v === 'out') return `"${v}" is reserved`;
-  const other = st().model.strategyByName.get(v);
+  const other = st().model.strategyByName.get(v) ?? st().model.sequenceByName.get(v);
   if (other && other.file !== except) return `Already used by ${other.file}`;
   return undefined;
+}
+
+const isSequenceFile = (file: string) => classify(file).kind === 'sequence';
+
+/** Path of a strategy or sequence (same kind as `file`) named `name` in `folder`. */
+function sameKindFile(file: string, folder: string, name: string): string {
+  return isSequenceFile(file) ? sequenceFile(folder, name) : strategyFile(folder, name);
+}
+
+/** Name and folder of a strategy or sequence file. */
+function entityOf(file: string): { name: string; folder: string; kind: 'strategy' | 'sequence' } {
+  const role = classify(file);
+  const m = st().model;
+  const seq = m.sequenceByFile.get(file);
+  const strat = m.strategyByFile.get(file);
+  const folder = role.kind === 'strategy' || role.kind === 'sequence' ? role.folder : '';
+  const fallback = role.kind === 'strategy' || role.kind === 'sequence' ? role.name : basename(file);
+  return { name: seq?.name ?? strat?.name ?? fallback, folder, kind: role.kind === 'sequence' ? 'sequence' : 'strategy' };
 }
 
 function validateFolderSegment(v: string): string | undefined {
@@ -71,6 +90,19 @@ export async function newStrategy(folder: string) {
   if (store().dispatch({ op: 'createStrategy', folder, name }, { label: `New strategy ${name}` })) store().open(strategyFile(folder, name));
 }
 
+export async function newSequence(folder: string) {
+  const name = await promptDialog({
+    title: 'New sequence',
+    message: `${folder ? `In ${folder}` : 'At the top of the hierarchy'} · steps, transitions and actions (SFC / Grafcet)`,
+    label: 'Name (tag)',
+    placeholder: 'e.g. FILL_T100',
+    okLabel: 'Create',
+    validate: (v) => validateStrategyName(v),
+  });
+  if (!name) return;
+  if (store().dispatch({ op: 'createSequence', folder, name }, { label: `New sequence ${name}` })) store().open(sequenceFile(folder, name));
+}
+
 export async function newFolder(parent: FolderNode, level?: string): Promise<string | undefined> {
   const name = await promptDialog({
     title: parent.path ? 'New subfolder' : 'New top-level folder',
@@ -98,9 +130,10 @@ export function editFolderDescription(node: FolderNode) {
 export async function deleteFolder(node: FolderNode) {
   const files = filesUnderFolder(node.path);
   const strategies = files.filter((f) => classify(f).kind === 'strategy').length;
+  const sequences = files.filter((f) => classify(f).kind === 'sequence').length;
   const ok = await confirmDialog({
     title: `Delete folder ${node.name}?`,
-    message: `${node.path} and everything in it will be deleted: ${strategies} ${strategies === 1 ? 'strategy' : 'strategies'}, ${files.length} file${files.length === 1 ? '' : 's'} in total. You can undo this.`,
+    message: `${node.path} and everything in it will be deleted: ${strategies} ${strategies === 1 ? 'strategy' : 'strategies'}, ${sequences ? `${sequences} sequence${sequences === 1 ? '' : 's'}, ` : ''}${files.length} file${files.length === 1 ? '' : 's'} in total. You can undo this.`,
     okLabel: 'Delete',
     danger: true,
   });
@@ -109,11 +142,11 @@ export async function deleteFolder(node: FolderNode) {
 }
 
 export async function renameStrategy(file: string) {
-  const s = st().model.strategyByFile.get(file);
-  const old = s?.name ?? basename(file).replace(/\.yaml$/, '');
+  const e = entityOf(file);
+  const old = e.name;
   const name = await promptDialog({
     title: `Rename ${old}`,
-    message: 'References from other strategies are updated too.',
+    message: e.kind === 'sequence' ? 'References from strategies are updated too.' : 'References from other strategies and sequences are updated too.',
     label: 'New name',
     value: old,
     okLabel: 'Rename',
@@ -122,23 +155,23 @@ export async function renameStrategy(file: string) {
   if (!name || name === old) return;
   const wasActive = st().activeFile === file;
   if (store().dispatch({ op: 'renameStrategy', file, name }, { label: `Rename ${old} → ${name}` }) && wasActive) {
-    store().open(strategyFile(s?.folder ?? '', name));
+    store().open(sameKindFile(file, e.folder, name));
   }
 }
 
 export async function duplicateStrategy(file: string) {
-  const s = st().model.strategyByFile.get(file);
-  const old = s?.name ?? basename(file).replace(/\.yaml$/, '');
+  const e = entityOf(file);
+  const old = e.name;
   let suggestion = `${old}_copy`;
-  for (let i = 2; st().model.strategyByName.has(suggestion); i++) suggestion = `${old}_copy${i}`;
+  for (let i = 2; st().model.strategyByName.has(suggestion) || st().model.sequenceByName.has(suggestion); i++) suggestion = `${old}_copy${i}`;
   const name = await promptDialog({ title: `Duplicate ${old}`, label: 'Name of the copy', value: suggestion, okLabel: 'Duplicate', validate: (v) => validateStrategyName(v) });
   if (!name) return;
-  if (store().dispatch({ op: 'duplicateStrategy', file, name }, { label: `Duplicate ${old}` })) store().open(strategyFile(s?.folder ?? '', name));
+  if (store().dispatch({ op: 'duplicateStrategy', file, name }, { label: `Duplicate ${old}` })) store().open(sameKindFile(file, e.folder, name));
 }
 
 export async function moveStrategy(file: string) {
   const role = classify(file);
-  if (role.kind !== 'strategy') return;
+  if (role.kind !== 'strategy' && role.kind !== 'sequence') return;
   const folders: string[] = [];
   const walk = (n: FolderNode) => {
     if (n.path) folders.push(n.path);
@@ -157,7 +190,7 @@ export async function moveStrategy(file: string) {
   const folder = cleanFolder(raw);
   if (folder === role.folder) return;
   const wasActive = st().activeFile === file;
-  if (store().dispatch({ op: 'moveStrategy', file, folder }, { label: `Move ${role.name}` }) && wasActive) store().open(strategyFile(folder, role.name));
+  if (store().dispatch({ op: 'moveStrategy', file, folder }, { label: `Move ${role.name}` }) && wasActive) store().open(sameKindFile(file, folder, role.name));
 }
 
 export function openFunctionDescription(file: string) {
@@ -169,15 +202,23 @@ export function openFunctionDescription(file: string) {
 }
 
 export async function deleteStrategy(file: string) {
-  const s = st().model.strategyByFile.get(file);
-  const name = s?.name ?? basename(file);
+  const name = entityOf(file).name;
   const md = strategyDocFile(file);
-  const readers = s ? [...new Set(st().model.usedBy(s.name).map((r) => r.strategy.name))] : [];
+  const m = st().model;
+  const readers = [
+    ...new Set([
+      ...m.usedBy(name).map((r) => r.strategy.name),
+      // Sequences that read or write signals of this strategy.
+      ...m.sequenceRefs(name).map((r) => r.sequence),
+      // Strategies whose signals a deleted sequence reads or writes.
+      ...(m.sequenceByFile.has(file) ? m.strategies.filter((x) => m.sequenceRefs(x.name).some((r) => r.sequenceFile === file)).map((x) => x.name) : []),
+    ]),
+  ].filter((n) => n !== name);
   const ok = await confirmDialog({
     title: `Delete ${name}?`,
     message:
       `${file}${md in st().files ? ' and its function description' : ''} will be deleted. You can undo this.` +
-      (readers.length ? ` Warning: ${readers.join(', ')} read${readers.length === 1 ? 's' : ''} signals from it.` : ''),
+      (readers.length ? ` Warning: it is connected to ${readers.join(', ')} (signals read or written).` : ''),
     okLabel: 'Delete',
     danger: true,
   });

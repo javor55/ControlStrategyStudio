@@ -5,9 +5,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { parseYaml, type Diag, type Selection } from '@csd/core';
 import { useEditor } from '../state/store';
-import { diagsOf, useActiveDiagram } from '../state/selectors';
+import { diagsOf, useActiveDiagram, useActiveSequence } from '../state/selectors';
 import { SeverityBadge } from '../ui/kit';
-import { modeOf, selKey, SourceController, type ProblemNav } from './controller';
+import { modeOf, selKey, SEQUENCE_LISTS, SourceController, type ProblemNav } from './controller';
 import './editor.css';
 
 const MODE_LABEL = { yaml: 'YAML', markdown: 'Markdown', text: 'Text' } as const;
@@ -19,6 +19,7 @@ export function SourceEditor() {
   const model = useEditor((s) => s.model);
   const selection = useEditor((s) => s.selection);
   const d = useActiveDiagram();
+  const seq = useActiveSequence();
 
   const host = useRef<HTMLDivElement>(null);
   const ctl = useRef<SourceController>();
@@ -53,8 +54,16 @@ export function SourceEditor() {
                 ? d.diagram.notes.find((n) => n.index === s.index)?.sheet
                 : undefined,
         }
-      : undefined;
-  }, [d]);
+      : seq
+        ? {
+            file: seq.file,
+            root: [],
+            lists: SEQUENCE_LISTS,
+            sheetOf: (s: Selection) =>
+              s?.kind === 'block' ? seq.steps.find((b) => b.id === s.id)?.sheet : s?.kind === 'note' ? seq.notes.find((n) => n.index === s.index)?.sheet : undefined,
+          }
+        : undefined;
+  }, [d, seq]);
 
   // Document: file switch and external changes.
   useLayoutEffect(() => {
@@ -86,7 +95,7 @@ export function SourceEditor() {
     const fromEditor = c.selfSelection === key;
     if (changed) c.selfSelection = null;
     c.highlight(selection, changed && !fromEditor);
-  }, [selection, file, text, d]);
+  }, [selection, file, text, d, seq]);
 
   // F8 / Shift+F8 also work when the editor is visible but not focused.
   const visible = useEditor((s) => s.viewMode !== 'diagram');

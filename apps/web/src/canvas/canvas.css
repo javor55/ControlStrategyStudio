@@ -82,3 +82,8 @@
 .cv-dd-panel .cv-dd-item { display: block; width: 100%; text-align: left; padding: 4px 6px 4px 26px; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
 .cv-dd-panel .cv-dd-item:hover:not(:disabled) { background: var(--hover); }
 .cv-dd-panel .cv-dd-item:disabled { color: var(--ink-3); cursor: default; }
+
+/* --- sequence canvas ------------------------------------------------------------------- */
+.cv-header .seq-kind { font: 600 10px var(--f-mono); letter-spacing: .06em; padding: 1px 5px; border: 1px solid var(--accent); border-radius: 2px; color: var(--accent); }
+.cv-overlay circle.seq-handle { fill: var(--accent); stroke: var(--sheet); stroke-width: 1.5; }
+.cv-overlay rect.seq-target { fill: none; stroke: #1e8a46; stroke-width: 2; stroke-dasharray: 5 3; }

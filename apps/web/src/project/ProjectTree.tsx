@@ -18,6 +18,7 @@ import {
   newBlockType,
   newFolder,
   newLibrary,
+  newSequence,
   newStrategy,
   newTypeVersion,
   openFunctionDescription,
@@ -214,6 +215,7 @@ export function ProjectTree() {
   const folderMenu = (node: FolderNode): MenuEntry[] => [
     { section: node.level ? `${node.level} · ${node.name}` : node.name },
     { label: 'New strategy…', onClick: () => newStrategy(node.path) },
+    { label: 'New sequence…', hint: 'SFC', onClick: () => newSequence(node.path) },
     {
       label: 'New subfolder…',
       hint: levels[node.depth] ?? undefined,
@@ -229,10 +231,10 @@ export function ProjectTree() {
   ];
 
   const strategyMenu = (file: string): MenuEntry[] => {
-    const s = model.strategyByFile.get(file);
+    const s = model.strategyByFile.get(file) ?? model.sequenceByFile.get(file);
     const hasDoc = strategyDocFile(file) in files;
     return [
-      { section: s?.name ?? basename(file) },
+      { section: s ? `${s.name}${model.sequenceByFile.has(file) ? ' · sequence' : ''}` : basename(file) },
       { label: 'Open', onClick: () => open(file) },
       { label: hasDoc ? 'Function description' : 'Add function description', onClick: () => openFunctionDescription(file) },
       'separator',
@@ -278,11 +280,46 @@ export function ProjectTree() {
     );
   };
 
+  const renderSequence = (file: string, depth: number) => {
+    const s = model.sequenceByFile.get(file);
+    const md = strategyDocFile(file);
+    const hasDoc = md in files;
+    const diags = diagsOf(model, file);
+    return (
+      <TreeRow
+        key={file}
+        depth={depth}
+        icon={Icon.sequence}
+        label={s?.name ?? basename(file)}
+        title={[`Sequence (SFC)${s?.title ? ': ' + s.title : ''}`, s?.description].filter(Boolean).join('\n') || file}
+        active={active === file || active === md}
+        className="strategy sequence"
+        testId={`sequence-${s?.name}`}
+        onActivate={() => open(file)}
+        menu={() => strategyMenu(file)}
+        openMenu={menu.open}
+        onRename={() => renameStrategy(file)}
+        trailing={
+          <>
+            {s?.title && <span className="tree-sub">{s.title}</span>}
+            <ChangeDot file={file} />
+            <SeverityBadge diags={diags} />
+          </>
+        }
+        actions={
+          <ActBtn title={hasDoc ? 'Function description' : 'Add function description'} onClick={() => openFunctionDescription(file)}>
+            {Icon.doc}
+          </ActBtn>
+        }
+      />
+    );
+  };
+
   const folderDiagCount = (node: FolderNode): { e: number; w: number } => {
     let e = 0;
     let w = 0;
     const walk = (n: FolderNode) => {
-      for (const f of n.strategies) for (const d of diagsOf(model, f)) d.severity === 'error' ? e++ : d.severity === 'warning' && w++;
+      for (const f of [...n.strategies, ...n.sequences]) for (const d of diagsOf(model, f)) d.severity === 'error' ? e++ : d.severity === 'warning' && w++;
       n.folders.forEach(walk);
     };
     walk(node);
@@ -335,6 +372,7 @@ export function ProjectTree() {
           <>
             {node.folders.map((f) => renderFolder(f, depth + 1))}
             {node.strategies.map((f) => renderStrategy(f, depth + 1))}
+            {node.sequences.map((f) => renderSequence(f, depth + 1))}
           </>
         )}
       </div>
@@ -479,7 +517,7 @@ export function ProjectTree() {
         title="Hierarchy"
         open={hierarchyOpen}
         onToggle={() => toggle('s:hierarchy', true)}
-        count={model.strategies.length}
+        count={model.strategies.length + model.sequences.length}
         actions={
           <>
             <ActBtn title={`New top-level folder${levels[0] ? ` (${levels[0]})` : ''}`} onClick={() => newFolder(root, levels[0])}>
@@ -497,13 +535,15 @@ export function ProjectTree() {
             menu.open(e, [
               { label: 'New top-level folder…', hint: levels[0], onClick: () => newFolder(root, levels[0]) },
               { label: 'New strategy…', onClick: () => newStrategy('') },
+              { label: 'New sequence…', onClick: () => newSequence('') },
             ]);
           }}
           className="tree-group"
         >
           {root.folders.map((f) => renderFolder(f, 0))}
           {root.strategies.map((f) => renderStrategy(f, 0))}
-          {!root.folders.length && !root.strategies.length && (
+          {root.sequences.map((f) => renderSequence(f, 0))}
+          {!root.folders.length && !root.strategies.length && !root.sequences.length && (
             <div className="tree-empty">
               No strategies yet.{' '}
               <button className="linkish" onClick={() => newFolder(root, levels[0])}>

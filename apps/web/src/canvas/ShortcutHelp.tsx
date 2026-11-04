@@ -4,7 +4,14 @@ import { useEffect, useRef } from 'react';
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl';
 
-const GROUPS: { title: string; rows: [string, string][] }[] = [
+export interface HelpGroup {
+  title: string;
+  rows: [string, string][];
+}
+
+export { MOD };
+
+const GROUPS: HelpGroup[] = [
   {
     title: 'Mouse',
     rows: [
@@ -48,7 +55,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
   },
 ];
 
-export function ShortcutHelp({ onClose }: { onClose: () => void }) {
+export function ShortcutHelp({ onClose, groups = GROUPS, title = 'Canvas shortcuts' }: { onClose: () => void; groups?: HelpGroup[]; title?: string }) {
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
@@ -66,15 +73,15 @@ export function ShortcutHelp({ onClose }: { onClose: () => void }) {
     };
   }, []);
   return (
-    <div className="cv-help" role="dialog" aria-label="Canvas shortcuts" onPointerDown={(e) => e.stopPropagation()}>
+    <div className="cv-help" role="dialog" aria-label={title} onPointerDown={(e) => e.stopPropagation()}>
       <div className="cv-help-head">
-        <strong>Canvas shortcuts</strong>
+        <strong>{title}</strong>
         <button className="btn small icon" title="Close (Esc)" onClick={onClose}>
           ×
         </button>
       </div>
       <div className="cv-help-body">
-        {GROUPS.map((g) => (
+        {groups.map((g) => (
           <section key={g.title}>
             <h4>{g.title}</h4>
             <table>

@@ -406,9 +406,9 @@ function CommitView(props: { c: CommitInfo; commits: CommitInfo[]; branches: Bra
   const compareWithWorking = async () => {
     try {
       await startCompare(c.oid);
-      // Show a changed strategy if the open file is not one.
+      // Show a changed strategy if the open file is not a strategy or sequence.
       const st = store().getState();
-      const active = st.activeFile && st.model.strategyByFile.get(st.activeFile);
+      const active = st.activeFile && (st.model.strategyByFile.get(st.activeFile) || st.model.sequenceByFile.get(st.activeFile));
       if (!active) {
         const first = st.model.strategies[0];
         if (first) store().open(first.file);
