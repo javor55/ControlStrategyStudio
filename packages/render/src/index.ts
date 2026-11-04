@@ -83,6 +83,10 @@ export interface RenderOptions {
   categories?: Readonly<Record<string, CategoryStyle>>;
   /** Mark previous-cycle links with z⁻¹ (default true). */
   showFeedback?: boolean;
+  /** Execution order badges on blocks (default true). */
+  showOrder?: boolean;
+  /** Signal names and comments along links (default true). */
+  showLabels?: boolean;
   /** Adds data-* attributes and hit areas for editors. */
   interactive?: boolean;
   selection?: RenderSelection;
@@ -139,11 +143,12 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
     s += `<line${attrs({ x1: x, y1: y - 5, x2: x, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
     s += `<line${attrs({ x1: x + 3, y1: y - 5, x2: x + 3, y2: y + 5, stroke: color, 'stroke-width': 2 })}/>`;
   }
-  if (w.label) {
+  if (w.label && o.showLabels !== false) {
     const fill = w.external ? t.ext : t.ink2;
     const parts: string[] = [];
     const delayed = w.label.delayed && fb;
-    if (delayed) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-weight': 'bold', 'font-style': 'normal', fill: color })}>z⁻¹</tspan>`);
+    // "z" with a raised "-1": works with fonts that lack the superscript minus (PDF).
+    if (delayed) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-weight': 'bold', 'font-style': 'normal', fill: color })}>z</tspan><tspan${attrs({ dy: -4, 'font-size': 7, 'font-weight': 'bold', fill: color })}>-1</tspan><tspan${attrs({ dy: 4 })}></tspan>`);
     if (w.label.name) parts.push(`<tspan${attrs({ 'font-family': t.fontMono, 'font-weight': 'bold', 'font-style': 'normal', fill: cat?.color ?? t.ink })}>${esc(w.label.name)}</tspan>`);
     if (w.label.comment) parts.push(`<tspan${attrs({ 'font-family': t.fontSans, 'font-style': 'italic', fill })}>${esc(w.label.comment)}</tspan>`);
     if (!parts.length && !w.label.delayed) parts.push(esc(w.label.text));
@@ -191,7 +196,7 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
   s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: M.HEADER - 4, fill: header, stroke, 'stroke-width': sw })}/>`;
   s += text(b.x + 6, b.y + 13, b.id, { ...sans, 'font-size': 12, 'font-weight': 'bold', fill: t.ink });
   s += text(b.x + 6, b.y + 25, (b.composite ? '[+] ' : '') + b.typeLabel, { ...mono, 'font-size': 9.5, fill: b.unknownType ? t.error : t.ink2 });
-  if (b.order !== undefined) s += text(b.x + b.w - 6, b.y + 13, `#${b.order}`, { ...mono, 'font-size': 9.5, fill: t.ink2, 'text-anchor': 'end' });
+  if (b.order !== undefined && o.showOrder !== false) s += text(b.x + b.w - 6, b.y + 13, `#${b.order}`, { ...mono, 'font-size': 9.5, fill: t.ink2, 'text-anchor': 'end' });
   if (b.scan) s += text(b.x + b.w - 6, b.y + 25, b.scanInherited ? `(${b.scan})` : b.scan, { ...mono, 'font-size': 9.5, fill: b.scanInherited ? t.ink3 : t.ink2, 'text-anchor': 'end' });
   if (b.pinned && o.interactive) s += `<circle${attrs({ cx: b.x + b.w - 3, cy: b.y + 3, r: 1.8, fill: t.ink3 })}/>`;
 

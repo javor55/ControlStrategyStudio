@@ -1,0 +1,20 @@
+{
+  "name": "@csd/export",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Export of Control Strategy Studio projects: configuration, document plan, charts, read-only HTML viewer payload. Pure TypeScript; the PDF writer in src/pdf needs a DOM.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pdf": "./src/pdf/index.ts"
+  },
+  "dependencies": {
+    "@csd/core": "0.1.0",
+    "@csd/render": "0.1.0",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
+    "marked": "^14.1.4",
+    "svg2pdf.js": "^2.9.0",
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2021",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -12,5 +14,11 @@
     "noUnusedLocals": true,
     "types": []
   },
-  "include": ["packages/*/src", "packages/*/test"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test"
+  ],
+  "exclude": [
+    "packages/export/src/pdf"
+  ]
 }
