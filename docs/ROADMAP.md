@@ -13,8 +13,8 @@ strategies. Sizes: **S** small (≤ 1 day), **M** medium, **L** large.
 
 - [ ] ISA-88 phase states (hold / restart / stop / abort paths). **M–L**
 - [ ] Sub-sequences (macro steps / calling another sequence). **M**
-- [ ] Copy / paste of steps (clipboard fragments as for blocks). **S**
-- [ ] Visual diff: ghosts of removed steps and transitions on the canvas. **S**
+- [x] Copy / paste of steps (clipboard fragments as for blocks). **S**
+- [x] Visual diff: ghosts of removed steps and transitions on the canvas. **S**
 - [ ] History summary should mention changes of the sequence description (.md). **S**
 - [ ] Sequence test mode (token player) — see Verification below. **L**
 
