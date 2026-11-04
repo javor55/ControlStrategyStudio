@@ -4,8 +4,8 @@
 //   ```chart
 //   type: line            # line | step | bar
 //   title: Split range FV101A / FV101B
-//   x: { label: Controller output [%], min: 0, max: 100 }
-//   y: { label: Valve opening [%] }
+//   x: { label: "Controller output [%]", min: 0, max: 100 }
+//   y: { label: "Valve opening [%]" }
 //   series:
 //     - { name: FV101A, points: [[0,0],[50,100],[100,100]] }
 //     - { name: FV101B, points: [[0,0],[50,0],[100,100]] }
