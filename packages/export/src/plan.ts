@@ -600,7 +600,7 @@ export function planExport(
 }
 
 /** Renderer options matching the export configuration. */
-export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'wireStyles' | 'feedbackStyle' | 'paramsToggles'> {
+export function exportRenderOptions(plan: ExportPlan): Pick<RenderOptions, 'categories' | 'showFeedback' | 'showOrder' | 'showLabels' | 'feedbackStyle' | 'paramsToggles'> {
   const d = plan.config.display;
   return {
     feedbackStyle: plan.meta.drawing.feedback,

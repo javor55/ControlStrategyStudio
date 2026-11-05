@@ -225,8 +225,8 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
               <div className="xp-h">Drawing</div>
               <label className="xp-field">
                 <span>Pins</span>
-                <select className="select" value={d.ports} onChange={(e) => update({ display: { ...d, ports: e.target.value as typeof d.ports } })}>
-                  <option value="auto">Normal (rarely used pins only when connected)</option>
+                <select className="select" title="Normal: rarely used pins only when they are connected" value={d.ports} onChange={(e) => update({ display: { ...d, ports: e.target.value as typeof d.ports } })}>
+                  <option value="auto">Normal</option>
                   <option value="all">All pins</option>
                   <option value="used">Only connected pins</option>
                 </select>
@@ -238,7 +238,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
                   ['order', 'Execution order'],
                   ['feedback', 'z⁻¹ marks on previous-cycle links'],
                   ['labels', 'Signal names and link comments'],
-                  ['categories', 'Signal category colours'],
+                  ['categories', 'Line category colours'],
                 ] as const
               ).map(([k, label]) => (
                 <label key={k} className="xp-row">
@@ -248,7 +248,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
               ))}
               {fmt === 'pdf' && (
                 <>
-                  <div className="xp-h">Page</div>
+                  <div className="xp-h">Paper</div>
                   <div className="xp-seg" role="radiogroup" aria-label="Paper">
                     {(['A3', 'A4'] as const).map((p) => (
                       <button key={p} type="button" role="radio" aria-checked={config.paper === p} className={`btn small${config.paper === p ? ' primary' : ''}`} onClick={() => update({ paper: p })}>

@@ -1,7 +1,7 @@
 // Editor state. The single place where project files change: every change is
 // an `Op` from @csd/core applied through `dispatch`, which records undo data,
 // re-derives the project model and schedules autosave.
-import { useSyncExternalStore } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 import { EMPTY_VCS, type VcsStatus } from './vcsStatus';
 import { getStartView } from '../settings/prefs';
 import { applyOp, classify, inverseOf, loadProject, OpError, type Files, type Op, type ProjectModel, type Selection } from '@csd/core';
@@ -296,7 +296,18 @@ export function store(): EditorStore {
 }
 
 /** Subscribes a component to a slice of the editor state. Keep selectors cheap and stable. */
+/**
+ * Subscribes to the editor state. The selector result is cached per state and
+ * selector, so selectors may build new objects or arrays (e.g. `activeView`)
+ * without causing endless re-renders.
+ */
 export function useEditor<T>(selector: (s: EditorState) => T): T {
   const s = store();
-  return useSyncExternalStore(s.subscribe, () => selector(s.getState()));
+  const cache = useRef<{ state?: EditorState; selector?: unknown; value?: T }>({});
+  return useSyncExternalStore(s.subscribe, () => {
+    const state = s.getState();
+    const c = cache.current;
+    if (c.state !== state || c.selector !== selector) cache.current = { state, selector, value: selector(state) };
+    return cache.current.value as T;
+  });
 }

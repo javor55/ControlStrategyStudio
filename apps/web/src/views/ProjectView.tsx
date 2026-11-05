@@ -1,4 +1,5 @@
 // Centre view for project.yaml, library.yaml, or when nothing is open.
+import { plural } from '../ui/text';
 import { useMemo } from 'react';
 import { classify, PROJECT_FILE, type LibraryDef } from '@csd/core';
 import { store, useEditor } from '../state/store';
@@ -162,13 +163,13 @@ function ProjectPage({ onProjectFile }: { onProjectFile: boolean }) {
         </div>
         <div className={`stat ${stats.errors ? 'bad' : stats.warnings ? 'warn' : 'good'}`}>
           <b>{stats.errors + stats.warnings || '✓'}</b>
-          <span>{stats.errors || stats.warnings ? `${stats.errors} errors · ${stats.warnings} warnings` : 'no problems'}</span>
+          <span>{stats.errors || stats.warnings ? `${plural(stats.errors, 'error')} · ${plural(stats.warnings, 'warning')}` : 'no errors or warnings'}</span>
         </div>
       </section>
 
       {stats.byFile.length > 0 && (
         <section className="v-sec">
-          <h3>Problems by file</h3>
+          <h3>{stats.errors || stats.warnings ? 'Problems and notes by file' : 'Notes (info) by file'}</h3>
           <ul className="v-list">
             {stats.byFile.map(({ file, list }) => (
               <li key={file}>

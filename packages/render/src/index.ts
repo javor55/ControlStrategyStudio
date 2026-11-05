@@ -4,7 +4,7 @@
 // (no CSS classes), so the same drawing works on screen, in svg2pdf for PDF,
 // in a CLI and in any other tool. Interactive mode adds `data-*` attributes and
 // invisible hit areas that an editor uses for event delegation.
-import { M, lineCategories, type ProjectMeta, type DrawingStyle, type LineStyle, type WireKind, type WireStyle, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
+import { M, lineCategories, type ProjectMeta, type DrawingStyle, type LineStyle, type WireKind, type StrategyDiff, type BlockGeom, type ConnectorGeom, type NoteGeom, type SheetLayout, type WireGeom } from '@csd/core';
 
 export interface Theme {
   paper: string;
@@ -77,10 +77,6 @@ export interface CategoryStyle {
   width?: number;
 }
 
-/** Render options from the project drawing style. */
-export function drawingRenderOptions(d: DrawingStyle): Pick<RenderOptions, 'wireStyles' | 'feedbackStyle'> {
-  return { wireStyles: d.signals, feedbackStyle: d.feedback };
-}
 
 /**
  * Line styling of a project: all line categories (built-in `bool` / `numeric`
@@ -115,8 +111,6 @@ export interface RenderOptions {
   paramsToggles?: boolean;
   /** Visual diff: highlight added / changed items and draw removed ones as ghosts. */
   diff?: RenderDiff;
-  /** Line style per signal kind (project drawing style). Default: solid, colour by kind. */
-  wireStyles?: Readonly<Record<WireKind, WireStyle>>;
   /** Previous-cycle links: z⁻¹ mark and line style. Default: mark, dash-dot. */
   feedbackStyle?: DrawingStyle['feedback'];
   /** Adds data-* attributes and hit areas for editors. */
@@ -163,11 +157,10 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const cat = (w.category ? o.categories?.[w.category] : undefined) ?? (w.external ? undefined : o.categories?.[BUILTIN_BY_KIND[w.kind]]);
   const fb = o.showFeedback !== false ? w.feedback : undefined;
   const fbs = o.feedbackStyle;
-  const ws = o.wireStyles?.[w.kind];
   const fbDash = fb && fbs?.style !== 'same' ? DASH[(fbs?.style as LineStyle | undefined) ?? 'dashdot'] : undefined;
-  const dash = w.derived ? '3 3' : fbDash ?? (cat?.style ? DASH[cat.style] : ws?.style ? DASH[ws.style] : undefined);
-  const color = error ? t.error : (fb && fbs?.color) || cat?.color || (w.external ? undefined : ws?.color) || wireColor(w, t);
-  const width = (cat?.width ?? ws?.width ?? 1.5) + (selected ? 0.7 : 0);
+  const dash = w.derived ? '3 3' : fbDash ?? (cat?.style ? DASH[cat.style] : undefined);
+  const color = error ? t.error : (fb && fbs?.color) || cat?.color || wireColor(w, t);
+  const width = (cat?.width ?? 1.5) + (selected ? 0.7 : 0);
   const mark = fb && fbs?.mark !== false;
   let s = '';
   if (selected) s += `<path${attrs({ d, fill: 'none', stroke: t.accent, 'stroke-width': width + 4, 'stroke-opacity': 0.25, 'stroke-linejoin': 'round' })}/>`;

@@ -125,10 +125,10 @@ export function SourceEditor() {
         {diags.length > 0 ? (
           <button
             className={`btn small src-problems ${errors ? 'error' : warnings ? 'warning' : 'info'}`}
-            title="Go to the next problem (F8) · Shift+click or Shift+F8: previous"
+            title="Go to the next message (F8) · Shift+click or Shift+F8: previous"
             onClick={(e) => ctl.current?.nextProblem(e.shiftKey ? -1 : 1)}
           >
-            Problems: {diags.length}
+            {errors || warnings ? `Problems: ${errors + warnings}` : `${diags.length} info`}
             <SeverityBadge diags={diags} />
           </button>
         ) : (

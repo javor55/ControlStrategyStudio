@@ -624,7 +624,7 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
         <CategorySelect d={d} link={link} model={model} />
       </Row>
       <Row label="Comment">
-        <Field value={link.comment} placeholder="Engineering note, shown on the line" onCommit={(v) => run(d, { op: 'setLinkComment', file: d.file, index: link.index, comment: orUndef(v) }, 'Edit link comment')} />
+        <Field value={link.comment} placeholder="Engineering note, shown on the line" onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'comment', value: orUndef(v) }, 'Edit link comment')} />
       </Row>
       <FeedbackNote d={d} link={link} />
     </div>

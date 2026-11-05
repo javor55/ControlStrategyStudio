@@ -68,6 +68,7 @@ export type Op =
   | ({ op: 'connect'; from: string; to: string; comment?: string; replace?: boolean } & DiagramTarget)
   | ({ op: 'disconnect'; index: number } & DiagramTarget)
   /** @deprecated use `setLinkField` with `field: 'comment'` */
+  /** @deprecated use setLinkField with field 'comment' */
   | ({ op: 'setLinkComment'; index: number; comment?: string } & DiagramTarget)
   | ({ op: 'setLinkField'; index: number; field: 'comment' | 'label' | 'category'; value?: string } & DiagramTarget)
   | { op: 'renameFolder'; from: string; to: string }

@@ -281,7 +281,7 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
     if (!froms.length) continue;
     const fwdTargets = t.to.filter((v) => here.has(v) && !isJump(t, v)).map((v) => geo.get(v)!).filter(Boolean);
     const single = froms.length === 1 && outgoingForward(froms[0].id).length <= 1;
-    const x = single || !fwdTargets.length ? cx(froms[0]) : froms.length > 1 ? cx(fwdTargets[0]) : cx(fwdTargets[0]);
+    const x = single || !fwdTargets.length ? cx(froms[0]) : cx(fwdTargets[0]);
     const by = barY.get(t.index) ?? bottomOf(froms[0]) + 24;
 
     // upper part
