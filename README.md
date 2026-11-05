@@ -29,7 +29,7 @@
   Edit it on the canvas, in the text editor, or side by side; both stay in sync,
   including your `#` comments.
 * **Made for review and hand-over** — function descriptions in Markdown, revisions,
-  title block, PDF export *(coming in phase 3)*.
+  title block, configurable PDF export and an interactive read-only HTML export.
 
 ## Features
 
@@ -37,8 +37,8 @@
 |---|---|
 | **Canvas** | CFC-like blocks with ports, constants and parameters · drag blocks · draw links port to port · several sheets per strategy with off-sheet connectors · links to other strategies with “used by” tags · automatic layout, positions stored only for blocks you move · execution order (auto order) · notes |
 | **Text** | YAML editor with syntax check, problem markers, context-aware completion and hover help · selection follows between text and drawing · Diagram / Split / Text modes |
-| **Blocks** | Standard library `std` (41 blocks: I/O, logic, timers, comparators, math, selectors, filters, PID, ratio, split range, motor, valve, interlock) · your own libraries as plain folders · versioned block types · composite blocks with an inner diagram · graphical block type editor |
-| **Two strategy types** | **Continuous strategies** (function block diagrams, `NAME.yaml`) and **sequence strategies** (SFC / Grafcet, `NAME.seq.yaml`) — both editable as drawing or text; sequences read and write signals of continuous strategies, and strategies can read sequence states (`SEQ:S20.X`, `SEQ:SEQ.RUNNING`) |
+| **Blocks** | Standard library `std` (40 blocks: I/O, logic, timers, comparators, math, selectors, filters, PID, ratio, split range, motor, valve, interlock) · your own libraries as plain folders · versioned block types · composite blocks with an inner diagram · graphical block type editor |
+| **Two strategy types** | **Continuous strategies** (function block diagrams, `NAME.yaml`) and **sequence strategies** (SFC / Grafcet, `NAME.seq.yaml`) — both editable as drawing or text; sequences read and write signals of continuous strategies, and strategies can read sequence states (e.g. `FILL_T100:S20.X`, `FILL_T100:SEQ.RUNNING`) |
 | **Line categories** | BOOL / Numeric / Other plus your own (interlock, alarm, tracking …) with colour, line style and width — one table in Settings → Drawing style |
 | **Project** | free folder hierarchy; optional level names (none, ISA-95, ISA-88 or your own — only labels, never enforced) · Markdown documentation with images and charts · validation with clear messages (unknown ports, type mismatch, double drivers, wrong references …) |
 | **Files** | Runs in the browser, works offline · autosave in the browser · projects travel as ZIP · git-friendly text files |
@@ -161,10 +161,14 @@ GitHub Pages (`.github/workflows/pages.yml`).
 packages/
   core/     @csd/core   – format, model, libraries, validation, operations, layout
                           (no UI, no browser APIs — also runs in Node / on a server)
-  render/   @csd/render – SVG renderer shared by screen, PDF and CLI
+  render/   @csd/render – SVG renderer shared by screen, PDF and HTML export
+  export/   @csd/export – export plan, PDF writer, viewer data, JSON / TOML, charts
+  vcs/      @csd/vcs    – git in the project (isomorphic-git, in memory)
 apps/
   web/      @csd/web    – the editor (React + CodeMirror)
+  viewer/   @csd/viewer – read-only interactive HTML export (embedded in the editor)
 brand/      logo
+docs/       roadmap, design notes, diagnostic codes (docs/diagnostics.md)
 schema/     JSON Schemas (generated)
 ```
 
@@ -176,7 +180,8 @@ schema/     JSON Schemas (generated)
   previous content for undo. This is also the unit for future multi-user sync.
 * **The core has no UI.** `@csd/core` must not import React or browser/Node APIs.
 * **Stable identities.** Projects, strategies and block types carry a `uid`;
-  diagnostics carry stable `code`s that integrations may rely on.
+  diagnostics carry stable `code`s that integrations may rely on
+  ([list](docs/diagnostics.md)); failed operations throw `OpError` with a `code`.
 
 ## Roadmap
 

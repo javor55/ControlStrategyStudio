@@ -1,11 +1,11 @@
 # Sequences (SFC / Grafcet) — design brief
 
-Status: **draft for discussion** · Phase 5 candidate
+Status: **implemented** (phase 5) — this brief is kept as the design reference.
 
 Control strategies are designed in two ways:
 
-* **Continuous** — function blocks wired together (FBD / CFC). This is what the
-  app does today: *strategies*.
+* **Continuous** — function blocks wired together (FBD / CFC): *continuous
+  strategies*.
 * **Sequential** — steps and transitions (SFC per IEC 61131-3, Grafcet per
   IEC 60848): start-up / shut-down, filling, dosing, CIP, batch phases (ISA-88).
 
@@ -33,8 +33,33 @@ Action qualifiers (IEC 61131-3 subset): `N` while active, `S` set (stored),
 `R` reset, `P` pulse on entry (`P1`) / exit (`P0`), `D` delayed, `L` time limited.
 
 Every step exposes signals other diagrams can read: `S10.X` (active) and
-`S10.T` (time in step). The sequence as a whole exposes `RUNNING`, `DONE`,
-`ALARM` and the active step number `STEP`.
+`S10.T` (time in step). The sequence as a whole exposes `SEQ.RUNNING`,
+`SEQ.DONE`, `SEQ.ALARM` and the active step number `SEQ.STEP` (`SEQ` is
+therefore a reserved step name). Other diagrams address them with the sequence
+name: `FILL_T100:S20.X`, `FILL_T100:SEQ.RUNNING`.
+
+### Condition language
+
+```
+expr   := or
+or     := and ( ('or' | '||') and )*
+and    := not ( ('and' | '&&') not )*
+not    := ('not' | '!') not | cmp
+cmp    := sum ( ('=' | '==' | '<>' | '!=' | '<' | '<=' | '>' | '>=') sum )?
+sum    := prod ( ('+' | '-') prod )*
+prod   := unary ( ('*' | '/') unary )*
+unary  := '-' unary | atom
+atom   := number | duration | TRUE | FALSE | reference | '(' expr ')'
+duration  := ( 'T#' )? number ( 'ms' | 's' | 'min' | 'm' | 'h' )      e.g. 5s, 2min, T#1h
+reference := INPUT | STEP.X | STEP.T | SEQ.(RUNNING|DONE|ALARM|STEP)
+           | STRATEGY:BLOCK.PORT
+```
+
+A plain name ends at `-`, so `CNT-1` is a subtraction; the strategy part of
+`STRATEGY:BLOCK.PORT` may contain `-`. Keywords are case-insensitive. The condition must be BOOL; comparisons check types (a duration
+only compares with step times). A condition that is not a valid expression is
+kept as text and reported as *described in words* (info), so early drafts can
+stay informal.
 
 ## 2. Connection to strategies
 
@@ -170,14 +195,13 @@ the right, actions in boxes to the right of each step.
 | S4 · Exports & diff | PDF sections, viewer pages, visual diff | M |
 | S5 · Later | sequence test mode (token player), ISA-88 phase states (Running / Holding / Stopping / Aborting), sub-sequences (macro steps) | L |
 
-## 9. Open questions
+## 9. Decisions
 
-1. **File naming:** `NAME.seq.yaml` next to strategies (proposed), or a separate
-   folder per unit?
-2. **Conditions:** text expressions only (proposed), or also small FBD networks
-   for complex conditions (CFC-style "transition networks")?
-3. **Actions:** commands to block inputs + free text (proposed); also calling
-   other sequences (sub-sequences) from the start, or later?
-4. **ISA-88 phase states** (hold / restart / stop / abort paths): needed in the
-   first version, or later?
-5. **Step numbering:** enforce a convention (`S` + multiples of 10), or free names?
+1. **File naming:** `NAME.seq.yaml` next to the strategies of the same folder;
+   strategies and sequences share one name space.
+2. **Conditions:** text expressions (above); transition networks are not planned.
+3. **Actions:** commands to block inputs (`set`, `value`, qualifier, time) or
+   free text. Sub-sequences are on the roadmap.
+4. **ISA-88 phase states:** later (roadmap).
+5. **Step names:** free names; the editor suggests `S` + multiples of 10 and
+   picks a number between neighbours when inserting.

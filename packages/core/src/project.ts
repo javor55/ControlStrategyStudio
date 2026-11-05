@@ -272,7 +272,7 @@ export function loadProject(files: Files): ProjectModel {
     diags.push(...validateDiagram(s, { file: s.file, parsed: p, base: [], strategies: byName, sequences: seqByName }));
     for (const l of s.links) {
       if (l.category && !meta.signalCategories[l.category] && !(l.category in BUILTIN_CATEGORIES)) {
-        diags.push({ severity: 'warning', code: 'unknown-category', message: `Link ${l.index + 1}: signal category "${l.category}" is not defined in project.yaml`, file: s.file, line: lineAt(p, ['links', l.index, 'category']), link: l.index });
+        diags.push({ severity: 'warning', code: 'unknown-category', message: `Link ${l.index + 1}: line category "${l.category}" is not defined (Settings → Drawing style)`, file: s.file, line: lineAt(p, ['links', l.index, 'category']), link: l.index });
       }
     }
   }
