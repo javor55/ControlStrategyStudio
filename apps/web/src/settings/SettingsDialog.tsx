@@ -20,13 +20,17 @@ import { lineStyleOptions, PRINT_THEME, renderSheetSvg } from '@csd/render';
 import { store, useEditor, type ViewMode } from '../state/store';
 import { getAuthor, setAuthor } from '../state/session';
 import { Field } from '../ui/kit';
-import { confirmDialog } from '../ui/dialogs';
+import { useDialogKeys } from '../ui/dialogs';
+import { AddButton } from '../ui/parts';
+import { plural } from '../ui/text';
+import { Icon } from '../project/icons';
 import { askCategoryName, categoryUsage, defaultCategoryColor } from '../project/actions';
 import { builtinColor, categoryLabel, ColorInput, DEFAULT_LINE_WIDTH, isBuiltinCategory, LineSample } from '../views/SignalCategories';
 import { getStartView, setCanvasPrefs, setStartView, useCanvasPrefs, type ParamsMode, type PinsMode, type StartView } from './prefs';
 import { setProjectField } from './projectFields';
 import type { SettingsTab } from './open';
 import './settings.css';
+import { keys as kbd } from '../ui/keys';
 
 type Tab = SettingsTab;
 const TAB_KEY = 'css:settings-tab';
@@ -57,9 +61,9 @@ function setDrawing(path: string[], value: string | number | boolean | undefined
 function readTab(): Tab {
   try {
     const t = localStorage.getItem(TAB_KEY);
-    return t === 'editor' || t === 'project' ? t : 'drawing';
+    return t === 'editor' || t === 'drawing' ? t : 'project';
   } catch {
-    return 'drawing';
+    return 'project';
   }
 }
 
@@ -86,14 +90,18 @@ export function SettingsDialog({ onClose, initialTab }: { onClose: () => void; i
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
   }, []);
+  const keys = useDialogKeys({ onCancel: onClose });
+  // Escape also when the focus is outside the dialog (e.g. on the backdrop).
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && onClose();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   // Undo / redo of project changes also work while a select or checkbox has focus
   // (only text fields keep their own undo).
   const onKeyDown = (e: ReactKeyboardEvent) => {
+    keys.onKeyDown(e);
+    if (e.defaultPrevented) return;
     const t = e.target as HTMLElement;
     const textual = t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && ['text', 'email', 'search', 'number', ''].includes((t as HTMLInputElement).type));
     const mod = e.ctrlKey || e.metaKey;
@@ -106,7 +114,7 @@ export function SettingsDialog({ onClose, initialTab }: { onClose: () => void; i
     e.stopPropagation();
   };
   return (
-    <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="backdrop" {...keys.backdrop}>
       <div ref={ref} className="dialog st" role="dialog" aria-modal="true" aria-labelledby="st-title" onKeyDown={onKeyDown}>
         <div className="st-head">
           <h3 id="st-title">Settings</h3>
@@ -131,8 +139,9 @@ export function SettingsDialog({ onClose, initialTab }: { onClose: () => void; i
           {tab === 'project' ? <ProjectTab /> : tab === 'drawing' ? <DrawingTab /> : <EditorTab />}
         </div>
         <div className="actions">
+          <span className="actions-note">Changes apply at once.</span>
           <button className="btn primary" onClick={onClose}>
-            Close
+            Done
           </button>
         </div>
       </div>
@@ -163,7 +172,7 @@ function ProjectTab() {
   return (
     <div className="st-project">
       <p className="st-intro">
-        Saved in <span className="mono">project.yaml</span> and shared with everyone working on the project. Each change can be undone (Ctrl+Z).
+        Saved in <span className="mono">project.yaml</span> and shared with everyone working on the project. Each change can be undone ({kbd('Mod+Z')}).
       </p>
       <div className="st-cols">
         <div>
@@ -261,13 +270,13 @@ function LevelsEditor({ levels }: { levels: string[] }) {
                 }}
               />
               <button type="button" className="btn small ghost icon" title="Move up" aria-label={`Move ${l} up`} disabled={i === 0} onClick={() => move(i, -1)}>
-                ↑
+                {Icon.up}
               </button>
               <button type="button" className="btn small ghost icon" title="Move down" aria-label={`Move ${l} down`} disabled={i === levels.length - 1} onClick={() => move(i, 1)}>
-                ↓
+                {Icon.down}
               </button>
-              <button type="button" className="btn small ghost icon danger" title="Remove" aria-label={`Remove level ${l}`} onClick={() => update(levels.filter((_, j) => j !== i), `Remove level ${l}`)}>
-                ×
+              <button type="button" className="btn small ghost icon danger" title="Delete level" aria-label={`Delete level ${l}`} onClick={() => update(levels.filter((_, j) => j !== i), `Delete level ${l}`)}>
+                {Icon.close}
               </button>
             </li>
           ))}
@@ -275,16 +284,13 @@ function LevelsEditor({ levels }: { levels: string[] }) {
       ) : (
         <p className="st-hint st-levels-none">No level names: folders are shown by their own names only.</p>
       )}
-      <button
-        type="button"
-        className="btn small"
+      <AddButton
+        label="Add level"
         onClick={() => {
           setCustom(true);
           update([...levels, `Level ${levels.length + 1}`], 'Add hierarchy level');
         }}
-      >
-        + Add level
-      </button>
+      />
     </div>
   );
 }
@@ -308,9 +314,16 @@ function DrawingTab() {
   };
   return (
     <div className="st-drawing">
-      <p className="st-intro">
-        Saved in <span className="mono">project.yaml</span> — shared with everyone working on the project and used in PDF and HTML exports. Each change can be undone (Ctrl+Z).
-      </p>
+      <div className="st-intro-row">
+        <p className="st-intro">
+          Saved in <span className="mono">project.yaml</span>, shared with everyone working on the project and used in PDF and HTML exports. Each change can be undone ({kbd('Mod+Z')}).
+        </p>
+        {customised && (
+          <button type="button" className="btn small ghost" onClick={reset} title="Remove the drawing settings (and the built-in categories' styles) from project.yaml">
+            Reset drawing style
+          </button>
+        )}
+      </div>
       <LineCategoriesTable meta={meta} />
       <div className="st-cols">
         <div>
@@ -367,9 +380,6 @@ function DrawingTab() {
         <div className="st-preview-col">
           <h4 className="st-h">Preview</h4>
           <DrawingPreview meta={meta} />
-          <button type="button" className="btn small" disabled={!customised} onClick={reset} title="Remove the drawing settings (and the built-in categories' styles) from project.yaml">
-            Reset to defaults
-          </button>
         </div>
       </div>
     </div>
@@ -419,18 +429,10 @@ function LineCategoriesTable({ meta }: { meta: ProjectMeta }) {
     setCategory(name, { color: defaultCategoryColor(), style: 'solid' }, `Add line category ${name}`);
   };
 
-  const remove = async (name: string) => {
+  const remove = (name: string) => {
     const n = usage.get(name) ?? 0;
-    if (n) {
-      const ok = await confirmDialog({
-        title: `Delete category ${name}?`,
-        message: `${n} link${n === 1 ? '' : 's'} use${n === 1 ? 's' : ''} it and will be drawn in the automatic style (BOOL / Numeric / Other) — they keep "category: ${name}". You can undo this.`,
-        okLabel: 'Delete',
-        danger: true,
-      });
-      if (!ok) return;
-    }
-    setCategory(name, undefined, `Delete line category ${name}`);
+    if (setCategory(name, undefined, `Delete line category ${name}`))
+      store().toastUndo(n ? `Deleted ${name}: ${plural(n, 'link')} keep "category: ${name}" and use the automatic style` : `Deleted line category ${name}`);
   };
 
   return (
@@ -492,18 +494,20 @@ function LineCategoriesTable({ meta }: { meta: ProjectMeta }) {
                     onCommit={(v) => update(name, { description: v.trim() || undefined }, `Description of ${label}`)}
                   />
                 </td>
-                <td className="st-nowrap mono" title={`${n} link${n === 1 ? '' : 's'}`}>
+                <td className="st-nowrap mono" title={plural(n, 'link')}>
                   <LineSample name={name} c={c} />
                   <span className="st-cat-n">{n}</span>
                 </td>
                 <td className="st-nowrap">
                   {builtin ? (
-                    <button type="button" className="btn small" disabled={!customised(name)} title={`Restore the default style of ${label} lines`} onClick={() => resetBuiltin(name)}>
-                      Reset
-                    </button>
+                    customised(name) && (
+                      <button type="button" className="btn small ghost" title={`Restore the default style of ${label} lines`} onClick={() => resetBuiltin(name)}>
+                        Reset
+                      </button>
+                    )
                   ) : (
                     <button type="button" className="btn small ghost icon danger" title={`Delete ${name}`} aria-label={`Delete ${name}`} onClick={() => remove(name)}>
-                      ×
+                      {Icon.close}
                     </button>
                   )}
                 </td>
@@ -513,9 +517,7 @@ function LineCategoriesTable({ meta }: { meta: ProjectMeta }) {
         </tbody>
       </table>
       <div className="st-cat-foot">
-        <button type="button" className="btn small" onClick={add} data-testid="st-add-category">
-          + Add category
-        </button>
+        <AddButton label="Add category" onClick={add} testId="st-add-category" />
         {undefinedUsed.length > 0 && (
           <span className="st-hint">
             Used but not defined:{' '}
@@ -573,15 +575,16 @@ const VIEW_LABELS: [StartView, string][] = [
   ['split', 'Split (diagram and text)'],
   ['text', 'Text'],
 ];
-const PINS_LABELS: [PinsMode, string][] = [
-  ['auto', 'Normal (rarely used pins only when connected)'],
-  ['all', 'All pins'],
-  ['used', 'Only connected pins'],
+/** Same items and wording as the canvas View ▾ menu. */
+const PARAMS_LABELS: [ParamsMode, string, string][] = [
+  ['block', 'Per block', 'Each block shows or hides its parameters (arrow on the block); new blocks follow the project default'],
+  ['all', 'Show all', 'Parameter values on every block'],
+  ['none', 'Hide all', 'No parameter values on any block'],
 ];
-const PARAMS_LABELS: [ParamsMode, string][] = [
-  ['block', 'Per block (arrow on each block)'],
-  ['all', 'Show on all blocks'],
-  ['none', 'Hide on all blocks'],
+const PINS_LABELS: [PinsMode, string, string][] = [
+  ['all', 'All', 'Draw every pin of every block'],
+  ['auto', 'Normal', 'Hide unused pins that the block type marks "when used"'],
+  ['used', 'Used only', 'Draw only linked pins and pins set to a constant'],
 ];
 
 function EditorTab() {
@@ -597,15 +600,16 @@ function EditorTab() {
     <div className="st-editor">
       <p className="st-intro">Stored in this browser only; nothing here changes the project files.</p>
       <h4 className="st-h">You</h4>
+      <p className="st-hint">Author of your commits.</p>
       <div className="st-grid">
         <label className="st-label" htmlFor="st-author-name">
           Name
         </label>
-        <Field id="st-author-name" value={author.name} placeholder="Used as author of saved versions" onCommit={(v) => updateAuthor({ name: v.trim() })} />
+        <Field id="st-author-name" value={author.name} placeholder="Your name" onCommit={(v) => updateAuthor({ name: v.trim() })} />
         <label className="st-label" htmlFor="st-author-email">
           E-mail
         </label>
-        <Field id="st-author-email" value={author.email} placeholder="name@example.com" onCommit={(v) => updateAuthor({ email: v.trim() })} />
+        <Field id="st-author-email" value={author.email} placeholder="name@company.com" onCommit={(v) => updateAuthor({ email: v.trim() })} />
       </div>
 
       <h4 className="st-h">Start</h4>
@@ -632,38 +636,33 @@ function EditorTab() {
         </select>
       </div>
 
-      <h4 className="st-h">Canvas</h4>
-      <p className="st-hint">The same choices as the canvas View menu.</p>
+      <h4 className="st-h">Canvas display</h4>
+      <p className="st-hint">The same options as View ▾ on the canvas; a change in one shows in the other.</p>
       <div className="st-grid">
-        <label className="st-label" htmlFor="st-params-mode">
-          Parameters
+        <span className="st-label">Grid</span>
+        <label className="st-check">
+          <input type="checkbox" checked={prefs.grid} onChange={(e) => setCanvasPrefs({ grid: e.target.checked })} /> Show the grid
         </label>
-        <select id="st-params-mode" className="select" value={prefs.paramsMode} onChange={(e) => setCanvasPrefs({ paramsMode: e.target.value as ParamsMode })}>
-          {PARAMS_LABELS.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
+        <span className="st-label">Parameters</span>
+        <span className="st-radios" role="radiogroup" aria-label="Parameters">
+          {PARAMS_LABELS.map(([v, l, t]) => (
+            <label key={v} title={t}>
+              <input type="radio" name="st-params-mode" checked={prefs.paramsMode === v} onChange={() => setCanvasPrefs({ paramsMode: v })} /> {l}
+            </label>
           ))}
-        </select>
-        <label className="st-label" htmlFor="st-pins-mode">
-          Pins
-        </label>
-        <select id="st-pins-mode" className="select" value={prefs.ports} onChange={(e) => setCanvasPrefs({ ports: e.target.value as PinsMode })}>
-          {PINS_LABELS.map(([v, l]) => (
-            <option key={v} value={v}>
-              {l}
-            </option>
-          ))}
-        </select>
-        <span className="st-label">Show</span>
-        <span className="st-checks">
-          <label className="st-check">
-            <input type="checkbox" checked={prefs.comments} onChange={(e) => setCanvasPrefs({ comments: e.target.checked })} /> Block comments
-          </label>
-          <label className="st-check">
-            <input type="checkbox" checked={prefs.grid} onChange={(e) => setCanvasPrefs({ grid: e.target.checked })} /> Grid
-          </label>
         </span>
+        <span className="st-label">Pins</span>
+        <span className="st-radios" role="radiogroup" aria-label="Pins">
+          {PINS_LABELS.map(([v, l, t]) => (
+            <label key={v} title={t}>
+              <input type="radio" name="st-pins-mode" checked={prefs.ports === v} onChange={() => setCanvasPrefs({ ports: v })} /> {l}
+            </label>
+          ))}
+        </span>
+        <span className="st-label">Comments</span>
+        <label className="st-check" title="Block comments under the blocks">
+          <input type="checkbox" checked={prefs.comments} onChange={(e) => setCanvasPrefs({ comments: e.target.checked })} /> Show block comments
+        </label>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 // Property panel (right column, full height). Shows and edits whatever is
 // selected on the canvas: a block, several blocks, a link, a note — or, with
-// nothing selected, the strategy (or composite type) itself. Every edit is one
-// operation.
+// nothing selected, the strategy (or composite type) itself; for other files the
+// panels in FilePanels. Every edit is one operation. Layout: inspector/Scaffold.
 import type { ReactNode } from 'react';
 import {
   BUILTIN_CATEGORIES,
@@ -17,7 +17,6 @@ import {
   type BlockField,
   type BlockInst,
   type BlockTypeDef,
-  type Diag,
   type Endpoint,
   type LinkInst,
   type NoteInst,
@@ -30,14 +29,20 @@ import { store, useEditor } from '../state/store';
 import { activeView, diagsOf, useActiveDiagram, useActiveSequence, type ActiveDiagram } from '../state/selectors';
 import { SequenceInspector } from './SequenceInspector';
 import { BlockTypeEditor } from './BlockTypeEditor';
-import { Field, Row, SectionHeader, SeverityBadge } from '../ui/kit';
-import { confirmDialog } from '../ui/dialogs';
-import { askCategoryName, defaultCategoryColor } from '../project/actions';
+import { FilePanel } from './FilePanels';
+import { Field, Row, SectionHeader } from '../ui/kit';
+import { AddButton } from '../ui/parts';
+import { plural } from '../ui/text';
+import { Icon } from '../project/icons';
+import { askCategoryName, defaultCategoryColor, deleteStrategy, deleteTypeVersion, duplicateStrategy, moveStrategy, newTypeVersion, openFunctionDescription } from '../project/actions';
 import { builtinColor, categoryLabel } from '../views/SignalCategories';
 import { openSettings } from '../settings/open';
 import { parseParamText, refParts, sameValue, typeRefFor, valueText } from './values';
-import { CompareDetails } from '../history/DiffDetails';
+import { StrategyChanges } from '../history/DiffDetails';
+import { DiagList, DocRow, Head, NAME_FIELD_ID, PathRow, PositionRow, deleteWithUndo } from './Scaffold';
 import './inspector.css';
+
+export { DiagList, Head } from './Scaffold';
 
 /** Dispatches an op on the active diagram; `root` is filled in. */
 function run(d: ActiveDiagram, op: Op, label: string, select?: Selection): boolean {
@@ -50,7 +55,6 @@ const orUndef = (v: string) => (v.trim() === '' ? undefined : v.trim());
 export function Inspector() {
   return (
     <div className="insp" aria-label="Properties">
-      <CompareDetails />
       <InspectorBody />
     </div>
   );
@@ -60,25 +64,18 @@ function InspectorBody() {
   const d = useActiveDiagram();
   const selection = useEditor((s) => s.selection);
   const model = useEditor((s) => s.model);
-  const activeFile = useEditor((s) => s.activeFile);
 
   const basicType = useEditor((s) => {
     const v = activeView(s);
     return v.kind === 'blocktype' && v.type?.kind === 'basic' && s.viewMode === 'text' ? v.type : undefined;
   });
-  const basicInCentre = useEditor((s) => s.viewMode !== 'text' && activeView(s).kind === 'blocktype');
   const sequence = useActiveSequence();
 
   if (sequence) return <SequenceInspector seq={sequence} />;
 
   if (!d) {
     if (basicType) return <TypePanel def={basicType} file={basicType.file} />;
-    return (
-      <>
-        <FileHeader file={activeFile} />
-        {basicInCentre && <div className="insp-msg">The block type is edited in the centre. In the Text view (Alt+3) its editor moves here, next to the YAML.</div>}
-      </>
-    );
+    return <FilePanel />;
   }
   if (selection?.kind === 'blocks') {
     const blocks = selection.ids.map((id) => d.diagram.blocks.find((x) => x.id === id)).filter((b): b is BlockInst => !!b);
@@ -99,58 +96,17 @@ function InspectorBody() {
   }
   if (d.strategy) return <StrategyPanel d={d} model={model} />;
   if (d.composite) return <TypePanel def={d.composite} file={d.file} />;
-  return <FileHeader file={activeFile} />;
+  return <FilePanel />;
 }
 
 // --- shared bits ------------------------------------------------------------------
-
-export function Head(props: { title: ReactNode; sub?: ReactNode; kind: string; actions?: ReactNode; diags?: Diag[] }) {
-  return (
-    <div className="insp-head">
-      <span className="insp-kind">{props.kind}</span>
-      <span className="insp-title" title={typeof props.title === 'string' ? props.title : undefined}>
-        {props.title}
-      </span>
-      {props.sub && <span className="insp-sub">{props.sub}</span>}
-      <span className="spacer" />
-      {props.diags && <SeverityBadge diags={props.diags} />}
-      {props.actions}
-    </div>
-  );
-}
-
-function FileHeader({ file }: { file: string | null }) {
-  return (
-    <div className="insp-head compact">
-      <span className="insp-kind">File</span>
-      <span className="insp-path mono" title={file ?? ''}>
-        {file ? `\u200e${file}\u200e` : 'No file open'}
-      </span>
-    </div>
-  );
-}
-
-export function DiagList({ diags }: { diags: Diag[] }) {
-  if (!diags.length) return null;
-  return (
-    <ul className="insp-diags">
-      {diags.map((x, i) => (
-        <li key={i} className={x.severity}>
-          <span className={`badge ${x.severity}`}>{x.severity === 'error' ? 'ERR' : x.severity === 'warning' ? 'WARN' : 'INFO'}</span>
-          <span>{x.message}</span>
-          {x.line && <span className="insp-line">:{x.line}</span>}
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 function SheetSelect(props: { d: ActiveDiagram; value: number; onChange: (v: number) => void }) {
   const sheets = props.d.diagram.sheets;
   const known = sheets.some((s) => s.id === props.value);
   return (
-    <select className="select" value={props.value} onChange={(e) => props.onChange(Number(e.target.value))}>
-      {!known && <option value={props.value}>{props.value} (undefined)</option>}
+    <select className="select" aria-label="Sheet" value={props.value} onChange={(e) => props.onChange(Number(e.target.value))}>
+      {!known && <option value={props.value}>{props.value} (not defined)</option>}
       {sheets.map((s) => (
         <option key={s.id} value={s.id}>
           {s.id}
@@ -159,6 +115,13 @@ function SheetSelect(props: { d: ActiveDiagram; value: number; onChange: (v: num
       ))}
     </select>
   );
+}
+
+/** Changes box for the active strategy (composites are not compared). */
+function Changes({ d }: { d: ActiveDiagram }) {
+  const selection = useEditor((s) => s.selection);
+  if (!d.strategy) return null;
+  return <StrategyChanges file={d.file} selection={selection} />;
 }
 
 // --- block --------------------------------------------------------------------------
@@ -170,28 +133,20 @@ function BlockPanel({ d, block, model }: { d: ActiveDiagram; block: BlockInst; m
     run(d, { op: 'setBlockField', file: d.file, id: block.id, field, value }, label);
 
   return (
-    <div className="insp-scroll">
+    <div className="insp-scroll" data-testid="block-panel">
       <Head
         kind="Block"
         title={block.id}
         sub={<span className="pill">{block.typeRef}</span>}
         diags={diags}
-        actions={
-          <button
-            className="btn small ghost danger"
-            title="Delete block"
-            onClick={async () => {
-              if (await confirmDialog({ title: `Delete ${block.id}?`, message: 'The block and its links are removed.', okLabel: 'Delete', danger: true }))
-                run(d, { op: 'removeBlock', file: d.file, id: block.id }, `Delete ${block.id}`, null);
-            }}
-          >
-            Delete
-          </button>
-        }
+        onRename
+        onDelete={() => deleteWithUndo(() => run(d, { op: 'removeBlock', file: d.file, id: block.id }, `Delete ${block.id}`, null), `Deleted block ${block.id}`)}
       />
       <DiagList diags={diags} />
+      <Changes d={d} />
       <Row label="Name">
         <Field
+          id={NAME_FIELD_ID}
           mono
           value={block.id}
           onCommit={(v) => {
@@ -202,19 +157,19 @@ function BlockPanel({ d, block, model }: { d: ActiveDiagram; block: BlockInst; m
       </Row>
       <TypeRow d={d} block={block} model={model} onSet={(ref) => setField('type', ref, `Change type of ${block.id}`)} />
       <Row label="Description">
-        <Field value={block.description} onCommit={(v) => setField('description', orUndef(v), 'Edit description')} />
+        <Field value={block.description} placeholder="Short text drawn on the block" onCommit={(v) => setField('description', orUndef(v), 'Edit description')} />
       </Row>
-      <Row label="Doc">
-        <Field multiline value={block.doc} placeholder="Function of this block (shown in the PDF)" onCommit={(v) => setField('doc', orUndef(v), 'Edit doc')} />
+      <Row label="Documentation">
+        <Field multiline value={block.doc} placeholder="Purpose of the block, printed in the PDF" onCommit={(v) => setField('doc', orUndef(v), 'Edit documentation')} />
       </Row>
       <Row label="Comment">
-        <Field multiline value={block.comment} placeholder="Engineering comment" onCommit={(v) => setField('comment', orUndef(v), 'Edit comment')} />
+        <Field multiline value={block.comment} placeholder="Engineering note" onCommit={(v) => setField('comment', orUndef(v), 'Edit comment')} />
       </Row>
       <Row label="Scan">
         <Field
           mono
           value={block.scan}
-          placeholder={d.strategy?.scan ? `${d.strategy.scan} (strategy)` : 'inherited'}
+          placeholder={d.strategy?.scan ? `${d.strategy.scan} (strategy)` : 'Inherited'}
           onCommit={(v) => setField('scan', orUndef(v), 'Edit scan')}
         />
       </Row>
@@ -222,7 +177,7 @@ function BlockPanel({ d, block, model }: { d: ActiveDiagram; block: BlockInst; m
         <Field
           mono
           value={block.order}
-          placeholder="none"
+          placeholder="None"
           onCommit={(v) => {
             const t = v.trim();
             if (!t) return setField('order', undefined, 'Clear order');
@@ -235,21 +190,7 @@ function BlockPanel({ d, block, model }: { d: ActiveDiagram; block: BlockInst; m
       <Row label="Sheet">
         <SheetSelect d={d} value={block.sheet} onChange={(v) => setField('sheet', v, 'Move to sheet')} />
       </Row>
-      <Row label="Position">
-        {block.pos ? (
-          <span className="insp-inline">
-            <span className="mono">
-              {block.pos[0]}, {block.pos[1]}
-            </span>
-            <span className="insp-muted">(pinned)</span>
-            <button className="btn small" onClick={() => run(d, { op: 'moveBlock', file: d.file, id: block.id, pos: null }, `Unpin ${block.id}`)}>
-              Unpin
-            </button>
-          </span>
-        ) : (
-          <span className="insp-muted">auto</span>
-        )}
-      </Row>
+      <PositionRow pos={block.pos} onUnpin={() => run(d, { op: 'moveBlock', file: d.file, id: block.id, pos: null }, `Unpin ${block.id}`)} />
       {def ? <ParamTable d={d} block={block} def={def} /> : <UnknownType block={block} d={d} />}
     </div>
   );
@@ -422,7 +363,7 @@ function ParamRow({ d, block, port, linked }: { d: ActiveDiagram; block: BlockIn
           setParam(d, block.id, port.name, port.type === 'BOOL' ? t === 'true' : t);
         }}
       >
-        <option value="">{dflt ? `(default ${dflt})` : linked ? `(linked)` : '(default)'}</option>
+        <option value="">{dflt ? `Default (${dflt})` : linked ? 'Linked' : 'Default'}</option>
         {opts.map((o) => (
           <option key={o} value={o}>
             {port.type === 'BOOL' ? o.toUpperCase() : o}
@@ -455,11 +396,13 @@ function ParamRow({ d, block, port, linked }: { d: ActiveDiagram; block: BlockIn
           {linked && <span className="insp-link-mark" title={`Linked from ${linked}`}>⟵</span>}
         </td>
         <td className="pval">{editor}</td>
-        <td className="punit">{port.unit ?? (port.type !== 'REAL' && port.type !== 'STRING' ? port.type : '')}</td>
+        <td className="punit" title={port.unit ? `Unit · ${port.type}` : port.type}>
+          {port.unit ?? ''}
+        </td>
         <td className="pact">
           {has && (
-            <button className="btn small ghost icon" title="Reset to default" onClick={() => setParam(d, block.id, port.name, undefined)}>
-              ×
+            <button className="btn small ghost icon" title="Reset to default" aria-label={`Reset ${port.name} to default`} onClick={() => setParam(d, block.id, port.name, undefined)}>
+              {Icon.close}
             </button>
           )}
         </td>
@@ -494,8 +437,8 @@ function UnknownParamRow({ d, block, name, value, warn }: { d: ActiveDiagram; bl
       </td>
       <td className="punit" />
       <td className="pact">
-        <button className="btn small ghost icon danger" title="Remove from YAML" onClick={() => setParam(d, block.id, name, undefined)}>
-          ×
+        <button className="btn small ghost icon danger" title="Remove from the YAML" aria-label={`Remove ${name}`} onClick={() => setParam(d, block.id, name, undefined)}>
+          {Icon.close}
         </button>
       </td>
     </tr>
@@ -529,57 +472,8 @@ function EndpointButton({ ep, d }: { ep: Endpoint; d: ActiveDiagram }) {
       }}
     >
       {formatEndpoint(ep)}
-      {ep.strategy && <span className="insp-ext"> ↗</span>}
+      {ep.strategy && <span className="insp-ext"> {Icon.external}</span>}
     </button>
-  );
-}
-
-function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model: ProjectModel }) {
-  const diags = diagsOf(model, d.file).filter((x) => x.link === link.index);
-  const ft = portType(model, d, link.from, 'from');
-  const tt = portType(model, d, link.to, 'to');
-  const mismatch = ft && tt && compatible(ft, tt) === 'mismatch';
-  return (
-    <div className="insp-scroll">
-      <Head
-        kind="Link"
-        title={`#${link.index + 1}`}
-        diags={diags}
-        actions={
-          <button className="btn small ghost danger" onClick={() => run(d, { op: 'disconnect', file: d.file, index: link.index }, 'Delete link', null)}>
-            Delete
-          </button>
-        }
-      />
-      <DiagList diags={diags} />
-      <Row label="From">
-        <EndpointButton ep={link.from} d={d} />
-      </Row>
-      <Row label="To">
-        <EndpointButton ep={link.to} d={d} />
-      </Row>
-      <Row label="Signal">
-        <span className="insp-inline">
-          <span className="badge neutral">{ft ?? '?'}</span>→<span className="badge neutral">{tt ?? '?'}</span>
-          {mismatch && <span className="badge warning">type mismatch</span>}
-        </span>
-      </Row>
-      <Row label="Label" title="Signal name drawn along the line">
-        <Field
-          mono
-          value={link.label}
-          placeholder="Signal name"
-          onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'label', value: orUndef(v) }, 'Edit link label')}
-        />
-      </Row>
-      <Row label="Category" title="Line style: automatic by signal type, or a project category (Settings → Drawing style)">
-        <CategorySelect d={d} link={link} model={model} />
-      </Row>
-      <Row label="Comment">
-        <Field value={link.comment} placeholder="Shown on the wire" onCommit={(v) => run(d, { op: 'setLinkComment', file: d.file, index: link.index, comment: orUndef(v) }, 'Edit link comment')} />
-      </Row>
-      <FeedbackNote d={d} link={link} />
-    </div>
   );
 }
 
@@ -619,7 +513,7 @@ function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; 
           );
         }}
       >
-        <option value="">(automatic: BOOL / Numeric / Other)</option>
+        <option value="">Automatic (BOOL / Numeric / Other)</option>
         <optgroup label="Built-in">
           {builtins.map((n) => (
             <option key={n} value={n}>
@@ -640,7 +534,7 @@ function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; 
         <option value={NEW_CATEGORY}>New category…</option>
       </select>
       <button type="button" className="btn small ghost icon" title="Edit line categories in Settings → Drawing style" aria-label="Edit line categories" onClick={() => openSettings('drawing')}>
-        ✎
+        {Icon.edit}
       </button>
     </span>
   );
@@ -675,7 +569,7 @@ function FeedbackNote({ d, link }: { d: ActiveDiagram; link: LinkInst }) {
             Fix order
           </button>{' '}
           <span className="insp-muted">
-            sets {src} to #{proposal}
+            Sets {src} to #{proposal}
           </span>
         </p>
       ) : (
@@ -688,40 +582,69 @@ function FeedbackNote({ d, link }: { d: ActiveDiagram; link: LinkInst }) {
   );
 }
 
+// --- link ---------------------------------------------------------------------------
+
+function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model: ProjectModel }) {
+  const diags = diagsOf(model, d.file).filter((x) => x.link === link.index);
+  const ft = portType(model, d, link.from, 'from');
+  const tt = portType(model, d, link.to, 'to');
+  const mismatch = ft && tt && compatible(ft, tt) === 'mismatch';
+  const title = `${formatEndpoint(link.from)} → ${formatEndpoint(link.to)}`;
+  return (
+    <div className="insp-scroll" data-testid="link-panel">
+      <Head
+        kind="Link"
+        title={title}
+        diags={diags}
+        onDelete={() => deleteWithUndo(() => run(d, { op: 'disconnect', file: d.file, index: link.index }, 'Delete link', null), `Deleted link ${title}`)}
+      />
+      <DiagList diags={diags} />
+      <Changes d={d} />
+      <Row label="From">
+        <EndpointButton ep={link.from} d={d} />
+      </Row>
+      <Row label="To">
+        <EndpointButton ep={link.to} d={d} />
+      </Row>
+      <Row label="Type" title="Signal type of the output and the input">
+        <span className="insp-inline">
+          <span className="badge neutral">{ft ?? '?'}</span>→<span className="badge neutral">{tt ?? '?'}</span>
+          {mismatch && <span className="badge warning">type mismatch</span>}
+        </span>
+      </Row>
+      <Row label="Label" title="Signal name drawn along the line">
+        <Field
+          mono
+          value={link.label}
+          placeholder="Signal name drawn on the line"
+          onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'label', value: orUndef(v) }, 'Edit link label')}
+        />
+      </Row>
+      <Row label="Line category" title="Line style: automatic by signal type, or a project category (Settings → Drawing style)">
+        <CategorySelect d={d} link={link} model={model} />
+      </Row>
+      <Row label="Comment">
+        <Field value={link.comment} placeholder="Engineering note, shown on the line" onCommit={(v) => run(d, { op: 'setLinkComment', file: d.file, index: link.index, comment: orUndef(v) }, 'Edit link comment')} />
+      </Row>
+      <FeedbackNote d={d} link={link} />
+    </div>
+  );
+}
+
 // --- note ---------------------------------------------------------------------------
 
 function NotePanel({ d, note }: { d: ActiveDiagram; note: NoteInst }) {
   return (
-    <div className="insp-scroll">
-      <Head
-        kind="Note"
-        title={`#${note.index + 1}`}
-        actions={
-          <button className="btn small ghost danger" onClick={() => run(d, { op: 'removeNote', file: d.file, index: note.index }, 'Delete note', null)}>
-            Delete
-          </button>
-        }
-      />
+    <div className="insp-scroll" data-testid="note-panel">
+      <Head kind="Note" title={`Note ${note.index + 1}`} onDelete={() => deleteWithUndo(() => run(d, { op: 'removeNote', file: d.file, index: note.index }, 'Delete note', null), `Deleted note ${note.index + 1}`)} />
+      <Changes d={d} />
       <Row label="Text">
-        <Field multiline value={note.text} onCommit={(v) => run(d, { op: 'setNote', file: d.file, index: note.index, text: v }, 'Edit note')} />
+        <Field multiline value={note.text} placeholder="Note text" onCommit={(v) => run(d, { op: 'setNote', file: d.file, index: note.index, text: v }, 'Edit note')} />
       </Row>
       <Row label="Sheet">
         <SheetSelect d={d} value={note.sheet} onChange={(v) => run(d, { op: 'setNote', file: d.file, index: note.index, sheet: v }, 'Move note to sheet')} />
       </Row>
-      <Row label="Position">
-        {note.pos ? (
-          <span className="insp-inline">
-            <span className="mono">
-              {note.pos[0]}, {note.pos[1]}
-            </span>
-            <button className="btn small" onClick={() => run(d, { op: 'setNote', file: d.file, index: note.index, pos: null }, 'Unpin note')}>
-              Unpin
-            </button>
-          </span>
-        ) : (
-          <span className="insp-muted">auto</span>
-        )}
-      </Row>
+      <PositionRow pos={note.pos} onUnpin={() => run(d, { op: 'setNote', file: d.file, index: note.index, pos: null }, 'Unpin note')} />
     </div>
   );
 }
@@ -735,6 +658,7 @@ function StrategyPanel({ d, model }: { d: ActiveDiagram; model: ProjectModel }) 
     const t = st.files[d.file];
     return typeof t === 'string' && /^sheets\s*:/m.test(t);
   });
+  const hasDoc = useEditor((st) => !!s.docFile && s.docFile in st.files);
   const setF = (field: 'title' | 'description' | 'revision' | 'author' | 'scan', label: string) => (v: string) =>
     store().dispatch({ op: 'setStrategyField', file: s.file, field, value: orUndef(v) }, { label });
   const renameSheet = (id: number, title: string) => {
@@ -744,10 +668,26 @@ function StrategyPanel({ d, model }: { d: ActiveDiagram; model: ProjectModel }) 
     run(d, { op: 'batch', ops: [{ op: 'addSheet', file: d.file }, { op: 'renameSheet', file: d.file, id: 1, title: t }, { op: 'removeSheet', file: d.file, id: 2 }] }, 'Rename sheet');
   };
   return (
-    <div className="insp-scroll">
-      <Head kind="Continuous strategy" title={s.name} sub={s.title} diags={diags} />
+    <div className="insp-scroll" data-testid="strategy-panel">
+      <Head
+        kind="Strategy"
+        title={s.name}
+        sub={s.title}
+        diags={diags}
+        onRename
+        menu={[
+          { label: 'Duplicate…', onClick: () => duplicateStrategy(s.file) },
+          { label: 'Move to folder…', onClick: () => moveStrategy(s.file) },
+          { label: hasDoc ? 'Open function description' : 'Add function description', onClick: () => openFunctionDescription(s.file) },
+        ]}
+        onDelete={() => deleteStrategy(s.file)}
+        deleteLabel="Delete…"
+      />
+      <DiagList diags={diags} />
+      <Changes d={d} />
       <Row label="Name">
         <Field
+          id={NAME_FIELD_ID}
           mono
           value={s.name}
           onCommit={(v) => {
@@ -756,47 +696,39 @@ function StrategyPanel({ d, model }: { d: ActiveDiagram; model: ProjectModel }) 
           }}
         />
       </Row>
+      <Row label="Type">
+        <span className="insp-inline">
+          <span className="kind-badge">FBD</span>
+          <span className="insp-muted">Continuous strategy</span>
+        </span>
+      </Row>
       <Row label="Title">
-        <Field value={s.title} onCommit={setF('title', 'Edit title')} />
+        <Field value={s.title} placeholder="Shown in the tree and the title block" onCommit={setF('title', 'Edit title')} />
       </Row>
       <Row label="Description">
-        <Field multiline value={s.description} onCommit={setF('description', 'Edit description')} />
+        <Field multiline value={s.description} placeholder="What the strategy does, in one or two sentences" onCommit={setF('description', 'Edit description')} />
       </Row>
       <Row label="Revision">
-        <Field mono value={s.revision} onCommit={setF('revision', 'Edit revision')} />
+        <Field mono value={s.revision} placeholder="e.g. B" onCommit={setF('revision', 'Edit revision')} />
       </Row>
       <Row label="Author">
-        <Field value={s.author} onCommit={setF('author', 'Edit author')} />
+        <Field value={s.author} placeholder="Name" onCommit={setF('author', 'Edit author')} />
       </Row>
       <Row label="Scan">
         <Field mono value={s.scan} placeholder="e.g. 500ms, 1s" onCommit={setF('scan', 'Edit scan')} />
       </Row>
-      <SectionHeader actions={<button className="btn small ghost" onClick={() => run(d, { op: 'addSheet', file: d.file }, 'Add sheet')}>+ Sheet</button>}>Sheets</SectionHeader>
+      <SectionHeader actions={<AddButton label="Add sheet" onClick={() => run(d, { op: 'addSheet', file: d.file }, 'Add sheet')} />}>Sheets</SectionHeader>
       {s.sheets.map((sh) => (
         <Row key={sh.id} label={`Sheet ${sh.id}`}>
-          <Field value={sh.title} placeholder="untitled" onCommit={(v) => renameSheet(sh.id, v)} />
+          <Field value={sh.title} placeholder="Untitled" onCommit={(v) => renameSheet(sh.id, v)} />
         </Row>
       ))}
       <SectionHeader>Info</SectionHeader>
       <Row label="Content">
-        <span className="insp-muted">
-          {s.blocks.length} blocks · {s.links.length} links · {s.notes.length} notes
-        </span>
+        <span className="insp-muted">{[plural(s.blocks.length, 'block'), plural(s.links.length, 'link'), plural(s.notes.length, 'note')].join(' · ')}</span>
       </Row>
-      <Row label="File">
-        <span className="insp-path mono" title={s.file}>
-          {`\u200e${s.file}\u200e`}
-        </span>
-      </Row>
-      <Row label="Function">
-        {s.docFile ? (
-          <button className="insp-ep" onClick={() => store().open(s.docFile!)} title={s.docFile}>
-            Open function description ↗
-          </button>
-        ) : (
-          <span className="insp-muted">no description file</span>
-        )}
-      </Row>
+      <PathRow file={s.file} />
+      <DocRow label="Function description" exists={hasDoc} onOpen={() => openFunctionDescription(s.file)} />
     </div>
   );
 }
@@ -814,24 +746,15 @@ function MultiPanel({ d, blocks, model }: { d: ActiveDiagram; blocks: BlockInst[
     if (ops.length) store().dispatch({ op: 'batch', label, ops }, { label });
   };
   return (
-    <div className="insp-scroll">
+    <div className="insp-scroll" data-testid="multi-panel">
       <Head
         kind="Selection"
-        title={`${blocks.length} blocks`}
+        title={plural(blocks.length, 'block')}
         diags={diags}
-        actions={
-          <button
-            className="btn small ghost danger"
-            title="Delete the selected blocks and their links"
-            onClick={async () => {
-              if (await confirmDialog({ title: `Delete ${blocks.length} blocks?`, message: `${ids.join(', ')} and their links are removed. You can undo this.`, okLabel: 'Delete', danger: true }))
-                run(d, { op: 'removeBlocks', file: d.file, ids }, `Delete ${blocks.length} blocks`, null);
-            }}
-          >
-            Delete
-          </button>
-        }
+        onDelete={() => deleteWithUndo(() => run(d, { op: 'removeBlocks', file: d.file, ids }, `Delete ${plural(blocks.length, 'block')}`, null), `Deleted ${plural(blocks.length, 'block')}`)}
+        deleteLabel={`Delete ${plural(blocks.length, 'block')}`}
       />
+      <DiagList diags={diags} />
       <ul className="insp-multi" aria-label="Selected blocks">
         {blocks.map((b) => (
           <li key={b.id}>
@@ -843,12 +766,13 @@ function MultiPanel({ d, blocks, model }: { d: ActiveDiagram; blocks: BlockInst[
             <button
               className="btn small ghost icon"
               title={`Remove ${b.id} from the selection`}
+              aria-label={`Remove ${b.id} from the selection`}
               onClick={() => {
                 const rest = ids.filter((x) => x !== b.id);
                 store().select(rest.length > 1 ? { kind: 'blocks', ids: rest } : { kind: 'block', id: rest[0] });
               }}
             >
-              ×
+              {Icon.close}
             </button>
           </li>
         ))}
@@ -859,7 +783,7 @@ function MultiPanel({ d, blocks, model }: { d: ActiveDiagram; blocks: BlockInst[
           className="select"
           aria-label="Move to sheet"
           value={sheets.size === 1 ? blocks[0].sheet : ''}
-          onChange={(e) => e.target.value && setAll('sheet', Number(e.target.value), `Move ${blocks.length} blocks to sheet ${e.target.value}`)}
+          onChange={(e) => e.target.value && setAll('sheet', Number(e.target.value), `Move ${plural(blocks.length, 'block')} to sheet ${e.target.value}`)}
         >
           {sheets.size > 1 && <option value="">(mixed) — move to…</option>}
           {d.diagram.sheets.map((s) => (
@@ -874,11 +798,11 @@ function MultiPanel({ d, blocks, model }: { d: ActiveDiagram; blocks: BlockInst[
         <Field
           mono
           value={scans.size === 1 ? blocks[0].scan : ''}
-          placeholder={scans.size > 1 ? '(mixed)' : d.strategy?.scan ? `${d.strategy.scan} (strategy)` : 'inherited'}
-          onCommit={(v) => setAll('scan', orUndef(v), `Set scan of ${blocks.length} blocks`)}
+          placeholder={scans.size > 1 ? '(mixed)' : d.strategy?.scan ? `${d.strategy.scan} (strategy)` : 'Inherited'}
+          onCommit={(v) => setAll('scan', orUndef(v), `Set scan of ${plural(blocks.length, 'block')}`)}
         />
       </Row>
-      <div className="insp-muted insp-pad">Shift+click blocks on the canvas to add or remove them; click one name above to edit it alone.</div>
+      <div className="insp-muted insp-pad">Shift+click blocks on the canvas to add or remove them; click a name above to edit that block alone.</div>
     </div>
   );
 }
@@ -888,22 +812,33 @@ function MultiPanel({ d, blocks, model }: { d: ActiveDiagram; blocks: BlockInst[
 function TypePanel({ def, file }: { def: BlockTypeDef; file: string }) {
   const model = useEditor((s) => s.model);
   const diags = diagsOf(model, file);
+  const composite = def.kind === 'composite';
   return (
-    <div className="insp-scroll">
-      <Head kind={def.kind === 'composite' ? 'Composite' : 'Block type'} title={def.type} sub={<span className="pill">{`${def.library} · ${def.version}`}</span>} diags={diags} />
+    <div className="insp-scroll" data-testid="type-panel">
+      <Head
+        kind={composite ? 'Composite' : 'Block type'}
+        title={def.type}
+        sub={<span className="pill">{`${def.library} · ${def.version}`}</span>}
+        diags={diags}
+        onRename={() => {
+          const el = document.getElementById(`name-${def.file}`) as HTMLInputElement | null;
+          el?.focus();
+          el?.select();
+        }}
+        menu={[{ label: 'New version', hint: 'minor', onClick: () => newTypeVersion(def) }]}
+        onDelete={() => deleteTypeVersion(def)}
+        deleteLabel="Delete version…"
+      />
       <DiagList diags={diags} />
       <BlockTypeEditor key={file} def={def} compact />
-      {def.kind === 'composite' && (
+      {composite && (
         <div className="insp-msg">
           Use <code>$NAME</code> in inner block parameters to pass a parameter of this type; link inner blocks to <code>in.X</code> / <code>out.Y</code> for the
           interface.
         </div>
       )}
-      <Row label="File">
-        <span className="insp-path mono" title={file}>
-          {`\u200e${file}\u200e`}
-        </span>
-      </Row>
+      <SectionHeader>Info</SectionHeader>
+      <PathRow file={file} />
     </div>
   );
 }

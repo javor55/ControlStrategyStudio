@@ -12,15 +12,34 @@ let dragging: SfcElement | undefined;
 export const setDraggingSfc = (k: SfcElement | undefined) => void (dragging = k);
 export const draggingSfc = () => dragging;
 
+/**
+ * Canonical names of the SFC insert commands — the same words in the toolbar
+ * Insert menu, the step / transition context menus, QuickInsert, the palette,
+ * drop hints and tooltips.
+ */
+export const SFC_LABELS = {
+  step: 'Add step',
+  after: 'Insert step after',
+  before: 'Insert step before',
+  parallelStep: 'Insert parallel step',
+  alternativeStep: 'Insert alternative step',
+  parallelBranch: 'Add parallel branch after',
+  alternativeBranch: 'Add alternative branch after',
+  intoTransition: 'Insert step into transition',
+  parallelIntoTransition: 'Insert parallel branch into transition',
+  alternativeIntoTransition: 'Insert alternative branch into transition',
+  jump: 'Add jump to initial step',
+} as const;
+
 export const SFC_ELEMENTS: { kind: SfcElement; label: string; description: string }[] = [
-  { kind: 'step', label: 'Step', description: 'A new step (drop it where you want it)' },
-  { kind: 'transition', label: 'Step after', description: 'New step after the selected (or dropped-on) step — inserted into the chain when the step already has a successor' },
-  { kind: 'before', label: 'Step before', description: 'New step before the selected (or dropped-on) step; its incoming transitions lead to the new step' },
-  { kind: 'beside-parallel', label: 'Parallel step beside', description: 'New step running simultaneously with the selected one (joins its fork and join)' },
-  { kind: 'beside-alternative', label: 'Alternative step beside', description: 'New alternative path next to the selected step (same predecessor and successor)' },
-  { kind: 'parallel', label: 'Parallel branch after', description: 'Fork after the step: one transition to two new steps that run simultaneously (AND)' },
-  { kind: 'alternative', label: 'Alternative branch after', description: 'Two transitions after the step to two new steps; the first true one wins (OR)' },
-  { kind: 'jump', label: 'Jump to initial step', description: 'Transition from the selected step back to the initial step (drawn as a jump arrow)' },
+  { kind: 'step', label: SFC_LABELS.step, description: 'A new step (drop it where you want it)' },
+  { kind: 'transition', label: SFC_LABELS.after, description: 'New step after the selected (or dropped-on) step — inserted into the chain when the step already has a successor' },
+  { kind: 'before', label: SFC_LABELS.before, description: 'New step before the selected (or dropped-on) step; its incoming transitions lead to the new step' },
+  { kind: 'beside-parallel', label: SFC_LABELS.parallelStep, description: 'New step running simultaneously with the selected one (joins its fork and join)' },
+  { kind: 'beside-alternative', label: SFC_LABELS.alternativeStep, description: 'New alternative path next to the selected step (same predecessor and successor)' },
+  { kind: 'parallel', label: SFC_LABELS.parallelBranch, description: 'Fork after the step: one transition to two new steps that run simultaneously (AND)' },
+  { kind: 'alternative', label: SFC_LABELS.alternativeBranch, description: 'Two transitions after the step to two new steps; the first true one wins (OR)' },
+  { kind: 'jump', label: SFC_LABELS.jump, description: 'Transition from the selected step back to the initial step (drawn as a jump arrow)' },
 ];
 
 /** Next free step name of the form `S<n*10>`, after the highest numbered step. */
@@ -135,11 +154,13 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
   return s.dispatch({ op: 'batch', label, ops }, { label, select: stepSelection(ids) });
 }
 
-/** Removes steps (one undo step). */
-export function removeSteps(file: string, ids: string[]): boolean {
+/** Removes steps (one undo step). `toast`: confirm with a message that offers Undo. */
+export function removeSteps(file: string, ids: string[], o: { toast?: boolean; verb?: string } = {}): boolean {
   if (!ids.length) return false;
   const label = ids.length === 1 ? `Delete step ${ids[0]}` : `Delete ${ids.length} steps`;
-  return store().dispatch(ids.length === 1 ? { op: 'removeStep', file, id: ids[0] } : { op: 'removeSteps', file, ids }, { label, select: null });
+  const ok = store().dispatch(ids.length === 1 ? { op: 'removeStep', file, id: ids[0] } : { op: 'removeSteps', file, ids }, { label, select: null });
+  if (ok && o.toast) store().toastUndo(`${o.verb ?? 'Deleted'} ${ids.length === 1 ? `step ${ids[0]}` : `${ids.length} steps`}`);
+  return ok;
 }
 
 /** Moves steps to another sheet (positions are dropped: the step is laid out there). */
@@ -199,14 +220,18 @@ export function insertIntoTransition(seq: Sequence, kind: SfcBlockKind, index: n
   return store().dispatch({ op: 'batch', label, ops: r.ops }, { label, select: b ? stepSelection([a, b]) : { kind: 'block', id: a } }) ? a : undefined;
 }
 
-/** Clears hand-placed positions of all steps (one undo step). */
-export function autoLayout(seq: Sequence): boolean {
-  const ops: Op[] = seq.steps.filter((s) => s.pos).map((s) => ({ op: 'moveStep', file: seq.file, id: s.id, pos: null }));
+/** Reset layout: clears the hand-placed positions of the steps on `sheet` (one undo step, toast with Undo). */
+export function resetLayout(seq: Sequence, sheet: number): boolean {
+  const first = seq.sheets[0]?.id ?? 1;
+  const on = (s: { sheet: number }) => (seq.sheets.some((x) => x.id === s.sheet) ? s.sheet : first) === sheet;
+  const ops: Op[] = seq.steps.filter((s) => s.pos && on(s)).map((s) => ({ op: 'moveStep', file: seq.file, id: s.id, pos: null }));
   if (!ops.length) {
-    store().toast('All steps are already laid out automatically');
+    store().toast(`The steps on sheet ${sheet} are already laid out automatically`);
     return false;
   }
-  return store().dispatch({ op: 'batch', label: 'Auto layout', ops }, { label: 'Auto layout' });
+  const ok = store().dispatch({ op: 'batch', label: 'Reset layout', ops }, { label: 'Reset layout' });
+  if (ok) store().toastUndo(`Layout of sheet ${sheet} reset`);
+  return ok;
 }
 
 /** Opens (creating if needed) the function description `NAME.md` of a strategy or sequence. */

@@ -25,16 +25,16 @@
 
 .bte-sec { margin: 0 0 22px; }
 .bte-sec h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font: 600 11px var(--f-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
-.bte-sec h3 .count { font: 500 11px var(--f-mono); background: var(--hover); border-radius: 8px; padding: 0 6px; }
+.bte-sec h3 .count { font: 500 11px var(--f-mono); background: var(--hover); border-radius: var(--radius-pill); padding: 0 6px; }
 .bte-sec h3 .spacer { flex: 1; }
-.bte-sec h3 .btn { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink); }
+.bte-sec h3 .btn { text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink); }
 .bte-sec h3 .btn.danger { color: var(--error); }
 .bte-sec.compact { margin: 0; padding: 4px 10px 8px; border-top: 1px solid var(--rule); }
-.bte-sec.compact h3 { margin: 4px 0 4px; font-size: 10.5px; }
+.bte-sec.compact h3 { margin: 4px 0 4px; font-size: 11px; }
 .bte-none { margin: 0; }
-.bte-hint { margin: 4px 0 0; font-size: 11.5px; }
+.bte-hint { margin: 4px 0 0; font-size: 12px; }
 
-.bte-table { width: 100%; border-collapse: collapse; table-layout: fixed; background: var(--sheet); border: 1px solid var(--rule); font-size: 12.5px; }
+.bte-table { width: 100%; border-collapse: collapse; table-layout: fixed; background: var(--sheet); border: 1px solid var(--rule); font-size: 13px; }
 .bte-table th { text-align: left; font-weight: 600; color: var(--ink-2); background: var(--panel); padding: 5px 6px; border-bottom: 1px solid var(--rule-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bte-table td { padding: 3px 4px; border-top: 1px solid var(--rule); vertical-align: middle; }
 .bte-table td > .bte-muted { padding-left: 6px; }
@@ -59,7 +59,7 @@
 .bte-port-head span:last-child { width: 88px; }
 .bte-port.open { background: var(--hover); border-radius: var(--radius); padding: 2px; margin: 0 -2px; }
 .bte-port-more { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 3px 6px; align-items: center; padding: 4px 0 4px 8px; }
-.bte-port-more > label { color: var(--ink-3); font-size: 11.5px; }
+.bte-port-more > label { color: var(--ink-3); font-size: 12px; }
 
 .bte-impl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .bte-impl-head > label { color: var(--ink-3); font-size: 12px; }

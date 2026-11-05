@@ -5,17 +5,21 @@
 // order, formatting and `#` comments survive graphical edits. Every result
 // carries the previous content of changed files, which gives undo/redo, an audit
 // trail and a unit for future multi-user synchronisation.
-import { Document, Pair, Scalar, YAMLMap, YAMLSeq, isMap, isScalar, isSeq } from 'yaml';
+import { Document, Pair, Scalar, YAMLMap, YAMLSeq, isMap, isNode, isScalar, isSeq } from 'yaml';
 import { formatEndpoint, formatLink, parseEndpoint, parseLinkString, RESERVED_IDS, TAG_RE } from './diagram';
-import { exprRefs, parseExpr } from './expr';
-import { formatTag } from './format';
+import { OpError } from './errors';
+import { rewriteExprRefs, type RefExpr } from './expr';
+import { formatTag, migrateDocument, type DocKind } from './format';
 import { bumpVersion, parseTypeRef } from './library';
-import { blockTypeFile, classify, folderReadme, joinPath, libraryFile, sequenceFile, strategyDocFile, strategyFile } from './paths';
+import { blockTypeFile, classify, folderReadme, libraryFile, sequenceFile, strategyDocFile, strategyFile } from './paths';
 import type { ActionQualifier, Endpoint, FileContent, Files } from './types';
 import { newUid } from './uid';
 import { parseFragment, parseSequenceFragment, renameFragmentLinks, renameMap, stepRenameMap } from './fragment';
 import { loadProject } from './project';
-import { parseForEdit, stringifyDoc, type YamlPath } from './yamlutil';
+import { SEQ_BLOCK } from './sequence';
+import { isObj, parseForEdit, stringifyDoc, type YamlPath } from './yamlutil';
+
+export { OpError, type OpErrorCode } from './errors';
 
 export type BlockField = 'type' | 'description' | 'doc' | 'comment' | 'scan' | 'order' | 'sheet';
 export type StrategyField = 'title' | 'description' | 'revision' | 'author' | 'scan';
@@ -36,10 +40,13 @@ export type Op =
   | { op: 'batch'; label?: string; ops: Op[] }
   // project structure
   | { op: 'createFolder'; folder: string }
-  | { op: 'createStrategy'; folder: string; name: string; title?: string }
+  /** `uid` is generated when omitted (pass one for reproducible results, e.g. tests or a backend). */
+  | { op: 'createStrategy'; folder: string; name: string; title?: string; uid?: string }
+  /** Renames a strategy or a sequence (file, name key and every reference). */
   | { op: 'renameStrategy'; file: string; name: string }
   | { op: 'moveStrategy'; file: string; folder: string }
-  | { op: 'duplicateStrategy'; file: string; name: string }
+  /** Duplicates a strategy or a sequence; references of the copy to itself point to the copy. */
+  | { op: 'duplicateStrategy'; file: string; name: string; uid?: string }
   | { op: 'setStrategyField'; file: string; field: StrategyField; value?: string }
   // diagram content
   | ({ op: 'addBlock'; id: string; type: string; sheet?: number; pos?: [number, number]; params?: Record<string, unknown> } & DiagramTarget)
@@ -49,23 +56,36 @@ export type Op =
   | ({ op: 'setParam'; id: string; name: string; value?: unknown } & DiagramTarget)
   | ({ op: 'moveBlock'; id: string; pos: [number, number] | null } & DiagramTarget)
   | ({ op: 'setOrders'; orders: Record<string, number> } & DiagramTarget)
+  /** Pins blocks (strategy / composite) or steps (sequence) at the given positions. */
   | ({ op: 'pinAll'; positions: Record<string, [number, number]> } & DiagramTarget)
-  | ({ op: 'unpinAll' } & DiagramTarget)
+  /** Back to automatic layout: removes `pos` from all blocks (or steps of a sequence), optionally only on one sheet. */
+  | ({ op: 'unpinAll'; sheet?: number } & DiagramTarget)
+  /**
+   * Moves blocks (strategy / composite) or steps (sequence), and optionally
+   * notes, to another sheet. Hand-placed positions are kept.
+   */
+  | ({ op: 'moveToSheet'; ids: string[]; notes?: number[]; sheet: number } & DiagramTarget)
   | ({ op: 'connect'; from: string; to: string; comment?: string; replace?: boolean } & DiagramTarget)
   | ({ op: 'disconnect'; index: number } & DiagramTarget)
+  /** @deprecated use `setLinkField` with `field: 'comment'` */
   | ({ op: 'setLinkComment'; index: number; comment?: string } & DiagramTarget)
   | ({ op: 'setLinkField'; index: number; field: 'comment' | 'label' | 'category'; value?: string } & DiagramTarget)
   | { op: 'renameFolder'; from: string; to: string }
   /** Project drawing style, e.g. path ['signals','bool','color']; undefined removes the value. */
   | { op: 'setDrawing'; path: string[]; value?: string | number | boolean }
   // sequences (file = <NAME>.seq.yaml)
-  | { op: 'createSequence'; folder: string; name: string; title?: string }
+  | { op: 'createSequence'; folder: string; name: string; title?: string; uid?: string }
   | { op: 'addStep'; file: string; id: string; description?: string; sheet?: number; pos?: [number, number]; initial?: boolean }
-  | { op: 'insertStep'; file: string; transition: number; id: string; description?: string }
+  /** Splits transition `transition` with a new step; `sheet` defaults to the sheet of the source step. */
+  | { op: 'insertStep'; file: string; transition: number; id: string; description?: string; sheet?: number; pos?: [number, number] }
   | { op: 'removeStep'; file: string; id: string }
   | { op: 'renameStep'; file: string; from: string; to: string }
   | { op: 'setStepField'; file: string; id: string; field: 'description' | 'doc' | 'comment' | 'sheet' | 'initial'; value?: string | number | boolean }
-  | { op: 'setStepTime'; file: string; id: string; min?: string; max?: string }
+  /**
+   * Monitoring times. A bound that is not given (key absent) is kept; a given
+   * empty / undefined / null value removes it.
+   */
+  | { op: 'setStepTime'; file: string; id: string; min?: string | null; max?: string | null }
   | { op: 'moveStep'; file: string; id: string; pos: [number, number] | null }
   | { op: 'addAction'; file: string; step: string; action: ActionSpec; index?: number }
   | { op: 'updateAction'; file: string; step: string; index: number; patch: Partial<ActionSpec> }
@@ -75,6 +95,8 @@ export type Op =
   | { op: 'setTransition'; file: string; index: number; from?: string | string[]; to?: string | string[]; condition?: string; comment?: string }
   | { op: 'removeTransition'; file: string; index: number }
   | { op: 'addSeqInput'; file: string; name: string; type: string; description?: string }
+  /** Changes a sequence input; a new `name` is also written into the conditions that use it. */
+  | { op: 'updateSeqInput'; file: string; name: string; patch: { name?: string; type?: string; description?: string } }
   | { op: 'insertSequenceFragment'; file: string; fragment: string; offset?: [number, number]; sheet?: number }
   | { op: 'removeSteps'; file: string; ids: string[] }
   | { op: 'setLevels'; levels: string[] }
@@ -88,8 +110,8 @@ export type Op =
   | ({ op: 'renameSheet'; id: number; title?: string } & DiagramTarget)
   | ({ op: 'removeSheet'; id: number } & DiagramTarget)
   // library
-  | { op: 'createLibrary'; folder: string; name?: string; description?: string }
-  | { op: 'createBlockType'; lib: string; type: string; category?: string; kind?: 'basic' | 'composite' }
+  | { op: 'createLibrary'; folder: string; name?: string; description?: string; uid?: string }
+  | { op: 'createBlockType'; lib: string; type: string; category?: string; kind?: 'basic' | 'composite'; uid?: string }
   | { op: 'newTypeVersion'; file: string; part?: 'major' | 'minor' | 'patch' }
   // clipboard & multi-selection
   | ({ op: 'insertFragment'; fragment: string; offset?: [number, number]; sheet?: number } & DiagramTarget)
@@ -133,12 +155,6 @@ export interface OpResult {
   before: Record<string, FileContent | undefined>;
 }
 
-export class OpError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'OpError';
-  }
-}
 
 // ---------------------------------------------------------------------------
 // YAML helpers
@@ -250,7 +266,7 @@ function setOrdered(map: YAMLMap, key: string, value: unknown, order: string[], 
   const node = doc ? toNode(doc, value) : value;
   const existing = map.items.find((p) => keyOf(p) === key);
   if (existing) {
-    existing.value = node;
+    replaceValue(existing, node);
     return;
   }
   const rank = order.indexOf(key);
@@ -265,6 +281,31 @@ function setOrdered(map: YAMLMap, key: string, value: unknown, order: string[], 
   map.items.splice(idx, 0, new Pair(new Scalar(key), node));
 }
 
+/**
+ * Replaces the value of a pair keeping `#` comments: a scalar is updated in
+ * place, a new collection takes over the comments of the old value.
+ */
+function replaceValue(pair: Pair, node: unknown): void {
+  const old = pair.value;
+  if (isScalar(old) && isScalar(node)) {
+    old.value = node.value;
+    if (node.type) old.type = node.type;
+    return;
+  }
+  if (isNode(old) && isNode(node)) {
+    node.comment ??= old.comment;
+    node.commentBefore ??= old.commentBefore;
+    node.spaceBefore ??= old.spaceBefore;
+  }
+  pair.value = node;
+}
+
+/** Renames a map key in place (the key node keeps its `#` comments). */
+function renameKey(pair: Pair, to: string): void {
+  if (isScalar(pair.key)) pair.key.value = to;
+  else pair.key = new Scalar(to);
+}
+
 function setOrDelete(doc: Document, map: YAMLMap, key: string, value: unknown, order: string[]): void {
   if (value === undefined || value === null || value === '') map.delete(key);
   else setOrdered(map, key, value, order, doc);
@@ -272,7 +313,7 @@ function setOrDelete(doc: Document, map: YAMLMap, key: string, value: unknown, o
 
 function blockMap(doc: Document, root: YamlPath, id: string): YAMLMap {
   const n = getNode(doc, [...root, 'blocks', id]);
-  if (!isMap(n)) throw new OpError(`Block "${id}" does not exist`);
+  if (!isMap(n)) throw new OpError(`Block "${id}" does not exist`, 'not-found');
   if (n.flow) n.flow = false; // expand `{ type: AI }` once it gets edited
   return n;
 }
@@ -310,9 +351,43 @@ function rewriteLinks(doc: Document, root: YamlPath, fn: LinkVisit): boolean {
   return changed;
 }
 
+/** Names that cannot be used for strategies / sequences (they collide with folder files). */
+const RESERVED_NAMES = new Set(['README']);
+
 function checkTag(id: string, what: string): void {
-  if (!TAG_RE.test(id)) throw new OpError(`Invalid ${what} "${id}" — use letters, digits, "_" or "-", starting with a letter`);
-  if (RESERVED_IDS.has(id)) throw new OpError(`"${id}" is reserved`);
+  if (!TAG_RE.test(id)) throw new OpError(`Invalid ${what} "${id}" — use letters, digits, "_" or "-", starting with a letter`, 'invalid-name');
+  if (RESERVED_IDS.has(id)) throw new OpError(`"${id}" is reserved and cannot be a ${what}`, 'reserved');
+}
+
+function checkStrategyName(name: string, what: string): void {
+  checkTag(name, what);
+  if (RESERVED_NAMES.has(name.toUpperCase())) throw new OpError(`"${name}" is reserved (folder description file) and cannot be a ${what}`, 'reserved');
+}
+
+function checkInputName(name: string): void {
+  if (!IDENT_RE.test(name)) throw new OpError(`Invalid input name "${name}" — use letters, digits and "_", starting with a letter`, 'invalid-name');
+  if (['and', 'or', 'not', 'true', 'false'].includes(name.toLowerCase())) throw new OpError(`"${name}" is a keyword of conditions and cannot name an input`, 'reserved');
+}
+
+function checkStepName(id: string): void {
+  checkTag(id, 'step name');
+  if (id === SEQ_BLOCK) throw new OpError(`"${id}" is reserved for the sequence signals (SEQ.RUNNING …) and cannot name a step`, 'reserved');
+}
+
+/**
+ * Normalises and checks a folder path under `strategies/` ('' = root). Every op
+ * taking a folder uses this one rule.
+ */
+export function checkFolder(folder: string, opts: { allowRoot?: boolean } = {}): string {
+  const f = folder.replace(/^\/+|\/+$/g, '');
+  if (!f) {
+    if (opts.allowRoot) return '';
+    throw new OpError('Choose a folder', 'invalid-name');
+  }
+  for (const p of f.split('/')) {
+    if (!p || p === '.' || p === '..' || /[\\:*?"<>|]/.test(p) || p.startsWith('.')) throw new OpError(`Invalid folder name "${p}" — no empty names, ".", "..", or \\ : * ? " < > |`, 'invalid-name');
+  }
+  return f;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,10 +401,10 @@ export function strategyTemplate(name: string, title?: string, uid = newUid()): 
   return stringifyDoc(new Document(data));
 }
 
-function blockTypeTemplate(type: string, category: string, kind: 'basic' | 'composite'): string {
+function blockTypeTemplate(type: string, category: string, kind: 'basic' | 'composite', uid = newUid()): string {
   const data: Record<string, unknown> = {
     format: formatTag('blocktype'),
-    uid: newUid(),
+    uid,
     type,
     version: '1.0.0',
     category,
@@ -346,16 +421,16 @@ function blockTypeTemplate(type: string, category: string, kind: 'basic' | 'comp
 /** Updates strategies and composite types whose blocks use the type in `typeFile` after a port rename. */
 function propagatePortRename(tx: Tx, typeFile: string, list: PortList, from: string, to: string): void {
   const model = loadProject(tx.files);
-  const renameKey = (m: unknown) => {
+  const renameParam = (m: unknown) => {
     if (!isMap(m)) return;
     const pair = m.items.find((p) => keyOf(p) === from);
-    if (pair) pair.key = new Scalar(to);
+    if (pair) renameKey(pair, to);
   };
   const fixDiagram = (file: string, root: YamlPath, ids: string[], strategy?: string) => {
     if (!ids.length) return;
     tx.edit(file, (doc) => {
       for (const id of ids) {
-        if (list !== 'outputs') renameKey(getNode(doc, [...root, 'blocks', id, 'params']));
+        if (list !== 'outputs') renameParam(getNode(doc, [...root, 'blocks', id, 'params']));
       }
       rewriteLinks(doc, root, (_i, f, t) => {
         if (!f || !t) return;
@@ -392,10 +467,30 @@ function propagatePortRename(tx: Tx, typeFile: string, list: PortList, from: str
 
 function typeFileOf(tx: Tx, file: string): { lib: string } {
   const role = classify(file);
-  if (role.kind !== 'blocktype') throw new OpError(`"${file}" is not a block type`);
-  if (!tx.has(file)) throw new OpError(`"${file}" does not exist`);
+  if (role.kind !== 'blocktype') throw new OpError(`File "${file}" is not a block type`, 'wrong-file');
+  if (!tx.has(file)) throw new OpError(`File "${file}" does not exist`, 'not-found');
   return role;
 }
+
+const KIND_LABEL: Record<string, string> = { strategy: 'strategy', sequence: 'sequence', blocktype: 'block type' };
+
+/**
+ * Checks that `file` exists and is one of `kinds`. Diagram ops address a
+ * strategy (root []) or the internals of a composite block type (root ['diagram']).
+ */
+function fileOf(tx: Tx, file: string, kinds: ('strategy' | 'sequence' | 'blocktype' | 'project')[], root: YamlPath = []): 'strategy' | 'sequence' | 'blocktype' | 'project' {
+  const kind = classify(file).kind;
+  if (!(kinds as string[]).includes(kind)) {
+    throw new OpError(`File "${file}" is not a ${kinds.map((k) => KIND_LABEL[k] ?? k).join(' or ')}`, 'wrong-file');
+  }
+  if (!tx.has(file)) throw new OpError(`File "${file}" does not exist`, 'not-found');
+  if (kind === 'blocktype' && root[0] !== 'diagram') throw new OpError(`File "${file}" is a block type — address its internals with root ['diagram']`, 'wrong-file');
+  if (kind !== 'blocktype' && root.length) throw new OpError(`File "${file}" has no diagram at ${root.join('.')}`, 'wrong-file');
+  return kind as 'strategy' | 'sequence' | 'blocktype' | 'project';
+}
+
+/** Word for messages: a sequence is never called a strategy. */
+const fileNoun = (file: string) => (classify(file).kind === 'sequence' ? 'sequence' : classify(file).kind === 'blocktype' ? 'composite block' : 'strategy');
 
 // ---------------------------------------------------------------------------
 // applyOp
@@ -415,8 +510,15 @@ class Tx {
   }
   text(path: string): string {
     const c = this.files[path];
-    if (typeof c !== 'string') throw new OpError(`File "${path}" does not exist`);
+    if (typeof c !== 'string') throw new OpError(`File "${path}" does not exist`, 'not-found');
     return c;
+  }
+  /** Fresh editable document of `path`, upgraded to the current format. */
+  doc(path: string): Document {
+    const doc = parseForEdit(this.text(path), path);
+    const kind = docKindOf(path);
+    if (kind) migrateDocument(doc, kind, path);
+    return doc;
   }
   write(path: string, content: FileContent) {
     this.touch(path);
@@ -427,9 +529,10 @@ class Tx {
     this.touch(path);
     delete this.files[path];
   }
-  edit(path: string, fn: (doc: Document) => void) {
-    const doc = parseForEdit(this.text(path));
-    fn(doc);
+  /** Edits the YAML tree of `path`; `fn` returns false when it changed nothing. */
+  edit(path: string, fn: (doc: Document) => void | boolean) {
+    const doc = this.doc(path);
+    if (fn(doc) === false) return;
     const out = stringifyDoc(doc);
     if (out !== this.files[path]) this.write(path, out);
   }
@@ -439,6 +542,11 @@ class Tx {
     for (const k of changed) before[k] = this.before[k];
     return { files: this.files, changed, before };
   }
+}
+
+function docKindOf(path: string): DocKind | undefined {
+  const k = classify(path).kind;
+  return k === 'project' || k === 'library' || k === 'blocktype' || k === 'strategy' || k === 'sequence' ? k : undefined;
 }
 
 function strategyFiles(tx: Tx): string[] {
@@ -456,7 +564,7 @@ function nameKey(file: string): 'strategy' | 'sequence' {
 
 function strategyNameOf(tx: Tx, file: string): string | undefined {
   try {
-    const v = parseForEdit(tx.text(file)).get(nameKey(file));
+    const v = tx.doc(file).get(nameKey(file));
     return typeof v === 'string' ? v : undefined;
   } catch {
     return undefined;
@@ -468,9 +576,14 @@ function assertNameFree(tx: Tx, name: string, except?: string): void {
   for (const f of [...strategyFiles(tx), ...sequenceFiles(tx)]) {
     if (f === except) continue;
     if (strategyNameOf(tx, f) === name || (classify(f) as { name: string }).name === name) {
-      throw new OpError(`Name "${name}" is already used by ${f}`);
+      throw new OpError(`Name "${name}" is already used by ${f}`, 'exists');
     }
   }
+}
+
+/** Canonical top-level key order of a strategy or sequence file. */
+function headerKeys(file: string): string[] {
+  return nameKey(file) === 'sequence' ? SEQ_KEYS : STRATEGY_KEYS;
 }
 
 function fileFor(file: string, folder: string, name: string): string {
@@ -481,57 +594,68 @@ function fileFor(file: string, folder: string, name: string): string {
  * Rewrites references `STRATEGY:BLOCK.PORT` inside sequences: action targets
  * (`set:`) and transition conditions (text, rewritten in place).
  */
-function rewriteSequenceRefs(tx: Tx, rename: (ep: Endpoint) => Endpoint | undefined): void {
-  for (const f of sequenceFiles(tx)) {
-    let doc: Document;
-    try {
-      doc = parseForEdit(tx.text(f));
-    } catch {
-      continue;
+/** Rewrites the condition texts of a sequence document; returns true when something changed. */
+function rewriteConditions(doc: Document, fn: (r: RefExpr) => string | undefined): boolean {
+  const trans = getNode(doc, ['transitions']);
+  if (!isSeq(trans)) return false;
+  let changed = false;
+  for (const t of trans.items) {
+    if (!isMap(t)) continue;
+    const c = t.get('condition');
+    if (typeof c !== 'string') continue;
+    const text = rewriteExprRefs(c, fn);
+    if (text !== c) {
+      t.set('condition', text);
+      changed = true;
     }
-    let changed = false;
-    const steps = getNode(doc, ['steps']);
-    if (isMap(steps)) {
-      for (const p of steps.items) {
-        const actions = isMap(p.value) ? p.value.get('actions', true) : undefined;
-        if (!isSeq(actions)) continue;
-        for (const a of actions.items) {
-          if (!isMap(a)) continue;
-          const set = a.get('set');
-          const ep = typeof set === 'string' ? parseEndpoint(set) : undefined;
-          const n = ep ? rename(ep) : undefined;
-          if (n) {
-            a.set('set', formatEndpoint(n));
-            changed = true;
-          }
-        }
-      }
-    }
-    const trans = getNode(doc, ['transitions']);
-    if (isSeq(trans)) {
-      for (const t of trans.items) {
-        if (!isMap(t)) continue;
-        const c = t.get('condition');
-        if (typeof c !== 'string') continue;
-        let expr;
-        try {
-          expr = parseExpr(c);
-        } catch {
-          continue;
-        }
-        let text = c;
-        for (const r of exprRefs(expr).sort((x, y) => y.at - x.at)) {
-          if (!r.scope || !r.port) continue;
-          const n = rename({ strategy: r.scope, block: r.name, port: r.port });
-          if (n) text = text.slice(0, r.at) + formatEndpoint(n) + text.slice(r.at + r.text.length);
-        }
-        if (text !== c) {
-          t.set('condition', text);
+  }
+  return changed;
+}
+
+/** Condition rewrite for a renamed step of the same sequence (`S10.X` → `S15.X`). */
+const stepRefRename = (map: Record<string, string>) => (r: RefExpr) => (!r.scope && r.port && map[r.name] && map[r.name] !== r.name ? `${map[r.name]}.${r.port}` : undefined);
+
+/** Rewrites `STRATEGY:BLOCK.PORT` references in one sequence document (actions and conditions). */
+function rewriteSeqDocRefs(doc: Document, rename: (ep: Endpoint) => Endpoint | undefined): boolean {
+  let changed = false;
+  const steps = getNode(doc, ['steps']);
+  if (isMap(steps)) {
+    for (const p of steps.items) {
+      const actions = isMap(p.value) ? p.value.get('actions', true) : undefined;
+      if (!isSeq(actions)) continue;
+      for (const a of actions.items) {
+        if (!isMap(a)) continue;
+        const set = a.get('set');
+        const ep = typeof set === 'string' ? parseEndpoint(set) : undefined;
+        const n = ep ? rename(ep) : undefined;
+        if (n) {
+          a.set('set', formatEndpoint(n));
           changed = true;
         }
       }
     }
-    if (changed) tx.write(f, stringifyDoc(doc));
+  }
+  const cond = rewriteConditions(doc, (r) => {
+    if (!r.scope || !r.port) return undefined;
+    const n = rename({ strategy: r.scope, block: r.name, port: r.port });
+    return n ? formatEndpoint(n) : undefined;
+  });
+  return changed || cond;
+}
+
+/**
+ * Rewrites references `STRATEGY:BLOCK.PORT` inside sequences: action targets
+ * (`set:`) and transition conditions (text, rewritten in place).
+ */
+function rewriteSequenceRefs(tx: Tx, rename: (ep: Endpoint) => Endpoint | undefined): void {
+  for (const f of sequenceFiles(tx)) {
+    let doc: Document;
+    try {
+      doc = tx.doc(f);
+    } catch {
+      continue; // leave files with syntax errors alone
+    }
+    if (rewriteSeqDocRefs(doc, rename)) tx.write(f, stringifyDoc(doc));
   }
 }
 
@@ -541,7 +665,7 @@ function renameRefs(tx: Tx, rename: (ep: Endpoint) => Endpoint | undefined): voi
   for (const f of strategyFiles(tx)) {
     let doc: Document;
     try {
-      doc = parseForEdit(tx.text(f));
+      doc = tx.doc(f);
     } catch {
       continue; // leave files with syntax errors alone
     }
@@ -556,7 +680,7 @@ function renameRefs(tx: Tx, rename: (ep: Endpoint) => Endpoint | undefined): voi
 
 function moveWithDoc(tx: Tx, from: string, to: string): void {
   if (from === to) return;
-  if (tx.has(to)) throw new OpError(`"${to}" already exists`);
+  if (tx.has(to)) throw new OpError(`File "${to}" already exists`, 'exists');
   tx.write(to, tx.files[from]);
   tx.remove(from);
   const md = strategyDocFile(from);
@@ -566,14 +690,22 @@ function moveWithDoc(tx: Tx, from: string, to: string): void {
   }
 }
 
+/** Diagram ops that also apply to sequences (notes, sheets, layout). */
+const SHEET_OPS = new Set(['addNote', 'setNote', 'removeNote', 'addSheet', 'renameSheet', 'removeSheet', 'pinAll', 'unpinAll', 'moveToSheet']);
+/** Diagram ops that need a strategy or a composite block type. */
+const DIAGRAM_OPS = new Set(['insertFragment', 'removeBlocks', 'addBlock', 'removeBlock', 'renameBlock', 'setBlockField', 'setParam', 'moveBlock', 'setOrders', 'connect', 'disconnect', 'setLinkComment', 'setLinkField', 'setBlockDisplay']);
+
 function run(tx: Tx, op: Op): void {
   const root = 'root' in op && op.root ? op.root : [];
+  if (DIAGRAM_OPS.has(op.op)) fileOf(tx, (op as { file: string }).file, ['strategy', 'blocktype'], root);
+  if (SHEET_OPS.has(op.op)) fileOf(tx, (op as { file: string }).file, ['strategy', 'sequence', 'blocktype'], root);
   if (runTypeOp(tx, op)) return;
   if (runSequenceOp(tx, op)) return;
+  if (runSheetOp(tx, op, root)) return;
   switch (op.op) {
     case 'insertFragment': {
       const frag = parseFragment(op.fragment);
-      if (!frag || (!Object.keys(frag.blocks).length && !frag.notes.length)) throw new OpError('The clipboard does not contain diagram blocks');
+      if (!frag || (!Object.keys(frag.blocks).length && !frag.notes.length)) throw new OpError('The clipboard does not contain diagram blocks', 'invalid');
       const [dx, dy] = op.offset ?? [0, 0];
       tx.edit(op.file, (doc) => {
         const blocks = ensureMap(doc, [...root, 'blocks']);
@@ -610,9 +742,9 @@ function run(tx: Tx, op: Op): void {
     case 'removeBlocks':
       tx.edit(op.file, (doc) => {
         const blocks = getNode(doc, [...root, 'blocks']);
-        if (!isMap(blocks)) throw new OpError('No blocks to remove');
         const ids = new Set(op.ids);
-        for (const id of ids) blocks.delete(id);
+        for (const id of ids) if (!isMap(blocks) || !blocks.has(id)) throw new OpError(`Block "${id}" does not exist`, 'not-found');
+        for (const id of ids) (blocks as YAMLMap).delete(id);
         rewriteLinks(doc, root, (_i, from, to) => ((from && !from.strategy && ids.has(from.block)) || (to && ids.has(to.block)) ? 'delete' : undefined));
       });
       return;
@@ -620,16 +752,17 @@ function run(tx: Tx, op: Op): void {
       tx.write(op.file, op.text);
       return;
     case 'createFile':
-      if (tx.has(op.file)) throw new OpError(`"${op.file}" already exists`);
+      if (tx.has(op.file)) throw new OpError(`File "${op.file}" already exists`, 'exists');
       tx.write(op.file, op.content);
       return;
     case 'deleteFile':
-      if (!tx.has(op.file)) throw new OpError(`"${op.file}" does not exist`);
+      if (!tx.has(op.file)) throw new OpError(`File "${op.file}" does not exist`, 'not-found');
       tx.remove(op.file);
       return;
     case 'moveFile':
-      if (!tx.has(op.from)) throw new OpError(`"${op.from}" does not exist`);
-      if (tx.has(op.to)) throw new OpError(`"${op.to}" already exists`);
+      if (!tx.has(op.from)) throw new OpError(`File "${op.from}" does not exist`, 'not-found');
+      if (op.from === op.to) return;
+      if (tx.has(op.to)) throw new OpError(`File "${op.to}" already exists`, 'exists');
       tx.write(op.to, tx.files[op.from]);
       tx.remove(op.from);
       return;
@@ -645,64 +778,71 @@ function run(tx: Tx, op: Op): void {
 
     // --- project structure ---------------------------------------------------
     case 'createFolder': {
-      const parts = op.folder.split('/');
-      parts.forEach((p) => {
-        if (!p || p === '.' || p === '..' || /[\\:*?"<>|]/.test(p)) throw new OpError(`Invalid folder name "${p}"`);
-      });
-      const readme = folderReadme(op.folder);
-      if (!tx.has(readme)) tx.write(readme, `# ${parts[parts.length - 1]}\n`);
+      const folder = checkFolder(op.folder);
+      const readme = folderReadme(folder);
+      if (!tx.has(readme)) tx.write(readme, `# ${folder.split('/').pop()}\n`);
       return;
     }
     case 'createStrategy': {
-      checkTag(op.name, 'strategy name');
+      const folder = checkFolder(op.folder, { allowRoot: true });
+      checkStrategyName(op.name, 'strategy name');
       assertNameFree(tx, op.name);
-      const file = strategyFile(op.folder, op.name);
-      if (tx.has(file)) throw new OpError(`"${file}" already exists`);
-      tx.write(file, strategyTemplate(op.name, op.title));
+      const file = strategyFile(folder, op.name);
+      if (tx.has(file)) throw new OpError(`File "${file}" already exists`, 'exists');
+      tx.write(file, strategyTemplate(op.name, op.title, op.uid));
       return;
     }
     case 'renameStrategy': {
-      checkTag(op.name, 'name');
+      fileOf(tx, op.file, ['strategy', 'sequence']);
       const old = strategyNameOf(tx, op.file);
+      if (old === op.name && (classify(op.file) as { name: string }).name === op.name) return; // same name: nothing to do
+      checkStrategyName(op.name, `${fileNoun(op.file)} name`);
       assertNameFree(tx, op.name, op.file);
-      tx.edit(op.file, (doc) => setOrdered(ensureMap(doc, []), nameKey(op.file), op.name, [...STRATEGY_KEYS, 'sequence'], doc));
+      tx.edit(op.file, (doc) => setOrdered(ensureMap(doc, []), nameKey(op.file), op.name, headerKeys(op.file), doc));
       const role = classify(op.file) as { folder: string };
       moveWithDoc(tx, op.file, fileFor(op.file, role.folder, op.name));
       if (old && old !== op.name) renameRefs(tx, (ep) => (ep.strategy === old ? { ...ep, strategy: op.name } : undefined));
       return;
     }
     case 'moveStrategy': {
-      const role = classify(op.file);
-      if (role.kind !== 'strategy' && role.kind !== 'sequence') throw new OpError(`"${op.file}" is not a strategy or sequence`);
-      moveWithDoc(tx, op.file, fileFor(op.file, op.folder, role.name));
+      fileOf(tx, op.file, ['strategy', 'sequence']);
+      const role = classify(op.file) as { name: string };
+      moveWithDoc(tx, op.file, fileFor(op.file, checkFolder(op.folder, { allowRoot: true }), role.name));
       return;
     }
     case 'duplicateStrategy': {
-      checkTag(op.name, 'name');
+      fileOf(tx, op.file, ['strategy', 'sequence']);
+      checkStrategyName(op.name, `${fileNoun(op.file)} name`);
       assertNameFree(tx, op.name);
       const role = classify(op.file) as { folder: string };
       const to = fileFor(op.file, role.folder, op.name);
-      if (tx.has(to)) throw new OpError(`"${to}" already exists`);
-      const doc = parseForEdit(tx.text(op.file));
+      if (tx.has(to)) throw new OpError(`File "${to}" already exists`, 'exists');
+      const doc = tx.doc(op.file);
       const m = ensureMap(doc, []);
-      setOrdered(m, nameKey(op.file), op.name, [...STRATEGY_KEYS, 'sequence'], doc);
-      setOrdered(m, 'uid', newUid(), STRATEGY_KEYS, doc);
+      const old = strategyNameOf(tx, op.file) ?? (classify(op.file) as { name: string }).name;
+      setOrdered(m, nameKey(op.file), op.name, headerKeys(op.file), doc);
+      setOrdered(m, 'uid', op.uid ?? newUid(), headerKeys(op.file), doc);
+      // References of the copy to itself (`OLD:S10.X` in its own conditions) follow the copy.
+      const self = (ep: Endpoint) => (ep.strategy === old ? { ...ep, strategy: op.name } : undefined);
+      if (nameKey(op.file) === 'sequence') rewriteSeqDocRefs(doc, self);
+      else rewriteLinks(doc, [], (_i, f, t) => (f && t && f.strategy === old ? { from: { ...f, strategy: op.name }, to: t } : undefined));
       tx.write(to, stringifyDoc(doc));
       const md = strategyDocFile(op.file);
       if (tx.has(md)) tx.write(strategyDocFile(to), tx.files[md]);
       return;
     }
     case 'setStrategyField':
-      tx.edit(op.file, (doc) => setOrDelete(doc, ensureMap(doc, []), op.field, op.value, STRATEGY_KEYS));
+      fileOf(tx, op.file, ['strategy', 'sequence']);
+      tx.edit(op.file, (doc) => setOrDelete(doc, ensureMap(doc, []), op.field, op.value, headerKeys(op.file)));
       return;
 
     // --- diagram ---------------------------------------------------------------
     case 'addBlock':
       checkTag(op.id, 'block name');
-      if (!parseTypeRef(op.type)) throw new OpError(`Invalid block type "${op.type}"`);
+      if (!parseTypeRef(op.type)) throw new OpError(`Invalid block type "${op.type}"`, 'invalid-name');
       tx.edit(op.file, (doc) => {
         const blocks = ensureMap(doc, [...root, 'blocks']);
-        if (blocks.has(op.id)) throw new OpError(`Block "${op.id}" already exists`);
+        if (blocks.has(op.id)) throw new OpError(`Block "${op.id}" already exists`, 'exists');
         const m = new YAMLMap();
         setOrdered(m, 'type', op.type, BLOCK_KEYS, doc);
         if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, BLOCK_KEYS, doc);
@@ -718,21 +858,21 @@ function run(tx: Tx, op: Op): void {
     case 'removeBlock':
       tx.edit(op.file, (doc) => {
         const blocks = getNode(doc, [...root, 'blocks']);
-        if (!isMap(blocks) || !blocks.has(op.id)) throw new OpError(`Block "${op.id}" does not exist`);
+        if (!isMap(blocks) || !blocks.has(op.id)) throw new OpError(`Block "${op.id}" does not exist`, 'not-found');
         blocks.delete(op.id);
         rewriteLinks(doc, root, (_i, from, to) => (from && !from.strategy && from.block === op.id) || to?.block === op.id ? 'delete' : undefined);
       });
       return;
     case 'renameBlock': {
-      checkTag(op.to, 'block name');
       let strategyName: string | undefined;
+      if (op.from !== op.to) checkTag(op.to, 'block name');
       tx.edit(op.file, (doc) => {
         const blocks = getNode(doc, [...root, 'blocks']);
-        if (!isMap(blocks)) throw new OpError(`Block "${op.from}" does not exist`);
-        if (blocks.has(op.to)) throw new OpError(`Block "${op.to}" already exists`);
-        const pair = blocks.items.find((p) => keyOf(p) === op.from);
-        if (!pair) throw new OpError(`Block "${op.from}" does not exist`);
-        pair.key = new Scalar(op.to);
+        const pair = isMap(blocks) ? blocks.items.find((p) => keyOf(p) === op.from) : undefined;
+        if (!pair) throw new OpError(`Block "${op.from}" does not exist`, 'not-found');
+        if (op.from === op.to) return false;
+        if ((blocks as YAMLMap).has(op.to)) throw new OpError(`Block "${op.to}" already exists`, 'exists');
+        renameKey(pair, op.to);
         const ren = (ep: Endpoint): Endpoint => (!ep.strategy && ep.block === op.from ? { ...ep, block: op.to } : ep);
         rewriteLinks(doc, root, (_i, from, to) => {
           if (!from || !to) return;
@@ -742,14 +882,14 @@ function run(tx: Tx, op: Op): void {
         });
         if (!root.length) strategyName = typeof doc.get('strategy') === 'string' ? (doc.get('strategy') as string) : undefined;
       });
-      if (strategyName) {
+      if (strategyName && op.from !== op.to) {
         const sn = strategyName;
         renameRefs(tx, (ep) => (ep.strategy === sn && ep.block === op.from ? { ...ep, block: op.to } : undefined));
       }
       return;
     }
     case 'setBlockField':
-      if (op.field === 'type' && (typeof op.value !== 'string' || !parseTypeRef(op.value))) throw new OpError(`Invalid block type "${String(op.value)}"`);
+      if (op.field === 'type' && (typeof op.value !== 'string' || !parseTypeRef(op.value))) throw new OpError(`Invalid block type "${String(op.value)}"`, 'invalid-name');
       tx.edit(op.file, (doc) => {
         const value = op.field === 'sheet' && op.value === 1 ? undefined : op.value;
         setOrDelete(doc, blockMap(doc, root, op.id), op.field, value, BLOCK_KEYS);
@@ -784,25 +924,11 @@ function run(tx: Tx, op: Op): void {
         for (const [id, o] of Object.entries(op.orders)) setOrdered(blockMap(doc, root, id), 'order', o, BLOCK_KEYS, doc);
       });
       return;
-    case 'pinAll':
-      tx.edit(op.file, (doc) => {
-        for (const [id, p] of Object.entries(op.positions)) {
-          if (RESERVED_IDS.has(id)) continue; // composite interface bars are not stored
-          setOrdered(blockMap(doc, root, id), 'pos', p.map(Math.round), BLOCK_KEYS, doc);
-        }
-      });
-      return;
-    case 'unpinAll':
-      tx.edit(op.file, (doc) => {
-        const blocks = getNode(doc, [...root, 'blocks']);
-        if (isMap(blocks)) for (const p of blocks.items) if (isMap(p.value)) p.value.delete('pos');
-      });
-      return;
     case 'connect': {
       const from = parseEndpoint(op.from);
       const to = parseEndpoint(op.to);
-      if (!from || !to) throw new OpError(`Invalid link ${op.from} -> ${op.to}`);
-      if (to.strategy) throw new OpError('A link can only pull a signal from another strategy');
+      if (!from || !to) throw new OpError(`Invalid link ${op.from} -> ${op.to} — expected BLOCK.PORT -> BLOCK.PORT`, 'invalid');
+      if (to.strategy) throw new OpError('A link can only pull a signal from another strategy or sequence', 'invalid');
       tx.edit(op.file, (doc) => {
         let duplicate = false;
         rewriteLinks(doc, root, (_i, f, t) => {
@@ -825,7 +951,7 @@ function run(tx: Tx, op: Op): void {
     case 'disconnect':
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'links']);
-        if (!isSeq(seq) || !seq.items[op.index]) throw new OpError(`Link ${op.index} does not exist`);
+        if (!isSeq(seq) || !seq.items[op.index]) throw new OpError(`Link ${op.index + 1} does not exist`, 'not-found');
         seq.items.splice(op.index, 1);
       });
       return;
@@ -833,43 +959,45 @@ function run(tx: Tx, op: Op): void {
     case 'setLinkField': {
       const field = op.op === 'setLinkComment' ? 'comment' : op.field;
       const value = op.op === 'setLinkComment' ? op.comment : op.value;
-      if (field === 'category' && value && !TAG_RE.test(value)) throw new OpError(`Invalid category name "${value}"`);
+      if (field === 'category' && value && !TAG_RE.test(value)) throw new OpError(`Invalid category name "${value}"`, 'invalid-name');
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'links']);
         const item = isSeq(seq) ? seq.items[op.index] : undefined;
-        if (!item) throw new OpError(`Link ${op.index} does not exist`);
+        if (!item) throw new OpError(`Link ${op.index + 1} does not exist`, 'not-found');
         const { from, to } = linkEndpoints(item);
-        if (!from || !to) throw new OpError('Link is not valid');
+        if (!from || !to) throw new OpError(`Link ${op.index + 1} is not valid — fix it in the text editor`, 'invalid');
         if (isMap(item)) {
           setOrDelete(doc, item, field, value, LINK_KEYS);
           // Back to the short `A.X -> B.Y` form when nothing else is left.
           const onlyEnds = item.items.every((p) => keyOf(p) === 'from' || keyOf(p) === 'to');
-          if (onlyEnds) (seq as YAMLSeq).items[op.index] = new Scalar(formatLink(from, to));
+          if (onlyEnds) {
+            const short = new Scalar(formatLink(from, to));
+            short.comment = item.comment;
+            short.commentBefore = item.commentBefore;
+            (seq as YAMLSeq).items[op.index] = short;
+          }
         } else if (value) {
           const m = new YAMLMap();
           setOrdered(m, 'from', formatEndpoint(from), LINK_KEYS, doc);
           setOrdered(m, 'to', formatEndpoint(to), LINK_KEYS, doc);
           setOrdered(m, field, value, LINK_KEYS, doc);
+          m.commentBefore = (item as Scalar).commentBefore;
+          m.comment = (item as Scalar).comment;
           (seq as YAMLSeq).items[op.index] = m;
         }
       });
       return;
     }
     case 'renameFolder': {
-      const norm = (f: string) => f.replace(/^\/+|\/+$/g, '');
-      const from = norm(op.from);
-      const to = norm(op.to);
-      if (!from) throw new OpError('Choose a folder to rename');
-      to.split('/').forEach((p) => {
-        if (!p || p === '.' || p === '..' || /[\\:*?"<>|]/.test(p)) throw new OpError(`Invalid folder name "${p}"`);
-      });
+      const from = checkFolder(op.from);
+      const to = checkFolder(op.to);
       if (from === to) return;
-      if (to.startsWith(from + '/')) throw new OpError('A folder cannot be moved into itself');
+      if (to.startsWith(from + '/')) throw new OpError(`Folder "${from}" cannot be moved into itself`, 'invalid');
       const src = `strategies/${from}/`;
       const dst = `strategies/${to}/`;
       const moving = Object.keys(tx.files).filter((f) => f.startsWith(src));
-      if (!moving.length) throw new OpError(`Folder "${from}" does not exist`);
-      if (Object.keys(tx.files).some((f) => f.startsWith(dst))) throw new OpError(`Folder "${to}" already exists`);
+      if (!moving.length) throw new OpError(`Folder "${from}" does not exist`, 'not-found');
+      if (Object.keys(tx.files).some((f) => f.startsWith(dst))) throw new OpError(`Folder "${to}" already exists`, 'exists');
       for (const f of moving) {
         tx.write(dst + f.slice(src.length), tx.files[f]);
         tx.remove(f);
@@ -878,7 +1006,7 @@ function run(tx: Tx, op: Op): void {
     }
     case 'setDrawing': {
       const key = op.path.join('.');
-      if (!DRAWING_PATHS.has(key)) throw new OpError(`Unknown drawing setting "${key}"`);
+      if (!DRAWING_PATHS.has(key)) throw new OpError(`Drawing setting "${key}" does not exist`, 'not-found');
       tx.edit('project.yaml', (doc) => {
         ensureMap(doc, [], PROJECT_KEYS);
         const full = ['drawing', ...op.path];
@@ -925,7 +1053,7 @@ function run(tx: Tx, op: Op): void {
       });
       return;
     case 'setSignalCategory':
-      if (!TAG_RE.test(op.name)) throw new OpError(`Invalid category name "${op.name}"`);
+      if (!TAG_RE.test(op.name)) throw new OpError(`Invalid category name "${op.name}"`, 'invalid-name');
       tx.edit('project.yaml', (doc) => {
         const m = ensureMap(doc, [], ['format', 'uid', 'name', 'description', 'author', 'levels', 'title_block', 'signal_categories']);
         const cats = ensureMap(doc, ['signal_categories'], ['format', 'uid', 'name', 'description', 'author', 'levels', 'title_block', 'signal_categories']);
@@ -940,6 +1068,69 @@ function run(tx: Tx, op: Op): void {
         cats.set(op.name, c);
       });
       return;
+    // --- library ---------------------------------------------------------------
+    case 'createLibrary': {
+      checkTag(op.folder, 'library folder');
+      const file = libraryFile(op.folder);
+      if (tx.has(file)) throw new OpError(`Library "${op.folder}" already exists`, 'exists');
+      const data: Record<string, unknown> = { format: formatTag('library'), uid: op.uid ?? newUid(), name: op.name ?? op.folder, version: '1.0.0' };
+      if (op.description) data.description = op.description;
+      tx.write(file, stringifyDoc(new Document(data)));
+      return;
+    }
+    case 'createBlockType': {
+      if (!IDENT_RE.test(op.type)) throw new OpError(`Invalid type name "${op.type}" — use letters, digits and "_"`, 'invalid-name');
+      if (!tx.has(libraryFile(op.lib))) throw new OpError(`Library "${op.lib}" does not exist`, 'not-found');
+      const file = blockTypeFile(op.lib, op.type, '1.0.0');
+      if (Object.keys(tx.files).some((f) => f.startsWith(`library/${op.lib}/${op.type}@`))) {
+        throw new OpError(`Type "${op.type}" already exists in library "${op.lib}" — create a new version instead`, 'exists');
+      }
+      tx.write(file, blockTypeTemplate(op.type, op.category ?? 'Custom', op.kind ?? 'basic', op.uid));
+      return;
+    }
+    case 'newTypeVersion': {
+      const { lib } = typeFileOf(tx, op.file);
+      const doc = tx.doc(op.file);
+      const type = String(doc.get('type'));
+      const version = bumpVersion(String(doc.get('version')), op.part);
+      doc.set('version', version);
+      const to = blockTypeFile(lib, type, version);
+      if (tx.has(to)) throw new OpError(`Type "${type}@${version}" already exists`, 'exists');
+      tx.write(to, stringifyDoc(doc));
+      return;
+    }
+  }
+}
+
+/**
+ * Notes, sheets and layout: the same ops for strategies, composite internals
+ * (`root: ['diagram']`) and sequences. Elements are blocks, or steps in a sequence.
+ */
+function runSheetOp(tx: Tx, op: Op, root: YamlPath): boolean {
+  if (!SHEET_OPS.has(op.op)) return false;
+  const file = (op as { file: string }).file;
+  const isSeqFile = classify(file).kind === 'sequence';
+  const elements = isSeqFile ? 'steps' : 'blocks';
+  const keys = isSeqFile ? STEP_KEYS : BLOCK_KEYS;
+  const noun = isSeqFile ? 'Step' : 'Block';
+  const elementMap = (doc: Document, id: string): YAMLMap => {
+    const n = getNode(doc, [...root, elements]);
+    const pair = isMap(n) ? n.items.find((p) => keyOf(p) === id) : undefined;
+    if (!pair) throw new OpError(`${noun} "${id}" does not exist`, 'not-found');
+    if (isMap(pair.value)) {
+      if (pair.value.flow) pair.value.flow = false;
+      return pair.value;
+    }
+    const m = new YAMLMap(); // `S10:` with no content yet
+    pair.value = m;
+    return m;
+  };
+  const sheetIds = (doc: Document): number[] => {
+    const seq = getNode(doc, [...root, 'sheets']);
+    const ids = isSeq(seq) ? seq.items.map((it) => (isMap(it) ? Number(it.get('id')) : NaN)).filter(Number.isFinite) : [];
+    return ids.length ? ids : [1];
+  };
+  switch (op.op) {
     case 'addNote':
       tx.edit(op.file, (doc) => {
         const m = new YAMLMap();
@@ -948,24 +1139,24 @@ function run(tx: Tx, op: Op): void {
         if (op.pos) setOrdered(m, 'pos', op.pos.map(Math.round), NOTE_KEYS, doc);
         ensureSeq(doc, [...root, 'notes']).items.push(m);
       });
-      return;
+      return true;
     case 'setNote':
       tx.edit(op.file, (doc) => {
         const n = getNode(doc, [...root, 'notes', op.index]);
-        if (!isMap(n)) throw new OpError(`Note ${op.index} does not exist`);
+        if (!isMap(n)) throw new OpError(`Note ${op.index + 1} does not exist`, 'not-found');
         if (op.text !== undefined) setOrdered(n, 'text', op.text, NOTE_KEYS, doc);
         if (op.sheet !== undefined) setOrDelete(doc, n, 'sheet', op.sheet === 1 ? undefined : op.sheet, NOTE_KEYS);
         if (op.pos !== undefined) setOrDelete(doc, n, 'pos', op.pos?.map(Math.round), NOTE_KEYS);
         if (op.width !== undefined) setOrdered(n, 'width', Math.round(op.width), NOTE_KEYS, doc);
       });
-      return;
+      return true;
     case 'removeNote':
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'notes']);
-        if (!isSeq(seq) || !seq.items[op.index]) throw new OpError(`Note ${op.index} does not exist`);
+        if (!isSeq(seq) || !seq.items[op.index]) throw new OpError(`Note ${op.index + 1} does not exist`, 'not-found');
         seq.items.splice(op.index, 1);
       });
-      return;
+      return true;
     case 'addSheet':
       tx.edit(op.file, (doc) => {
         const seq = ensureSeq(doc, [...root, 'sheets']);
@@ -984,7 +1175,7 @@ function run(tx: Tx, op: Op): void {
         if (op.title) m.set('title', op.title);
         seq.items.push(m);
       });
-      return;
+      return true;
     case 'renameSheet':
       tx.edit(op.file, (doc) => {
         let seq = getNode(doc, [...root, 'sheets']);
@@ -997,60 +1188,66 @@ function run(tx: Tx, op: Op): void {
           (seq as YAMLSeq).items.push(first);
         }
         const item = isSeq(seq) ? seq.items.find((it) => isMap(it) && Number(it.get('id')) === op.id) : undefined;
-        if (!isMap(item)) throw new OpError(`Sheet ${op.id} does not exist`);
+        if (!isMap(item)) throw new OpError(`Sheet ${op.id} does not exist`, 'not-found');
         if (op.title) item.set('title', op.title);
         else item.delete('title');
       });
-      return;
+      return true;
     case 'removeSheet':
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'sheets']);
-        if (!isSeq(seq)) throw new OpError(`Sheet ${op.id} does not exist`);
+        if (!isSeq(seq)) throw new OpError(`Sheet ${op.id} does not exist`, 'not-found');
         const i = seq.items.findIndex((it) => isMap(it) && Number(it.get('id')) === op.id);
-        if (i < 0) throw new OpError(`Sheet ${op.id} does not exist`);
-        if (seq.items.length <= 1) throw new OpError('A strategy needs at least one sheet');
+        if (i < 0) throw new OpError(`Sheet ${op.id} does not exist`, 'not-found');
+        if (seq.items.length <= 1) throw new OpError(`Sheet ${op.id} is the only sheet — a ${fileNoun(op.file)} needs at least one`, 'invalid');
         const used = (path: string) => {
           const n = getNode(doc, [...root, path]);
           const items = isMap(n) ? n.items.map((p) => p.value) : isSeq(n) ? n.items : [];
           return items.some((v) => isMap(v) && Number(v.get('sheet') ?? 1) === op.id);
         };
-        if (used('blocks') || used('steps') || used('notes')) throw new OpError(`Sheet ${op.id} is not empty — move its blocks, steps and notes first`);
+        if (used('blocks') || used('steps') || used('notes')) throw new OpError(`Sheet ${op.id} is not empty — move its ${classify(op.file).kind === 'sequence' ? 'steps' : 'blocks'} and notes first`, 'not-empty');
         seq.items.splice(i, 1);
       });
-      return;
+      return true;
 
-    // --- library ---------------------------------------------------------------
-    case 'createLibrary': {
-      checkTag(op.folder, 'library folder');
-      const file = libraryFile(op.folder);
-      if (tx.has(file)) throw new OpError(`Library "${op.folder}" already exists`);
-      const data: Record<string, unknown> = { format: formatTag('library'), uid: newUid(), name: op.name ?? op.folder, version: '1.0.0' };
-      if (op.description) data.description = op.description;
-      tx.write(file, stringifyDoc(new Document(data)));
-      return;
-    }
-    case 'createBlockType': {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(op.type)) throw new OpError(`Invalid type name "${op.type}"`);
-      if (!tx.has(libraryFile(op.lib))) throw new OpError(`Library "${op.lib}" does not exist`);
-      const file = blockTypeFile(op.lib, op.type, '1.0.0');
-      if (Object.keys(tx.files).some((f) => f.startsWith(`library/${op.lib}/${op.type}@`))) {
-        throw new OpError(`Type "${op.type}" already exists in library "${op.lib}" — create a new version instead`);
-      }
-      tx.write(file, blockTypeTemplate(op.type, op.category ?? 'Custom', op.kind ?? 'basic'));
-      return;
-    }
-    case 'newTypeVersion': {
-      const role = classify(op.file);
-      if (role.kind !== 'blocktype') throw new OpError(`"${op.file}" is not a block type`);
-      const doc = parseForEdit(tx.text(op.file));
-      const type = String(doc.get('type'));
-      const version = bumpVersion(String(doc.get('version')), op.part);
-      doc.set('version', version);
-      const to = blockTypeFile(role.lib, type, version);
-      if (tx.has(to)) throw new OpError(`${type}@${version} already exists`);
-      tx.write(to, stringifyDoc(doc));
-      return;
-    }
+    case 'pinAll':
+      tx.edit(file, (doc) => {
+        for (const [id, p] of Object.entries(op.positions)) {
+          if (!isSeqFile && RESERVED_IDS.has(id)) continue; // composite interface bars are not stored
+          setOrdered(elementMap(doc, id), 'pos', p.map(Math.round), keys, doc);
+        }
+      });
+      return true;
+    case 'unpinAll':
+      tx.edit(file, (doc) => {
+        const n = getNode(doc, [...root, elements]);
+        if (!isMap(n)) return;
+        const first = sheetIds(doc)[0];
+        for (const p of n.items) {
+          if (!isMap(p.value)) continue;
+          if (op.sheet !== undefined) {
+            const sh = Number(p.value.get('sheet') ?? 1);
+            const eff = sheetIds(doc).includes(sh) ? sh : first;
+            if (eff !== op.sheet) continue;
+          }
+          p.value.delete('pos');
+        }
+      });
+      return true;
+    case 'moveToSheet':
+      tx.edit(file, (doc) => {
+        if (!sheetIds(doc).includes(op.sheet)) throw new OpError(`Sheet ${op.sheet} does not exist`, 'not-found');
+        const value = op.sheet === 1 ? undefined : op.sheet;
+        for (const id of op.ids) setOrDelete(doc, elementMap(doc, id), 'sheet', value, keys);
+        for (const i of op.notes ?? []) {
+          const n = getNode(doc, [...root, 'notes', i]);
+          if (!isMap(n)) throw new OpError(`Note ${i + 1} does not exist`, 'not-found');
+          setOrDelete(doc, n, 'sheet', value, NOTE_KEYS);
+        }
+      });
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -1079,9 +1276,9 @@ function runTypeOp(tx: Tx, op: Op): boolean {
       return true;
     case 'addPort':
       typeFileOf(tx, op.file);
-      if (!IDENT_RE.test(op.port.name)) throw new OpError(`Invalid name "${op.port.name}" — use letters, digits and "_"`);
+      if (!IDENT_RE.test(op.port.name)) throw new OpError(`Invalid port name "${op.port.name}" — use letters, digits and "_"`, 'invalid-name');
       tx.edit(op.file, (doc) => {
-        if (allPortNames(doc).has(op.port.name)) throw new OpError(`"${op.port.name}" already exists in this block type`);
+        if (allPortNames(doc).has(op.port.name)) throw new OpError(`Port "${op.port.name}" already exists in this block type`, 'exists');
         const seq = ensureSeq(doc, [op.list], TYPE_KEYS);
         const node = portNode(doc, op.port);
         if (op.index === undefined || op.index >= seq.items.length) seq.items.push(node);
@@ -1094,16 +1291,16 @@ function runTypeOp(tx: Tx, op: Op): boolean {
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [op.list]);
         const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
-        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        if (!isSeq(seq) || i < 0) throw new OpError(`Port "${op.name}" does not exist in ${op.list}`, 'not-found');
         const item = seq.items[i] as YAMLMap;
         const rename = op.patch.name !== undefined && op.patch.name !== op.name ? op.patch.name : undefined;
         if (rename !== undefined) {
-          if (!IDENT_RE.test(rename)) throw new OpError(`Invalid name "${rename}" — use letters, digits and "_"`);
-          if (allPortNames(doc).has(rename)) throw new OpError(`"${rename}" already exists in this block type`);
+          if (!IDENT_RE.test(rename)) throw new OpError(`Invalid port name "${rename}" — use letters, digits and "_"`, 'invalid-name');
+          if (allPortNames(doc).has(rename)) throw new OpError(`Port "${rename}" already exists in this block type`, 'exists');
         }
         for (const [k, v] of Object.entries(op.patch)) {
           if (k === 'name' && rename === undefined) continue;
-          if (k === 'name' && !rename) throw new OpError('A port needs a name');
+          if (k === 'name' && !rename) throw new OpError(`Port "${op.name}" needs a name`, 'invalid-name');
           if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) item.delete(k);
           else {
             const node = doc.createNode(v);
@@ -1120,9 +1317,9 @@ function runTypeOp(tx: Tx, op: Op): boolean {
             return f !== from || t !== to ? { from: f, to: t } : undefined;
           });
         }
-        if (rename) {
-          renamedPort = rename;
-          // `$NAME` parameter references inside composite internals.
+        if (rename) renamedPort = rename;
+        if (rename && op.list !== 'outputs') {
+          // `$NAME` references inside composite internals (to parameters and inputs).
           const blocks = getNode(doc, ['diagram', 'blocks']);
           if (isMap(blocks)) {
             for (const p of blocks.items) {
@@ -1141,7 +1338,7 @@ function runTypeOp(tx: Tx, op: Op): boolean {
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [op.list]);
         const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
-        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        if (!isSeq(seq) || i < 0) throw new OpError(`Port "${op.name}" does not exist in ${op.list}`, 'not-found');
         seq.items.splice(i, 1);
         if (op.list !== 'params') {
           const pseudo = op.list === 'inputs' ? 'in' : 'out';
@@ -1156,7 +1353,7 @@ function runTypeOp(tx: Tx, op: Op): boolean {
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [op.list]);
         const i = isSeq(seq) ? portIndex(seq, op.name) : -1;
-        if (!isSeq(seq) || i < 0) throw new OpError(`"${op.name}" does not exist in ${op.list}`);
+        if (!isSeq(seq) || i < 0) throw new OpError(`Port "${op.name}" does not exist in ${op.list}`, 'not-found');
         const [item] = seq.items.splice(i, 1);
         seq.items.splice(Math.max(0, Math.min(op.to, seq.items.length)), 0, item);
       });
@@ -1181,13 +1378,13 @@ function runTypeOp(tx: Tx, op: Op): boolean {
       return true;
     case 'renameBlockType': {
       const { lib } = typeFileOf(tx, op.file);
-      if (!IDENT_RE.test(op.type)) throw new OpError(`Invalid type name "${op.type}"`);
-      const old = String(parseForEdit(tx.text(op.file)).get('type'));
+      if (!IDENT_RE.test(op.type)) throw new OpError(`Invalid type name "${op.type}" — use letters, digits and "_"`, 'invalid-name');
+      const old = String(tx.doc(op.file).get('type'));
       if (old === op.type) return true;
       const prefix = (t: string) => `library/${lib}/${t}@`;
-      if (Object.keys(tx.files).some((f) => f.startsWith(prefix(op.type)))) throw new OpError(`Type "${op.type}" already exists in library "${lib}"`);
+      if (Object.keys(tx.files).some((f) => f.startsWith(prefix(op.type)))) throw new OpError(`Type "${op.type}" already exists in library "${lib}"`, 'exists');
       for (const f of Object.keys(tx.files).filter((f) => f.startsWith(prefix(old)) && f.endsWith('.yaml'))) {
-        const doc = parseForEdit(tx.text(f));
+        const doc = tx.doc(f);
         doc.set('type', op.type);
         const to = f.replace(prefix(old), prefix(op.type));
         tx.write(to, stringifyDoc(doc));
@@ -1213,7 +1410,7 @@ function runTypeOp(tx: Tx, op: Op): boolean {
         if (role.kind !== 'strategy' && role.kind !== 'blocktype') continue;
         let doc: Document;
         try {
-          doc = parseForEdit(tx.text(f));
+          doc = tx.doc(f);
         } catch {
           continue;
         }
@@ -1232,14 +1429,13 @@ const ACTION_KEYS = ['q', 'set', 'value', 'time', 'text'];
 const TRANSITION_KEYS = ['from', 'to', 'condition', 'comment'];
 
 function seqFileOf(tx: Tx, file: string): void {
-  if (classify(file).kind !== 'sequence') throw new OpError(`"${file}" is not a sequence`);
-  if (!tx.has(file)) throw new OpError(`"${file}" does not exist`);
+  fileOf(tx, file, ['sequence']);
 }
 
 function stepMap(doc: Document, id: string): YAMLMap {
   const steps = getNode(doc, ['steps']);
   const pair = isMap(steps) ? steps.items.find((p) => keyOf(p) === id) : undefined;
-  if (!pair) throw new OpError(`Step "${id}" does not exist`);
+  if (!pair) throw new OpError(`Step "${id}" does not exist`, 'not-found');
   if (isMap(pair.value)) {
     if (pair.value.flow) pair.value.flow = false;
     return pair.value;
@@ -1264,15 +1460,19 @@ function stepList(n: unknown): string[] {
   return typeof n === 'string' ? [n] : [];
 }
 
-function actionNode(doc: Document, a: Partial<ActionSpec>): YAMLMap {
+/** Action map in canonical key order; `x-` extension keys are kept. */
+function actionNode(doc: Document, spec: Partial<ActionSpec> | Record<string, unknown>): YAMLMap {
+  const a = spec as Record<string, unknown>;
   const m = new YAMLMap();
   m.flow = true;
-  for (const k of ACTION_KEYS) {
-    const v = (a as Record<string, unknown>)[k];
+  for (const k of [...ACTION_KEYS, ...extKeys(a)]) {
+    const v = a[k];
     if (v !== undefined && v !== '') m.items.push(new Pair(new Scalar(k), doc.createNode(v)));
   }
   return m;
 }
+
+const extKeys = (o: Record<string, unknown>) => Object.keys(o).filter((k) => k.startsWith('x-'));
 
 function actionsSeq(doc: Document, step: string): YAMLSeq {
   const m = stepMap(doc, step);
@@ -1288,23 +1488,40 @@ function actionsSeq(doc: Document, step: string): YAMLSeq {
 
 function transitionAt(doc: Document, index: number): YAMLMap {
   const n = getNode(doc, ['transitions', index]);
-  if (!isMap(n)) throw new OpError(`Transition ${index + 1} does not exist`);
+  if (!isMap(n)) throw new OpError(`Transition ${index + 1} does not exist`, 'not-found');
   return n;
 }
 
 function checkSteps(doc: Document, ids: string[]) {
   const steps = getNode(doc, ['steps']);
-  for (const id of ids) if (!isMap(steps) || !steps.has(id)) throw new OpError(`Step "${id}" does not exist`);
+  for (const id of ids) if (!isMap(steps) || !steps.has(id)) throw new OpError(`Step "${id}" does not exist`, 'not-found');
+}
+
+/** Sheet of a step as written (1 when absent). */
+function stepSheet(doc: Document, id: string): number {
+  const v = getNode(doc, ['steps', id, 'sheet']);
+  const n = Number(isScalar(v) ? v.value : 1);
+  return Number.isFinite(n) ? n : 1;
+}
+
+/** Transition map from fragment / plain data: `from`, `to`, `condition`, `comment` and `x-` keys. */
+function transitionNode(doc: Document, from: string[], to: string[], rest: Record<string, unknown> = {}): YAMLMap {
+  const n = new YAMLMap();
+  n.flow = true;
+  n.items.push(new Pair(new Scalar('from'), stepsNode(doc, from)), new Pair(new Scalar('to'), stepsNode(doc, to)));
+  for (const k of ['condition', 'comment', ...extKeys(rest)]) if (rest[k] !== undefined && rest[k] !== '') n.items.push(new Pair(new Scalar(k), doc.createNode(rest[k])));
+  return n;
 }
 
 function runSequenceOp(tx: Tx, op: Op): boolean {
   switch (op.op) {
     case 'createSequence': {
-      checkTag(op.name, 'sequence name');
+      const folder = checkFolder(op.folder, { allowRoot: true });
+      checkStrategyName(op.name, 'sequence name');
       assertNameFree(tx, op.name);
-      const file = sequenceFile(op.folder, op.name);
-      if (tx.has(file)) throw new OpError(`"${file}" already exists`);
-      const data: Record<string, unknown> = { format: formatTag('sequence'), uid: newUid(), sequence: op.name };
+      const file = sequenceFile(folder, op.name);
+      if (tx.has(file)) throw new OpError(`File "${file}" already exists`, 'exists');
+      const data: Record<string, unknown> = { format: formatTag('sequence'), uid: op.uid ?? newUid(), sequence: op.name };
       if (op.title) data.title = op.title;
       data.scan = '1s';
       data.steps = { S0: { initial: true, description: 'Idle' } };
@@ -1313,10 +1530,10 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
     }
     case 'addStep':
       seqFileOf(tx, op.file);
-      checkTag(op.id, 'step name');
+      checkStepName(op.id);
       tx.edit(op.file, (doc) => {
         const steps = ensureMap(doc, ['steps'], SEQ_KEYS);
-        if (steps.has(op.id)) throw new OpError(`Step "${op.id}" already exists`);
+        if (steps.has(op.id)) throw new OpError(`Step "${op.id}" already exists`, 'exists');
         const m = new YAMLMap();
         if (op.initial) setOrdered(m, 'initial', true, STEP_KEYS, doc);
         if (op.description) setOrdered(m, 'description', op.description, STEP_KEYS, doc);
@@ -1327,18 +1544,21 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       return true;
     case 'insertStep':
       seqFileOf(tx, op.file);
-      checkTag(op.id, 'step name');
+      checkStepName(op.id);
       tx.edit(op.file, (doc) => {
         const t = transitionAt(doc, op.transition);
         const steps = ensureMap(doc, ['steps'], SEQ_KEYS);
-        if (steps.has(op.id)) throw new OpError(`Step "${op.id}" already exists`);
+        if (steps.has(op.id)) throw new OpError(`Step "${op.id}" already exists`, 'exists');
+        const first = stepList(t.get('from', true))[0];
+        const sheet = op.sheet ?? (first !== undefined && steps.has(first) ? stepSheet(doc, first) : 1);
         const m = new YAMLMap();
         if (op.description) setOrdered(m, 'description', op.description, STEP_KEYS, doc);
+        if (sheet !== 1) setOrdered(m, 'sheet', sheet, STEP_KEYS, doc);
+        if (op.pos) setOrdered(m, 'pos', op.pos.map(Math.round), STEP_KEYS, doc);
         // Insert the new step right after the first source step for a readable file.
-        const first = stepList(t.get('from', true))[0];
         const i = steps.items.findIndex((p) => keyOf(p) === first);
         steps.items.splice(i < 0 ? steps.items.length : i + 1, 0, new Pair(new Scalar(op.id), m));
-        const targets = t.get('to', true);
+        const targets = stepsNode(doc, stepList(t.get('to', true)));
         setOrdered(t, 'to', stepsNode(doc, op.id), TRANSITION_KEYS);
         const next = new YAMLMap();
         next.flow = true;
@@ -1350,7 +1570,7 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       seqFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {
         const steps = getNode(doc, ['steps']);
-        if (!isMap(steps) || !steps.has(op.id)) throw new OpError(`Step "${op.id}" does not exist`);
+        if (!isMap(steps) || !steps.has(op.id)) throw new OpError(`Step "${op.id}" does not exist`, 'not-found');
         steps.delete(op.id);
         const seq = getNode(doc, ['transitions']);
         if (!isSeq(seq)) return;
@@ -1361,48 +1581,40 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
           const to = stepList(t.get('to', true)).filter((s) => s !== op.id);
           if (!from.length || !to.length) seq.items.splice(i, 1);
           else {
-            t.set('from', stepsNode(doc, from));
-            t.set('to', stepsNode(doc, to));
+            setOrdered(t, 'from', stepsNode(doc, from), TRANSITION_KEYS);
+            setOrdered(t, 'to', stepsNode(doc, to), TRANSITION_KEYS);
           }
         }
       });
       return true;
     case 'renameStep': {
       seqFileOf(tx, op.file);
-      checkTag(op.to, 'step name');
+      if (op.from !== op.to) checkStepName(op.to);
       let seqName: string | undefined;
+      let changed = false;
       tx.edit(op.file, (doc) => {
         const steps = getNode(doc, ['steps']);
-        if (!isMap(steps)) throw new OpError(`Step "${op.from}" does not exist`);
-        if (steps.has(op.to)) throw new OpError(`Step "${op.to}" already exists`);
-        const pair = steps.items.find((p) => keyOf(p) === op.from);
-        if (!pair) throw new OpError(`Step "${op.from}" does not exist`);
-        pair.key = new Scalar(op.to);
+        const pair = isMap(steps) ? steps.items.find((p) => keyOf(p) === op.from) : undefined;
+        if (!pair) throw new OpError(`Step "${op.from}" does not exist`, 'not-found');
+        if (op.from === op.to) return false;
+        if ((steps as YAMLMap).has(op.to)) throw new OpError(`Step "${op.to}" already exists`, 'exists');
+        renameKey(pair, op.to);
+        changed = true;
         const seq = getNode(doc, ['transitions']);
         if (isSeq(seq)) {
           for (const t of seq.items) {
             if (!isMap(t)) continue;
             for (const k of ['from', 'to'] as const) {
               const l = stepList(t.get(k, true));
-              if (l.includes(op.from)) t.set(k, stepsNode(doc, l.map((s) => (s === op.from ? op.to : s))));
-            }
-            const c = t.get('condition');
-            if (typeof c !== 'string') continue;
-            try {
-              let text = c;
-              for (const r of exprRefs(parseExpr(c)).sort((x, y) => y.at - x.at)) {
-                if (!r.scope && r.port && r.name === op.from) text = text.slice(0, r.at) + `${op.to}.${r.port}` + text.slice(r.at + r.text.length);
-              }
-              if (text !== c) t.set('condition', text);
-            } catch {
-              /* leave invalid conditions alone */
+              if (l.includes(op.from)) setOrdered(t, k, stepsNode(doc, l.map((s) => (s === op.from ? op.to : s))), TRANSITION_KEYS);
             }
           }
         }
+        rewriteConditions(doc, stepRefRename({ [op.from]: op.to }));
         const v = doc.get('sequence');
         seqName = typeof v === 'string' ? v : undefined;
       });
-      if (seqName) {
+      if (seqName && changed) {
         const n = seqName;
         renameRefs(tx, (ep) => (ep.strategy === n && ep.block === op.from ? { ...ep, block: op.to } : undefined));
       }
@@ -1428,11 +1640,17 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       seqFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {
         const m = stepMap(doc, op.id);
-        if (!op.min && !op.max) return void m.delete('time');
+        const old = m.get('time', true);
+        const cur = (k: 'min' | 'max') => (isMap(old) ? old.get(k) : undefined);
+        // A bound that is not part of the op is kept.
+        const pick = (k: 'min' | 'max') => (k in op ? op[k] || undefined : cur(k));
+        const min = pick('min');
+        const max = pick('max');
+        if (!min && !max) return void m.delete('time');
         const t = new YAMLMap();
         t.flow = true;
-        if (op.min) t.set('min', op.min);
-        if (op.max) t.set('max', op.max);
+        if (min) t.set('min', min);
+        if (max) t.set('max', max);
         setOrdered(m, 'time', t, STEP_KEYS);
       });
       return true;
@@ -1442,7 +1660,7 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       return true;
     case 'addAction':
       seqFileOf(tx, op.file);
-      if (op.action.set && !parseEndpoint(op.action.set)) throw new OpError(`Invalid target "${op.action.set}" — expected STRATEGY:BLOCK.PORT`);
+      if (op.action.set && !parseEndpoint(op.action.set)) throw new OpError(`Invalid target "${op.action.set}" — expected STRATEGY:BLOCK.PORT`, 'invalid');
       tx.edit(op.file, (doc) => {
         const s = actionsSeq(doc, op.step);
         const n = actionNode(doc, op.action);
@@ -1452,10 +1670,10 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       return true;
     case 'updateAction':
       seqFileOf(tx, op.file);
-      if (op.patch.set && !parseEndpoint(op.patch.set)) throw new OpError(`Invalid target "${op.patch.set}" — expected STRATEGY:BLOCK.PORT`);
+      if (op.patch.set && !parseEndpoint(op.patch.set)) throw new OpError(`Invalid target "${op.patch.set}" — expected STRATEGY:BLOCK.PORT`, 'invalid');
       tx.edit(op.file, (doc) => {
         const a = actionsSeq(doc, op.step).items[op.index];
-        if (!isMap(a)) throw new OpError(`Action ${op.index + 1} of ${op.step} does not exist`);
+        if (!isMap(a)) throw new OpError(`Action ${op.index + 1} of step "${op.step}" does not exist`, 'not-found');
         for (const [k, v] of Object.entries(op.patch)) setOrDelete(doc, a, k, v, ACTION_KEYS);
       });
       return true;
@@ -1463,7 +1681,7 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       seqFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {
         const s = actionsSeq(doc, op.step);
-        if (!s.items[op.index]) throw new OpError(`Action ${op.index + 1} of ${op.step} does not exist`);
+        if (!s.items[op.index]) throw new OpError(`Action ${op.index + 1} of step "${op.step}" does not exist`, 'not-found');
         s.items.splice(op.index, 1);
         if (!s.items.length) stepMap(doc, op.step).delete('actions');
       });
@@ -1473,7 +1691,7 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       tx.edit(op.file, (doc) => {
         const s = actionsSeq(doc, op.step);
         const [item] = s.items.splice(op.index, 1);
-        if (!item) throw new OpError(`Action ${op.index + 1} of ${op.step} does not exist`);
+        if (!item) throw new OpError(`Action ${op.index + 1} of step "${op.step}" does not exist`, 'not-found');
         s.items.splice(Math.max(0, Math.min(op.to, s.items.length)), 0, item);
       });
       return true;
@@ -1483,12 +1701,7 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
         const from = Array.isArray(op.from) ? op.from : [op.from];
         const to = Array.isArray(op.to) ? op.to : [op.to];
         checkSteps(doc, [...from, ...to]);
-        const m = new YAMLMap();
-        m.flow = true;
-        m.items.push(new Pair(new Scalar('from'), stepsNode(doc, from)), new Pair(new Scalar('to'), stepsNode(doc, to)));
-        if (op.condition) m.items.push(new Pair(new Scalar('condition'), doc.createNode(op.condition)));
-        if (op.comment) m.items.push(new Pair(new Scalar('comment'), doc.createNode(op.comment)));
-        ensureSeq(doc, ['transitions'], SEQ_KEYS).items.push(m);
+        ensureSeq(doc, ['transitions'], SEQ_KEYS).items.push(transitionNode(doc, from, to, { condition: op.condition, comment: op.comment }));
       });
       return true;
     case 'setTransition':
@@ -1505,62 +1718,67 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       seqFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {
         const s = getNode(doc, ['transitions']);
-        if (!isSeq(s) || !s.items[op.index]) throw new OpError(`Transition ${op.index + 1} does not exist`);
+        if (!isSeq(s) || !s.items[op.index]) throw new OpError(`Transition ${op.index + 1} does not exist`, 'not-found');
         s.items.splice(op.index, 1);
       });
       return true;
     case 'insertSequenceFragment': {
       seqFileOf(tx, op.file);
       const frag = parseSequenceFragment(op.fragment);
-      if (!frag || !Object.keys(frag.steps).length) throw new OpError('The clipboard does not contain sequence steps');
+      if (!frag || (!Object.keys(frag.steps).length && !frag.notes.length)) throw new OpError('The clipboard does not contain sequence steps', 'invalid');
       const [dx, dy] = op.offset ?? [0, 0];
+      const shifted = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number') ? [Math.round(v[0] + dx), Math.round(v[1] + dy)] : undefined);
       tx.edit(op.file, (doc) => {
         const steps = ensureMap(doc, ['steps'], SEQ_KEYS);
-        const map = stepRenameMap(steps.items.map((p) => String(keyOf(p))), Object.keys(frag.steps));
-        const ren = (cond: string) => {
-          try {
-            let text = cond;
-            for (const r of exprRefs(parseExpr(cond)).sort((x, y) => y.at - x.at)) {
-              if (!r.scope && r.port && map[r.name] && map[r.name] !== r.name) text = text.slice(0, r.at) + `${map[r.name]}.${r.port}` + text.slice(r.at + r.text.length);
-            }
-            return text;
-          } catch {
-            return cond;
-          }
-        };
+        const map = stepRenameMap(steps.items.map((p) => String(keyOf(p))), Object.keys(frag.steps).filter((id) => id !== SEQ_BLOCK));
         for (const [id, raw] of Object.entries(frag.steps)) {
+          if (!map[id]) continue;
           const data: Record<string, unknown> = { ...raw };
-          const pos = Array.isArray(data.pos) && data.pos.length === 2 ? (data.pos as number[]) : undefined;
+          const pos = shifted(data.pos);
           delete data.pos;
           delete data.initial;
+          delete data.sheet;
           const m = new YAMLMap();
-          for (const k of STEP_KEYS) {
+          for (const k of [...STEP_KEYS, ...extKeys(data)]) {
             if (data[k] === undefined) continue;
             if (k === 'actions' && Array.isArray(data.actions)) {
               const s = new YAMLSeq();
-              for (const a of data.actions) if (isPlainObject(a)) s.items.push(actionNode(doc, a as Partial<ActionSpec>));
+              for (const a of data.actions) if (isObj(a)) s.items.push(actionNode(doc, a));
               m.items.push(new Pair(new Scalar('actions'), s));
-            } else if (k === 'time' && isPlainObject(data.time)) {
+            } else if (k === 'time' && isObj(data.time)) {
               const t = doc.createNode(data.time) as YAMLMap;
               t.flow = true;
               m.items.push(new Pair(new Scalar('time'), t));
             } else m.items.push(new Pair(new Scalar(k), doc.createNode(data[k])));
           }
           if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, STEP_KEYS, doc);
-          if (pos) setOrdered(m, 'pos', [Math.round(pos[0] + dx), Math.round(pos[1] + dy)], STEP_KEYS, doc);
+          if (pos) setOrdered(m, 'pos', pos, STEP_KEYS, doc);
           steps.items.push(new Pair(new Scalar(map[id]), m));
         }
         if (frag.transitions.length) {
           const seq = ensureSeq(doc, ['transitions'], SEQ_KEYS);
+          const ren = stepRefRename(map);
           for (const t of frag.transitions) {
-            const n = new YAMLMap();
-            n.flow = true;
             const from = (Array.isArray(t.from) ? t.from : [t.from]).map((s) => map[String(s)] ?? String(s));
             const to = (Array.isArray(t.to) ? t.to : [t.to]).map((s) => map[String(s)] ?? String(s));
-            n.items.push(new Pair(new Scalar('from'), stepsNode(doc, from)), new Pair(new Scalar('to'), stepsNode(doc, to)));
-            if (typeof t.condition === 'string') n.items.push(new Pair(new Scalar('condition'), doc.createNode(ren(t.condition))));
-            if (typeof t.comment === 'string') n.items.push(new Pair(new Scalar('comment'), doc.createNode(t.comment)));
-            seq.items.push(n);
+            const rest: Record<string, unknown> = { ...t };
+            if (typeof t.condition === 'string') rest.condition = rewriteExprRefs(t.condition, ren);
+            else delete rest.condition;
+            if (typeof t.comment !== 'string') delete rest.comment;
+            seq.items.push(transitionNode(doc, from, to, rest));
+          }
+        }
+        if (frag.notes.length) {
+          const seq = ensureSeq(doc, ['notes'], SEQ_KEYS);
+          for (const n of frag.notes) {
+            const data: Record<string, unknown> = { ...n };
+            const pos = shifted(data.pos);
+            delete data.pos;
+            delete data.sheet;
+            const m = doc.createNode(data) as YAMLMap;
+            if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, NOTE_KEYS, doc);
+            if (pos) setOrdered(m, 'pos', pos, NOTE_KEYS, doc);
+            seq.items.push(m);
           }
         }
       });
@@ -1571,19 +1789,41 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
       return true;
     case 'addSeqInput':
       seqFileOf(tx, op.file);
-      if (!IDENT_RE.test(op.name)) throw new OpError(`Invalid name "${op.name}" — use letters, digits and "_"`);
+      checkInputName(op.name);
       tx.edit(op.file, (doc) => {
         const s = ensureSeq(doc, ['inputs'], SEQ_KEYS);
-        if (s.items.some((i) => isMap(i) && i.get('name') === op.name)) throw new OpError(`Input "${op.name}" already exists`);
+        if (s.items.some((i) => isMap(i) && i.get('name') === op.name)) throw new OpError(`Input "${op.name}" already exists`, 'exists');
         s.items.push(portNode(doc, { name: op.name, type: op.type, description: op.description }));
       });
       return true;
+    case 'updateSeqInput': {
+      seqFileOf(tx, op.file);
+      const rename = op.patch.name !== undefined && op.patch.name !== op.name ? op.patch.name : undefined;
+      if (rename !== undefined) checkInputName(rename);
+      tx.edit(op.file, (doc) => {
+        const s = getNode(doc, ['inputs']);
+        const item = isSeq(s) ? s.items.find((x) => isMap(x) && x.get('name') === op.name) : undefined;
+        if (!isMap(item)) throw new OpError(`Input "${op.name}" does not exist`, 'not-found');
+        if (rename !== undefined && (s as YAMLSeq).items.some((x) => isMap(x) && x.get('name') === rename)) throw new OpError(`Input "${rename}" already exists`, 'exists');
+        for (const k of ['name', 'type', 'description'] as const) {
+          const v = op.patch[k];
+          if (v === undefined || (k === 'name' && !rename)) continue;
+          if (k === 'name' || k === 'type') {
+            if (!v) throw new OpError(`Input "${op.name}" needs a ${k}`, 'invalid');
+            setOrdered(item, k, v, PORT_KEYS, doc);
+          } else setOrDelete(doc, item, k, v, PORT_KEYS);
+        }
+        if (rename) rewriteConditions(doc, (r) => (!r.scope && !r.port && r.name === op.name ? rename : undefined));
+      });
+      return true;
+    }
     case 'removeSeqInput':
+      // Conditions that still use the input are left as written; validation reports them.
       seqFileOf(tx, op.file);
       tx.edit(op.file, (doc) => {
         const s = getNode(doc, ['inputs']);
         const i = isSeq(s) ? s.items.findIndex((x) => isMap(x) && x.get('name') === op.name) : -1;
-        if (!isSeq(s) || i < 0) throw new OpError(`Input "${op.name}" does not exist`);
+        if (!isSeq(s) || i < 0) throw new OpError(`Input "${op.name}" does not exist`, 'not-found');
         s.items.splice(i, 1);
       });
       return true;
@@ -1604,11 +1844,42 @@ export function inverseOf(result: OpResult): Op {
   return { op: 'restore', files: result.before };
 }
 
+/** Next free step name of the form `S<n*10>`, after the highest numbered step. */
+function nextStepName(ids: ReadonlySet<string>): string {
+  let max = -10;
+  for (const id of ids) {
+    const m = /^S(\d+)$/.exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  let n = Math.floor(max / 10) * 10 + 10;
+  while (ids.has(`S${n}`)) n += 10;
+  return `S${n}`;
+}
+
+/**
+ * Suggests an unused step name. Between two numbered steps (`after` = S10,
+ * `before` = S20) it takes the middle number when there is room (S15), else —
+ * and without neighbours — the next multiple of 10 after the highest step.
+ * `seq` is a sequence or the existing step names.
+ */
+export function suggestStepId(seq: { steps: { id: string }[] } | Iterable<string>, after?: string, before?: string): string {
+  const ids = new Set('steps' in seq ? seq.steps.map((s) => s.id) : seq);
+  const na = after ? /^S(\d+)$/.exec(after) : null;
+  const nb = before ? /^S(\d+)$/.exec(before) : null;
+  if (na && nb) {
+    const lo = Number(na[1]);
+    const hi = Number(nb[1]);
+    if (hi - lo >= 2) {
+      const mid = lo + Math.floor((hi - lo) / 2);
+      for (const c of [mid, ...Array.from({ length: hi - lo - 1 }, (_, i) => lo + 1 + i)]) if (!ids.has(`S${c}`)) return `S${c}`;
+    }
+  }
+  return nextStepName(ids);
+}
+
 /** Suggests an unused block id based on the type name (`PID` → `PID1`, `PID2`, …). */
 export function suggestBlockId(typeRef: string, existing: Iterable<string>): string {
   const taken = new Set(existing);
   const base = (parseTypeRef(typeRef)?.type ?? 'B').replace(/_/g, '');
   for (let i = 1; ; i++) if (!taken.has(`${base}${i}`)) return `${base}${i}`;
 }
-
-export { joinPath };

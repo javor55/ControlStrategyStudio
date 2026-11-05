@@ -9,6 +9,7 @@ import { diffCached } from './compare';
 import { graphDiffsByFile, groupFiles, KIND_LABEL, KIND_LETTER, nextRevision, revisionLabel, summarizeGraph } from './format';
 import { closeCommit } from './ui';
 import './history.css';
+import { keys } from '../ui/keys';
 
 /** Project model at HEAD (empty project before the first commit). */
 export function useModelAt(oid: string | undefined): ProjectModel | undefined {
@@ -212,7 +213,7 @@ export function CommitDialog() {
           </div>
         </div>
         <div className="actions">
-          <span className="hx-muted hx-kbd-hint">Ctrl+Enter to commit</span>
+          <span className="actions-note">{keys('Mod+Enter')} to commit</span>
           <button type="button" className="btn" onClick={close}>
             Cancel
           </button>

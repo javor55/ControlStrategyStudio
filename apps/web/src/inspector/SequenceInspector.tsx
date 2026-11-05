@@ -1,6 +1,7 @@
 // Inspector of a sequence (SFC): the sequence itself, a step (with its actions
 // table), a transition (condition with completion), several steps, or a note.
-import { useMemo, useState } from 'react';
+// Same scaffold as the continuous strategy panels (inspector/Scaffold).
+import { useMemo, useRef, useState } from 'react';
 import {
   ACTION_QUALIFIERS,
   diffSequence,
@@ -23,13 +24,18 @@ import {
 import { store, useEditor } from '../state/store';
 import { diagsOf } from '../state/selectors';
 import { Field, Row, SectionHeader } from '../ui/kit';
-import { confirmDialog } from '../ui/dialogs';
+import { AddButton, EmptyState } from '../ui/parts';
+import { plural } from '../ui/text';
+import { Icon } from '../project/icons';
 import { useCompare } from '../history/compare';
+import { Fields, Kind } from '../history/DiffDetails';
 import { actionTargets, conditionSignals, targetPort } from '../editor/seqsignals';
-import { insertStepInto, moveStepsToSheet, openDescription, removeSteps, stepSelection } from '../canvas/sfcops';
+import { insertIntoTransition, insertStepRelative, moveStepsToSheet, openDescription, removeSteps, stepSelection } from '../canvas/sfcops';
+import { deleteStrategy, duplicateStrategy, moveStrategy } from '../project/actions';
 import { ConditionEditor } from './ConditionEditor';
-import { DiagList, Head } from './Inspector';
+import { ChangesBox, DiagList, DocRow, Head, NAME_FIELD_ID, PathRow, PositionRow, deleteWithUndo } from './Scaffold';
 import './seq.css';
+import { keys } from '../ui/keys';
 
 const orUndef = (v: string) => (v.trim() === '' ? undefined : v.trim());
 const QUALIFIER_INFO: Record<ActionQualifier, string> = {
@@ -64,7 +70,7 @@ export function SequenceInspector({ seq }: { seq: Sequence }) {
   }
   if (selection?.kind === 'note') {
     const n = seq.notes.find((x) => x.index === selection.index);
-    if (n) return <NotePanel seq={seq} index={n.index} text={n.text} sheet={n.sheet} pinned={!!n.pos} />;
+    if (n) return <NotePanel seq={seq} index={n.index} text={n.text} sheet={n.sheet} pos={n.pos} />;
   }
   return <SequencePanel seq={seq} model={model} />;
 }
@@ -72,7 +78,7 @@ export function SequenceInspector({ seq }: { seq: Sequence }) {
 function SheetSelect({ seq, value, onChange }: { seq: Sequence; value: number; onChange: (v: number) => void }) {
   return (
     <select className="select" value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label="Sheet">
-      {!seq.sheets.some((s) => s.id === value) && <option value={value}>{value} (undefined)</option>}
+      {!seq.sheets.some((s) => s.id === value) && <option value={value}>{value} (not defined)</option>}
       {seq.sheets.map((s) => (
         <option key={s.id} value={s.id}>
           {s.id}
@@ -89,21 +95,18 @@ function useSeqDiff(seq: Sequence) {
   return useMemo(() => {
     if (!compare.before || !compare.target) return undefined;
     const prev = (seq.uid && compare.before.sequences.find((x) => x.uid === seq.uid)) || compare.before.sequenceByName.get(seq.name);
-    return diffSequence(prev, seq);
+    return { diff: diffSequence(prev, seq), label: compare.target.label };
   }, [compare.before, compare.target, seq]);
 }
 
-function Changes({ kind, changes }: { kind?: string; changes: FieldChange[] }) {
-  if (!kind) return null;
+/** The shared "Changes since <version>" box for a sequence element. */
+function Changes({ sd, kind, changes }: { sd: ReturnType<typeof useSeqDiff>; kind?: 'added' | 'changed' | 'removed'; changes: readonly FieldChange[] }) {
+  if (!sd) return null;
   return (
-    <div className="seq-changes" data-testid="seq-changes">
-      <div className="seq-changes-h">Changed since the compared version: {kind}</div>
-      {changes.map((c) => (
-        <div key={c.field} className="seq-change">
-          <span className="mono">{c.field}</span> <span className="hx-before mono">{c.before ?? '—'}</span> → <span className="hx-after mono">{c.after ?? '—'}</span>
-        </div>
-      ))}
-    </div>
+    <ChangesBox label={sd.label} testId="seq-changes">
+      <div className="hx-dd-p">{!kind ? 'Unchanged.' : <Kind kind={kind} />}</div>
+      <Fields changes={changes} />
+    </ChangesBox>
   );
 }
 
@@ -115,7 +118,10 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
     const t = st.files[seq.file];
     return typeof t === 'string' && /^sheets\s*:/m.test(t);
   });
+  const docFile = seq.docFile ?? strategyDocFile(seq.file);
+  const hasDoc = useEditor((st) => docFile in st.files);
   const [newInput, setNewInput] = useState({ name: '', type: 'BOOL' });
+  const newInputRef = useRef<HTMLInputElement>(null);
   const setF = (field: 'title' | 'description' | 'revision' | 'author' | 'scan', label: string) => (v: string) =>
     store().dispatch({ op: 'setStrategyField', file: seq.file, field, value: orUndef(v) }, { label });
   const renameSheet = (id: number, title: string) => {
@@ -138,16 +144,36 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
   const actionCount = seq.steps.reduce((n, s) => n + s.actions.length, 0);
   const addInput = () => {
     const name = newInput.name.trim();
-    if (!name) return;
+    if (!name) return newInputRef.current?.focus();
     if (dispatch({ op: 'addSeqInput', file: seq.file, name, type: newInput.type }, `Add input ${name}`)) setNewInput({ name: '', type: newInput.type });
   };
   const sd = useSeqDiff(seq);
+  const headerChanges = sd ? [...sd.diff.header, ...sd.diff.inputs] : [];
   return (
     <div className="insp-scroll seq-fill" data-testid="seq-panel">
-      <Head kind="Sequence strategy" title={seq.name} sub={seq.title} diags={diags} />
-      {sd && (sd.header.length > 0 || sd.inputs.length > 0) && <Changes kind={sd.kind} changes={[...sd.header, ...sd.inputs]} />}
+      <Head
+        kind="Sequence"
+        title={seq.name}
+        sub={seq.title}
+        diags={diags}
+        onRename
+        menu={[
+          { label: 'Duplicate…', onClick: () => duplicateStrategy(seq.file) },
+          { label: 'Move to folder…', onClick: () => moveStrategy(seq.file) },
+          { label: hasDoc ? 'Open function description' : 'Add function description', onClick: () => openDescription(docFile) },
+        ]}
+        onDelete={() => deleteStrategy(seq.file)}
+        deleteLabel="Delete…"
+      />
+      <DiagList diags={diags} />
+      {sd && (
+        <ChangesBox label={sd.label} testId="seq-changes">
+          {headerChanges.length ? <Fields changes={headerChanges} /> : <div className="hx-muted hx-dd-p">Header and inputs unchanged. Select a step or transition to see its changes.</div>}
+        </ChangesBox>
+      )}
       <Row label="Name">
         <Field
+          id={NAME_FIELD_ID}
           mono
           value={seq.name}
           onCommit={(v) => {
@@ -156,23 +182,29 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
           }}
         />
       </Row>
+      <Row label="Type">
+        <span className="insp-inline">
+          <span className="kind-badge sfc">SFC</span>
+          <span className="insp-muted">Sequence strategy</span>
+        </span>
+      </Row>
       <Row label="Title">
-        <Field value={seq.title} onCommit={setF('title', 'Edit title')} />
+        <Field value={seq.title} placeholder="Shown in the tree and the title block" onCommit={setF('title', 'Edit title')} />
       </Row>
       <Row label="Description">
-        <Field multiline value={seq.description} onCommit={setF('description', 'Edit description')} />
+        <Field multiline value={seq.description} placeholder="What the sequence does, in one or two sentences" onCommit={setF('description', 'Edit description')} />
+      </Row>
+      <Row label="Revision">
+        <Field mono value={seq.revision} placeholder="e.g. B" onCommit={setF('revision', 'Edit revision')} />
+      </Row>
+      <Row label="Author">
+        <Field value={seq.author} placeholder="Name" onCommit={setF('author', 'Edit author')} />
       </Row>
       <Row label="Scan">
         <Field mono value={seq.scan} placeholder="e.g. 500ms, 1s" onCommit={setF('scan', 'Edit scan')} />
       </Row>
-      <Row label="Revision">
-        <Field mono value={seq.revision} onCommit={setF('revision', 'Edit revision')} />
-      </Row>
-      <Row label="Author">
-        <Field value={seq.author} onCommit={setF('author', 'Edit author')} />
-      </Row>
 
-      <SectionHeader>Inputs</SectionHeader>
+      <SectionHeader actions={<AddButton label="Add input" onClick={addInput} />}>Inputs</SectionHeader>
       <table className="seq-table" aria-label="Sequence inputs">
         <tbody>
           {seq.inputs.map((i) => (
@@ -185,17 +217,18 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
                 {i.description}
               </td>
               <td className="seq-act">
-                <button className="btn small ghost icon danger" title={`Remove input ${i.name}`} onClick={() => dispatch({ op: 'removeSeqInput', file: seq.file, name: i.name }, `Remove input ${i.name}`)}>
-                  ×
+                <button className="btn small ghost icon danger" title={`Delete input ${i.name}`} aria-label={`Delete input ${i.name}`} onClick={() => dispatch({ op: 'removeSeqInput', file: seq.file, name: i.name }, `Delete input ${i.name}`)}>
+                  {Icon.close}
                 </button>
               </td>
             </tr>
           ))}
-          <tr>
+          <tr className="seq-new">
             <td>
               <input
+                ref={newInputRef}
                 className="input mono"
-                placeholder="NAME"
+                placeholder="NEW_INPUT"
                 aria-label="New input name"
                 value={newInput.name}
                 onChange={(e) => setNewInput({ ...newInput, name: e.target.value })}
@@ -209,19 +242,17 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
                 ))}
               </select>
             </td>
-            <td colSpan={2}>
-              <button className="btn small" disabled={!newInput.name.trim()} onClick={addInput}>
-                + Input
-              </button>
+            <td colSpan={2} className="insp-muted">
+              Enter to add
             </td>
           </tr>
         </tbody>
       </table>
 
-      <SectionHeader actions={<button className="btn small ghost" onClick={() => dispatch({ op: 'addSheet', file: seq.file }, 'Add sheet')}>+ Sheet</button>}>Sheets</SectionHeader>
+      <SectionHeader actions={<AddButton label="Add sheet" onClick={() => dispatch({ op: 'addSheet', file: seq.file }, 'Add sheet')} />}>Sheets</SectionHeader>
       {seq.sheets.map((sh) => (
         <Row key={sh.id} label={`Sheet ${sh.id}`}>
-          <Field value={sh.title} placeholder="untitled" onCommit={(v) => renameSheet(sh.id, v)} />
+          <Field value={sh.title} placeholder="Untitled" onCommit={(v) => renameSheet(sh.id, v)} />
         </Row>
       ))}
 
@@ -238,28 +269,18 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
             ))}
           </span>
         ) : (
-          <span className="insp-muted">no strategy reads its steps</span>
+          <span className="insp-muted">No strategy reads its steps</span>
         )}
       </Row>
 
       <SectionHeader>Info</SectionHeader>
       <Row label="Content">
         <span className="insp-muted">
-          {seq.steps.length} steps · {seq.transitions.length} transitions · {actionCount} actions · {seq.notes.length} notes
+          {[plural(seq.steps.length, 'step'), plural(seq.transitions.length, 'transition'), plural(actionCount, 'action'), plural(seq.notes.length, 'note')].join(' · ')}
         </span>
       </Row>
-      <Row label="File">
-        <span className="insp-path mono" title={seq.file}>
-          {`‎${seq.file}‎`}
-        </span>
-      </Row>
-      <Row label="Function">
-        <button className="insp-ep" onClick={() => openDescription(seq.docFile ?? strategyDocFile(seq.file))}>
-          {seq.docFile ? 'Open function description ↗' : 'Add function description'}
-        </button>
-      </Row>
-      {diags.length > 0 && <SectionHeader>Problems</SectionHeader>}
-      <DiagList diags={diags} />
+      <PathRow file={seq.file} />
+      <DocRow label="Function description" exists={hasDoc} onOpen={() => openDescription(docFile)} />
     </div>
   );
 }
@@ -279,7 +300,7 @@ function RefList({ title, map }: { title: string; map: Map<string, Set<string>> 
           ))}
         </div>
       ) : (
-        <span className="insp-muted">—</span>
+        <span className="insp-muted">None</span>
       )}
     </Row>
   );
@@ -294,24 +315,28 @@ function StepPanel({ seq, step, model }: { seq: Sequence; step: SeqStep; model: 
   const incoming = seq.transitions.filter((t) => t.to.includes(step.id));
   const outgoing = seq.transitions.filter((t) => t.from.includes(step.id));
   const sd = useSeqDiff(seq);
-  const change = sd?.steps.find((s) => s.id === step.id);
+  const change = sd?.diff.steps.find((s) => s.id === step.id);
   return (
     <div className="insp-scroll seq-fill" data-testid="step-panel">
       <Head
-        kind={step.initial ? 'Initial step' : 'Step'}
+        kind="Step"
         title={step.id}
-        sub={step.description}
+        sub={step.initial ? <span className="kind-badge sfc">initial</span> : step.description}
         diags={diags}
-        actions={
-          <button className="btn small ghost danger" title="Delete the step and its transitions" onClick={() => removeSteps(file, [step.id])}>
-            Delete
-          </button>
-        }
+        onRename
+        menu={[
+          { label: 'Insert step after', onClick: () => insertStepRelative(seq, 'after', step.id) },
+          { label: 'Insert step before', onClick: () => insertStepRelative(seq, 'before', step.id) },
+          { label: 'Insert parallel step', onClick: () => insertStepRelative(seq, 'parallel', step.id) },
+          { label: 'Insert alternative step', onClick: () => insertStepRelative(seq, 'alternative', step.id) },
+        ]}
+        onDelete={() => deleteWithUndo(() => removeSteps(file, [step.id]), `Deleted step ${step.id}`)}
       />
-      <Changes kind={change?.kind} changes={change?.changes ?? []} />
       <DiagList diags={diags} />
+      <Changes sd={sd} kind={change?.kind} changes={change?.changes ?? []} />
       <Row label="Name">
         <Field
+          id={NAME_FIELD_ID}
           mono
           value={step.id}
           onCommit={(v) => {
@@ -319,6 +344,15 @@ function StepPanel({ seq, step, model }: { seq: Sequence; step: SeqStep; model: 
             if (to && to !== step.id) dispatch({ op: 'renameStep', file, from: step.id, to }, `Rename step ${step.id} → ${to}`, { kind: 'block', id: to });
           }}
         />
+      </Row>
+      <Row label="Description">
+        <Field value={step.description} placeholder="Short text drawn in the step box" onCommit={setField('description', `Describe ${step.id}`)} />
+      </Row>
+      <Row label="Documentation">
+        <Field multiline value={step.doc} placeholder="What happens in this step, printed in the PDF" onCommit={setField('doc', `Document ${step.id}`)} />
+      </Row>
+      <Row label="Comment">
+        <Field multiline value={step.comment} placeholder="Engineering note" onCommit={setField('comment', `Comment ${step.id}`)} />
       </Row>
       <Row label="Initial">
         <label className="insp-inline">
@@ -328,52 +362,26 @@ function StepPanel({ seq, step, model }: { seq: Sequence; step: SeqStep; model: 
             data-testid="step-initial"
             onChange={(e) => dispatch({ op: 'setStepField', file, id: step.id, field: 'initial', value: e.target.checked }, e.target.checked ? `Initial step ${step.id}` : `${step.id} not initial`)}
           />
-          <span className="insp-muted">active after start / reset</span>
+          <span className="insp-muted">Active after start / reset</span>
         </label>
       </Row>
-      <Row label="Description">
-        <Field value={step.description} placeholder="shown in the step box" onCommit={setField('description', `Describe ${step.id}`)} />
-      </Row>
-      <Row label="Function">
-        <Field multiline value={step.doc} placeholder="what happens in this step (PDF)" onCommit={setField('doc', `Document ${step.id}`)} />
-      </Row>
-      <Row label="Comment">
-        <Field value={step.comment} onCommit={setField('comment', `Comment ${step.id}`)} />
+      <Row label="Monitoring" title="Expected time in the step: minimum / maximum (alarm on timeout)">
+        <span className="seq-times">
+          <Field mono value={step.time?.min} placeholder="Min" onCommit={(v) => dispatch({ op: 'setStepTime', file, id: step.id, min: orUndef(v), max: step.time?.max }, `Min time ${step.id}`)} />
+          <Field mono value={step.time?.max} placeholder="Max, e.g. 2min" onCommit={(v) => dispatch({ op: 'setStepTime', file, id: step.id, min: step.time?.min, max: orUndef(v) }, `Max time ${step.id}`)} />
+        </span>
       </Row>
       <Row label="Sheet">
         <SheetSelect seq={seq} value={step.sheet} onChange={(v) => moveStepsToSheet(seq, [step.id], v)} />
       </Row>
-      <Row label="Monitoring" title="Expected time in the step: minimum / maximum (alarm on timeout)">
-        <span className="seq-times">
-          <Field mono value={step.time?.min} placeholder="min" onCommit={(v) => dispatch({ op: 'setStepTime', file, id: step.id, min: orUndef(v), max: step.time?.max }, `Min time ${step.id}`)} />
-          <Field mono value={step.time?.max} placeholder="max, e.g. 2min" onCommit={(v) => dispatch({ op: 'setStepTime', file, id: step.id, min: step.time?.min, max: orUndef(v) }, `Max time ${step.id}`)} />
-        </span>
-      </Row>
-      <Row label="Position">
-        {step.pos ? (
-          <span className="insp-inline">
-            <span className="mono">
-              {step.pos[0]}, {step.pos[1]}
-            </span>
-            <button className="btn small" onClick={() => dispatch({ op: 'moveStep', file, id: step.id, pos: null }, `Unpin ${step.id}`)}>
-              Unpin
-            </button>
-          </span>
-        ) : (
-          <span className="insp-muted">auto</span>
-        )}
-      </Row>
+      <PositionRow pos={step.pos} onUnpin={() => dispatch({ op: 'moveStep', file, id: step.id, pos: null }, `Unpin ${step.id}`)} />
 
       <SectionHeader
-        actions={
-          <button className="btn small ghost" data-testid="add-action" onClick={() => dispatch({ op: 'addAction', file, step: step.id, action: { q: 'N', text: 'New action' } }, `Add action to ${step.id}`)}>
-            + Action
-          </button>
-        }
+        actions={<AddButton label="Add action" testId="add-action" onClick={() => dispatch({ op: 'addAction', file, step: step.id, action: { q: 'N', text: 'New action' } }, `Add action to ${step.id}`)} />}
       >
         Actions
       </SectionHeader>
-      {!step.actions.length && <div className="insp-muted insp-pad">No actions. Add one, or describe what happens in the step.</div>}
+      {!step.actions.length && <EmptyState>No actions. Add one, or describe what happens under Documentation.</EmptyState>}
       {step.actions.map((a, i) => (
         <ActionCard key={`${a.index}:${step.actions.length}`} seq={seq} step={step} action={a} pos={i} model={model} />
       ))}
@@ -397,7 +405,7 @@ function TransitionLinks({ label, list }: { label: string; list: SeqTransition[]
           ))}
         </div>
       ) : (
-        <span className="insp-muted">—</span>
+        <span className="insp-muted">None</span>
       )}
     </Row>
   );
@@ -454,29 +462,29 @@ function ActionCard({ seq, step, action, pos, model }: { seq: Sequence; step: Se
             </option>
           ))}
         </select>
-        <Field mono value={set ? formatEndpoint(set) : ''} placeholder="STRATEGY:BLOCK.INPUT (optional)" title="Block input written by the action" onCommit={(v) => setTarget(orUndef(v))} />
+        <Field mono value={set ? formatEndpoint(set) : ''} placeholder="Target STRATEGY:BLOCK.INPUT (optional)" title="Block input written by the action" onCommit={(v) => setTarget(orUndef(v))} />
         {type && <span className="pill" title={port?.description ?? 'Type of the target input'}>{type}</span>}
         <span className="seq-action-btns">
-          <button className="btn small ghost icon" title="Move up" disabled={pos === 0} onClick={() => dispatch({ op: 'moveAction', file, step: step.id, index: action.index, to: action.index - 1 }, 'Move action up')}>
-            ↑
+          <button className="btn small ghost icon" title="Move up" aria-label="Move action up" disabled={pos === 0} onClick={() => dispatch({ op: 'moveAction', file, step: step.id, index: action.index, to: action.index - 1 }, 'Move action up')}>
+            {Icon.up}
           </button>
-          <button className="btn small ghost icon" title="Move down" disabled={pos === n - 1} onClick={() => dispatch({ op: 'moveAction', file, step: step.id, index: action.index, to: action.index + 1 }, 'Move action down')}>
-            ↓
+          <button className="btn small ghost icon" title="Move down" aria-label="Move action down" disabled={pos === n - 1} onClick={() => dispatch({ op: 'moveAction', file, step: step.id, index: action.index, to: action.index + 1 }, 'Move action down')}>
+            {Icon.down}
           </button>
-          <button className="btn small ghost icon danger" title="Delete action" data-testid={`action-del-${pos}`} onClick={() => dispatch({ op: 'removeAction', file, step: step.id, index: action.index }, `Delete action of ${step.id}`)}>
-            ×
+          <button className="btn small ghost icon danger" title="Delete action" aria-label="Delete action" data-testid={`action-del-${pos}`} onClick={() => dispatch({ op: 'removeAction', file, step: step.id, index: action.index }, `Delete action of ${step.id}`)}>
+            {Icon.close}
           </button>
         </span>
       </div>
       <div className="seq-pick" aria-label="Target picker">
         <select className="select" aria-label="Strategy" data-testid={`action-strategy-${pos}`} value={pickStrategy} onChange={(e) => (setPickStrategy(e.target.value), setPickBlock(''))}>
-          <option value="">strategy…</option>
+          <option value="">Strategy…</option>
           {strategies.map((s) => (
             <option key={s}>{s}</option>
           ))}
         </select>
         <select className="select" aria-label="Block" data-testid={`action-block-${pos}`} value={pickBlock} disabled={!pickStrategy} onChange={(e) => setPickBlock(e.target.value)}>
-          <option value="">block…</option>
+          <option value="">Block…</option>
           {blocks.map((b) => (
             <option key={b}>{b}</option>
           ))}
@@ -489,7 +497,7 @@ function ActionCard({ seq, step, action, pos, model }: { seq: Sequence; step: Se
           disabled={!pickBlock}
           onChange={(e) => e.target.value && setTarget(`${pickStrategy}:${pickBlock}.${e.target.value}`)}
         >
-          <option value="">input…</option>
+          <option value="">Input…</option>
           {ports.map((t) => (
             <option key={t.port.name} value={t.port.name} title={t.port.description}>
               {t.port.name} : {t.port.type}
@@ -521,7 +529,7 @@ function ActionCard({ seq, step, action, pos, model }: { seq: Sequence; step: Se
                 ))}
               </select>
             ) : (
-              <Field mono value={valueText} placeholder={port?.unit ? `value (${port.unit})` : 'value'} onCommit={(v) => update({ value: parseValue(v, type) }, 'Set value')} />
+              <Field mono value={valueText} placeholder={port?.unit ? `Value (${port.unit})` : 'Value'} onCommit={(v) => update({ value: parseValue(v, type) }, 'Set value')} />
             )}
           </label>
         )}
@@ -535,7 +543,7 @@ function ActionCard({ seq, step, action, pos, model }: { seq: Sequence; step: Se
       <div className="seq-action-row">
         <label className="seq-lab grow">
           <span>Text</span>
-          <Field value={action.text} placeholder={set ? 'optional description' : 'what happens (in words)'} id={`action-text-${pos}`} onCommit={(v) => update({ text: orUndef(v) }, 'Edit action text')} />
+          <Field value={action.text} placeholder={set ? 'Optional description' : 'What happens, in words'} id={`action-text-${pos}`} onCommit={(v) => update({ text: orUndef(v) }, 'Edit action text')} />
         </label>
       </div>
     </div>
@@ -575,26 +583,25 @@ function TransitionPanel({ seq, t, model }: { seq: Sequence; t: SeqTransition; m
   const options = useMemo(() => conditionSignals(model, seq), [model, seq]);
   const sd = useSeqDiff(seq);
   const key = `${t.from.join('+')} → ${t.to.join('+')}`;
-  const change = sd?.transitions.find((x) => x.key === key && x.kind !== 'removed');
+  const change = sd?.diff.transitions.find((x) => x.key === key && x.kind !== 'removed');
   const one = (l: string[]) => (l.length === 1 ? l[0] : l);
+  const shape = t.to.length > 1 ? 'parallel fork' : t.from.length > 1 ? 'parallel join' : undefined;
   return (
     <div className="insp-scroll seq-fill" data-testid="transition-panel">
       <Head
-        kind={t.to.length > 1 ? 'Fork' : t.from.length > 1 ? 'Join' : 'Transition'}
+        kind="Transition"
         title={key}
+        sub={shape}
         diags={diags}
-        actions={
-          <>
-            <button className="btn small ghost" title="Insert a step into this transition" onClick={() => insertStepInto(seq, t.index)}>
-              Insert step
-            </button>
-            <button className="btn small ghost danger" onClick={() => dispatch({ op: 'removeTransition', file, index: t.index }, 'Delete transition', null)}>
-              Delete
-            </button>
-          </>
-        }
+        menu={[
+          { label: 'Insert step into transition', onClick: () => insertIntoTransition(seq, 'step', t.index) },
+          { label: 'Insert parallel branch into transition', onClick: () => insertIntoTransition(seq, 'parallel', t.index) },
+          { label: 'Insert alternative branch into transition', onClick: () => insertIntoTransition(seq, 'alternative', t.index) },
+        ]}
+        onDelete={() => deleteWithUndo(() => dispatch({ op: 'removeTransition', file, index: t.index }, 'Delete transition', null), `Deleted transition ${key}`)}
       />
-      <Changes kind={change?.kind} changes={change?.changes ?? []} />
+      <DiagList diags={diags} />
+      <Changes sd={sd} kind={change?.kind} changes={change?.changes ?? []} />
       <Row label="From" title="Several steps = parallel join (all must be active)">
         <StepToggles seq={seq} label="From steps" value={t.from} onChange={(v) => dispatch({ op: 'setTransition', file, index: t.index, from: one(v) }, 'Change transition source')} />
       </Row>
@@ -611,13 +618,12 @@ function TransitionPanel({ seq, t, model }: { seq: Sequence; t: SeqTransition; m
         />
       </Row>
       <Row label="Comment">
-        <Field value={t.comment} placeholder="shown below the condition" onCommit={(v) => dispatch({ op: 'setTransition', file, index: t.index, comment: v.trim() }, 'Edit comment')} />
+        <Field value={t.comment} placeholder="Engineering note, shown below the condition" onCommit={(v) => dispatch({ op: 'setTransition', file, index: t.index, comment: v.trim() }, 'Edit comment')} />
       </Row>
       <div className="insp-muted insp-pad">
         Signals: <span className="mono">STRATEGY:BLOCK.PORT</span>, steps <span className="mono">S10.X</span> / <span className="mono">S10.T</span>, inputs, <span className="mono">SEQ.RUNNING</span>; operators{' '}
-        <span className="mono">and or not &lt; &lt;= = &lt;&gt; &gt;= &gt;</span>, durations <span className="mono">5s 2min</span>. Ctrl+Space lists signals.
+        <span className="mono">and or not &lt; &lt;= = &lt;&gt; &gt;= &gt;</span>, durations <span className="mono">5s 2min</span>. {keys('Mod+Space')} lists signals.
       </div>
-      <DiagList diags={diags} />
     </div>
   );
 }
@@ -628,36 +634,44 @@ function MultiStepPanel({ seq, steps, model }: { seq: Sequence; steps: SeqStep[]
   const ids = steps.map((s) => s.id);
   const diags = diagsOf(model, seq.file).filter((d) => d.block && ids.includes(d.block));
   const sheets = new Set(steps.map((s) => s.sheet));
+  const mins = new Set(steps.map((s) => s.time?.min ?? ''));
+  const maxs = new Set(steps.map((s) => s.time?.max ?? ''));
+  const setTimes = (which: 'min' | 'max', v: string | undefined) => {
+    const ops: Op[] = steps
+      .filter((s) => (s.time?.[which] ?? undefined) !== v)
+      .map((s) => ({ op: 'setStepTime', file: seq.file, id: s.id, min: which === 'min' ? v : s.time?.min, max: which === 'max' ? v : s.time?.max }));
+    const label = `${which === 'min' ? 'Min' : 'Max'} time of ${plural(steps.length, 'step')}`;
+    if (ops.length) store().dispatch({ op: 'batch', label, ops }, { label });
+  };
   return (
-    <div className="insp-scroll seq-fill">
+    <div className="insp-scroll seq-fill" data-testid="multi-step-panel">
       <Head
         kind="Selection"
-        title={`${steps.length} steps`}
+        title={plural(steps.length, 'step')}
         diags={diags}
-        actions={
-          <button
-            className="btn small ghost danger"
-            onClick={async () => {
-              if (await confirmDialog({ title: `Delete ${steps.length} steps?`, message: `${ids.join(', ')} and their transitions are removed. You can undo this.`, okLabel: 'Delete', danger: true })) removeSteps(seq.file, ids);
-            }}
-          >
-            Delete
-          </button>
-        }
+        onDelete={() => deleteWithUndo(() => removeSteps(seq.file, ids), `Deleted ${plural(steps.length, 'step')}`)}
+        deleteLabel={`Delete ${plural(steps.length, 'step')}`}
       />
-      <ul className="insp-multi">
+      <DiagList diags={diags} />
+      <ul className="insp-multi" aria-label="Selected steps">
         {steps.map((s) => (
           <li key={s.id}>
-            <button className="insp-ep mono" onClick={() => store().select({ kind: 'block', id: s.id })}>
+            <button className="insp-ep mono" title={`Select only ${s.id}`} onClick={() => store().select({ kind: 'block', id: s.id })}>
               {s.id}
             </button>
             <span className="insp-muted insp-multi-desc">{s.description}</span>
-            <button className="btn small ghost icon" title={`Remove ${s.id} from the selection`} onClick={() => store().select(stepSelection(ids.filter((x) => x !== s.id)))}>
-              ×
+            <button
+              className="btn small ghost icon"
+              title={`Remove ${s.id} from the selection`}
+              aria-label={`Remove ${s.id} from the selection`}
+              onClick={() => store().select(stepSelection(ids.filter((x) => x !== s.id)))}
+            >
+              {Icon.close}
             </button>
           </li>
         ))}
       </ul>
+      <SectionHeader>Set for all</SectionHeader>
       <Row label="Sheet">
         <select className="select" aria-label="Move to sheet" value={sheets.size === 1 ? steps[0].sheet : ''} onChange={(e) => e.target.value && moveStepsToSheet(seq, ids, Number(e.target.value))}>
           {sheets.size > 1 && <option value="">(mixed) — move to…</option>}
@@ -669,40 +683,31 @@ function MultiStepPanel({ seq, steps, model }: { seq: Sequence; steps: SeqStep[]
           ))}
         </select>
       </Row>
-      <DiagList diags={diags} />
-      <div className="insp-muted insp-pad">Shift+click steps on the canvas to add or remove them.</div>
+      <Row label="Monitoring" title="Expected time in each step: minimum / maximum">
+        <span className="seq-times">
+          <Field mono value={mins.size === 1 ? steps[0].time?.min : ''} placeholder={mins.size > 1 ? '(mixed)' : 'Min'} onCommit={(v) => setTimes('min', orUndef(v))} />
+          <Field mono value={maxs.size === 1 ? steps[0].time?.max : ''} placeholder={maxs.size > 1 ? '(mixed)' : 'Max, e.g. 2min'} onCommit={(v) => setTimes('max', orUndef(v))} />
+        </span>
+      </Row>
+      <div className="insp-muted insp-pad">Shift+click steps on the canvas to add or remove them; click a name above to edit that step alone.</div>
     </div>
   );
 }
 
 // --- note -----------------------------------------------------------------------------------------
 
-function NotePanel({ seq, index, text, sheet, pinned }: { seq: Sequence; index: number; text: string; sheet: number; pinned: boolean }) {
+function NotePanel({ seq, index, text, sheet, pos }: { seq: Sequence; index: number; text: string; sheet: number; pos?: readonly [number, number] | null }) {
   const file = seq.file;
   return (
-    <div className="insp-scroll seq-fill">
-      <Head
-        kind="Note"
-        title={`#${index + 1}`}
-        actions={
-          <button className="btn small ghost danger" onClick={() => dispatch({ op: 'removeNote', file, index }, 'Delete note', null)}>
-            Delete
-          </button>
-        }
-      />
+    <div className="insp-scroll seq-fill" data-testid="note-panel">
+      <Head kind="Note" title={`Note ${index + 1}`} onDelete={() => deleteWithUndo(() => dispatch({ op: 'removeNote', file, index }, 'Delete note', null), `Deleted note ${index + 1}`)} />
       <Row label="Text">
-        <Field multiline value={text} onCommit={(v) => dispatch({ op: 'setNote', file, index, text: v }, 'Edit note')} />
+        <Field multiline value={text} placeholder="Note text" onCommit={(v) => dispatch({ op: 'setNote', file, index, text: v }, 'Edit note')} />
       </Row>
       <Row label="Sheet">
         <SheetSelect seq={seq} value={sheet} onChange={(v) => dispatch({ op: 'setNote', file, index, sheet: v }, 'Move note to sheet')} />
       </Row>
-      {pinned && (
-        <Row label="Position">
-          <button className="btn small" onClick={() => dispatch({ op: 'setNote', file, index, pos: null }, 'Unpin note')}>
-            Unpin
-          </button>
-        </Row>
-      )}
+      <PositionRow pos={pos} onUnpin={() => dispatch({ op: 'setNote', file, index, pos: null }, 'Unpin note')} />
     </div>
   );
 }

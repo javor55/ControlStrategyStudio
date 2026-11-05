@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import { formatTag, newUid, stdLibraryFiles, stringifyDoc, type Files } from '@csd/core';
-import { Document } from 'yaml';
+import { formatTag, newUid, PROJECT_FILE, stdLibraryFiles, stringifyDoc, type Files } from '@csd/core';
+import { Document, parseDocument } from 'yaml';
 import { store, useEditor, type ViewMode } from './state/store';
 import { activeView } from './state/selectors';
 import { browserStore, download, newProjectId, safeFileName, type ProjectSummary } from './state/persist';
@@ -8,6 +8,8 @@ import { openSession, openStoredProject, openZip, projectZip } from './state/ses
 import { LogoMark } from './ui/Logo';
 import { DialogHost, confirmDialog, promptDialog } from './ui/dialogs';
 import { useMenu, type MenuEntry } from './ui/kit';
+import { keys } from './ui/keys';
+import { Icon } from './project/icons';
 import { Canvas } from './canvas/Canvas';
 import { SequenceCanvas } from './canvas/SequenceCanvas';
 import { Inspector } from './inspector/Inspector';
@@ -35,6 +37,40 @@ export function emptyProjectFiles(name: string): Files {
 
 async function openProject(id: string) {
   if (!(await openStoredProject(id))) store().toast('Project not found in this browser', 'error');
+}
+
+/** "Name", or "Name (2)", "Name (3)" … when a project of that name is already in this browser. */
+export function uniqueProjectName(name: string, taken: Iterable<string>): string {
+  const set = new Set(taken);
+  if (!set.has(name)) return name;
+  const base = name.replace(/ \(\d+\)$/, '');
+  for (let i = 2; ; i++) if (!set.has(`${base} (${i})`)) return `${base} (${i})`;
+}
+
+/** Gives the project in `files` a name not used by another project in this browser. */
+async function withUniqueName(files: Files): Promise<Files> {
+  const text = files[PROJECT_FILE];
+  if (typeof text !== 'string') return files;
+  const doc = parseDocument(text);
+  const name = doc.get('name');
+  if (doc.errors.length || typeof name !== 'string') return files;
+  let taken: string[] = [];
+  try {
+    taken = (await browserStore.list()).map((p) => p.name);
+  } catch {
+    return files;
+  }
+  const unique = uniqueProjectName(name, taken);
+  if (unique === name) return files;
+  doc.set('name', unique);
+  return { ...files, [PROJECT_FILE]: stringifyDoc(doc) };
+}
+
+/** Opens an example as a new project in this browser. */
+async function openExample(name: string, files: Files) {
+  const f = await withUniqueName(files);
+  await openSession(newProjectId(), f, undefined, { save: true });
+  store().toast(`Opened example "${store().getState().model.meta.name}" as a new project in this browser`);
 }
 
 // --- layout preferences (remembered per browser) --------------------------------------------
@@ -219,7 +255,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       {
         label: 'New project…',
         onClick: async () => {
-          const n = await promptDialog({ title: 'New project', label: 'Project name', validate: (v) => (v ? undefined : 'Enter a name') });
+          const n = await promptDialog({ title: 'New project', label: 'Project name', okLabel: 'Create', validate: (v) => (v ? undefined : 'Enter a name') });
           if (!n) return;
           await openSession(newProjectId(), emptyProjectFiles(n), undefined, { save: true });
         },
@@ -227,7 +263,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       { label: 'Open ZIP…', onClick: () => fileInput.current?.click() },
       {
         label: 'Save as ZIP',
-        hint: 'Ctrl+S',
+        hint: keys('Mod+S'),
         onClick: () => saveZip(),
       },
       'separator',
@@ -237,24 +273,28 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           (ex): MenuEntry => ({
             label: ex.name,
             description: ex.description,
-            onClick: () => void openSession(newProjectId(), ex.files(), undefined, { save: true }).then(() => store().toast(`Opened example "${ex.name}" as a new project in this browser`)),
+            onClick: () => void openExample(ex.name, ex.files()),
           }),
         ),
       },
       { section: 'In this browser' },
       ...recent.slice(0, 12).map(
         (r): MenuEntry => ({
-          label: `${r.id === s.getState().projectId ? '● ' : ''}${r.name}`,
-          hint: new Date(r.updated).toLocaleDateString(),
+          label: r.name,
+          checked: r.id === s.getState().projectId,
+          radio: true,
+          keepOpen: false,
+          hint: savedWhen(r.updated),
+          title: `Last saved ${new Date(r.updated).toLocaleString()}`,
           onClick: () => openProject(r.id),
         }),
       ),
       'separator',
       {
-        label: 'Remove this project from browser…',
+        label: 'Delete project from this browser…',
         danger: true,
         onClick: async () => {
-          if (!(await confirmDialog({ title: 'Remove project?', message: `"${name}" will be deleted from this browser. Save it as ZIP first if you want to keep it.`, okLabel: 'Remove', danger: true }))) return;
+          if (!(await confirmDialog({ title: 'Delete project from this browser?', message: `"${name}" and its history will be deleted from this browser. This cannot be undone; save it as ZIP first to keep a copy.`, okLabel: 'Delete project', danger: true }))) return;
           await browserStore.remove(s.getState().projectId);
           await openSession(newProjectId(), defaultProjectFiles(), undefined, { save: true });
         },
@@ -265,25 +305,29 @@ function TopBar({ panels }: { panels: PanelsApi }) {
 
   return (
     <header className="topbar">
-      <span className="brand">
+      <span className="brand" title="Control Strategy Studio">
         <LogoMark size={24} />
-        <span>Control Strategy <b>Studio</b></span>
+        <span className="brand-text">
+          Control Strategy <b>Studio</b>
+        </span>
       </span>
-      <button className="btn" onClick={(e) => projectMenu(e.currentTarget)}>
-        {name} ▾
+      <button className="btn project-btn" aria-haspopup="menu" title="Project: new, open, save, examples" onClick={(e) => projectMenu(e.currentTarget)}>
+        <span className="project-name">{name}</span>
+        {Icon.caret}
       </button>
-      <button className="btn ghost icon" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => store().undo()}>
-        ↶
+      <button className="btn ghost icon" title={`Undo (${keys('Mod+Z')})`} aria-label="Undo" disabled={!canUndo} onClick={() => store().undo()}>
+        {Icon.undo}
       </button>
-      <button className="btn ghost icon" title="Redo (Ctrl+Y)" disabled={!canRedo} onClick={() => store().redo()}>
-        ↷
+      <button className="btn ghost icon" title={`Redo (${keys('Mod+Y')})`} aria-label="Redo" disabled={!canRedo} onClick={() => store().redo()}>
+        {Icon.redo}
       </button>
       <VcsStatus />
       <span className="spacer" />
       <button
         className={`btn ghost icon${panels.leftOpen ? '' : ' off'}`}
         aria-pressed={panels.leftOpen}
-        title={`${panels.leftOpen ? 'Hide' : 'Show'} project panel (Ctrl+B)`}
+        title={`${panels.leftOpen ? 'Hide' : 'Show'} project panel (${keys('Mod+B')})`}
+        aria-label="Project panel"
         onClick={panels.toggleLeft}
       >
         <PanelIcon side="left" open={panels.leftOpen} />
@@ -292,20 +336,23 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       <button
         className={`btn ghost icon${panels.rightOpen ? '' : ' off'}`}
         aria-pressed={panels.rightOpen}
-        title={`${panels.rightOpen ? 'Hide' : 'Show'} properties panel (Ctrl+Alt+B)`}
+        title={`${panels.rightOpen ? 'Hide' : 'Show'} properties panel (${keys('Mod+Alt+B')})`}
+        aria-label="Properties panel"
         onClick={panels.toggleRight}
       >
         <PanelIcon side="right" open={panels.rightOpen} />
       </button>
       <span className="spacer" />
-      <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>{unsaved ? 'Saving…' : 'Saved in browser'}</span>
-      <button className="btn" onClick={() => saveZip()}>
-        Save ZIP
+      <span className={`save-state${unsaved ? ' saving' : ''}`} role="status" title={unsaved ? 'Saving in this browser…' : 'All changes are saved in this browser'} aria-label={unsaved ? 'Saving' : 'Saved in browser'}>
+        {unsaved ? Icon.saving : Icon.saved}
+      </span>
+      <button className="btn" title={`Download the project as a ZIP file (${keys('Mod+S')})`} onClick={() => saveZip()}>
+        Save as ZIP
       </button>
-      <button className="btn primary" title="Export PDF, interactive HTML, JSON or TOML (Ctrl+E)" onClick={() => setExporting(true)}>
+      <button className="btn primary" title={`Export PDF, interactive HTML, JSON or TOML (${keys('Mod+E')})`} onClick={() => setExporting(true)}>
         Export…
       </button>
-      <button className="btn ghost icon" title="Settings: project, drawing style and editor (Ctrl+,)" aria-label="Settings" onClick={() => setSettings({})}>
+      <button className="btn ghost icon" title={`Settings: project, drawing style and editor (${keys('Mod+,')})`} aria-label="Settings" onClick={() => setSettings({})}>
         <GearIcon />
       </button>
       {exporting && <ExportDialog onClose={() => setExporting(false)} />}
@@ -320,8 +367,8 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           e.target.value = '';
           if (!f) return;
           try {
-            await openZip(f, newProjectId());
-            store().toast(`Opened ${f.name}`);
+            await openZip(f, newProjectId(), withUniqueName);
+            store().toast(`Opened ${f.name} as "${store().getState().model.meta.name}"`);
           } catch (err) {
             store().toast(`Cannot open ${f.name}: ${(err as Error).message}`, 'error');
           }
@@ -330,6 +377,13 @@ function TopBar({ panels }: { panels: PanelsApi }) {
       {menu.element}
     </header>
   );
+}
+
+/** "14:32" today, else the date. */
+function savedWhen(t: number): string {
+  const d = new Date(t);
+  const now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString();
 }
 
 async function saveZip() {
@@ -371,7 +425,7 @@ function TextOnlyHint() {
       {mode === 'diagram' && (
         <p>
           <button className="btn" onClick={() => store().setViewMode('text')}>
-            Show text (Alt+3)
+            Text (Alt+3)
           </button>{' '}
           <button className="btn" onClick={() => store().setViewMode('split')}>
             Split (Alt+2)
@@ -527,7 +581,7 @@ export function App() {
   return (
     <div className="app" style={style}>
       <TopBar panels={panels} />
-      <aside className={`left${panels.leftOpen ? '' : ' collapsed'}`} aria-label="Project" aria-hidden={!panels.leftOpen || undefined} style={{ position: 'relative' }}>
+      <aside className={`left${panels.leftOpen ? '' : ' collapsed'}`} aria-label="Project" aria-hidden={!panels.leftOpen || undefined}>
         <ProjectTree />
         <Palette />
         {panels.leftOpen && <PanelResizer side="left" width={panels.leftW} onWidth={(w, done) => (panels.update({ leftW: w }), done && store().requestFit())} />}
@@ -538,7 +592,7 @@ export function App() {
           <HistoryDrawer />
         </div>
       </main>
-      <aside className={`right${panels.rightOpen ? '' : ' collapsed'}`} aria-label="Properties" aria-hidden={!panels.rightOpen || undefined} style={{ position: 'relative' }}>
+      <aside className={`right${panels.rightOpen ? '' : ' collapsed'}`} aria-label="Properties" aria-hidden={!panels.rightOpen || undefined}>
         <Inspector />
         {panels.rightOpen && <PanelResizer side="right" width={panels.rightW} onWidth={(w, done) => (panels.update({ rightW: w }), done && store().requestFit())} />}
       </aside>

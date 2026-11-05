@@ -1,5 +1,5 @@
 // Project model: the parsed, validated view of all project files.
-import { migrateDocument } from './format';
+import { migrateParsed } from './format';
 import { loadLibraries, TypeIndex } from './library';
 import { classify, PROJECT_FILE, strategyDocFile } from './paths';
 import { validateSchema } from './schema';
@@ -49,12 +49,14 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
     diags.push({ severity: 'warning', code: 'missing-project-file', message: `${PROJECT_FILE} is missing`, file: PROJECT_FILE });
     return meta;
   }
-  const p = parseYaml(text);
-  if (p.error) {
-    diags.push({ severity: 'error', code: 'yaml-syntax', message: p.error.message, file: PROJECT_FILE, line: p.error.line });
+  const raw = parseYaml(text);
+  if (raw.error) {
+    diags.push({ severity: 'error', code: 'yaml-syntax', message: raw.error.message, file: PROJECT_FILE, line: raw.error.line });
     return meta;
   }
-  diags.push(...migrateDocument(p.doc, 'project', PROJECT_FILE).diags, ...validateSchema('project', p, PROJECT_FILE));
+  const m = migrateParsed(raw, 'project', PROJECT_FILE);
+  const p = m.parsed;
+  diags.push(...m.diags, ...validateSchema('project', p, PROJECT_FILE));
   const d = isObj(p.data) ? p.data : {};
   const tb = isObj(d.title_block) ? d.title_block : {};
   return {
@@ -185,7 +187,9 @@ export function loadProject(files: Files): ProjectModel {
     }
     if (role.kind === 'strategy-doc') docs.push(file);
     if (role.kind === 'sequence' && typeof content === 'string') {
-      const p = parseYaml(content);
+      const raw = parseYaml(content);
+      const mig = migrateParsed(raw, 'sequence', file);
+      const p = mig.parsed;
       parsedByFile.set(file, p);
       const doc = typeof files[strategyDocFile(file)] === 'string' ? strategyDocFile(file) : undefined;
       if (p.error) {
@@ -193,7 +197,7 @@ export function loadProject(files: Files): ProjectModel {
         sequences.push({ file, name: role.name, folder: role.folder, sheets: [{ id: 1 }], steps: [], transitions: [], inputs: [], notes: [], ext: {}, docFile: doc });
         continue;
       }
-      diags.push(...migrateDocument(p.doc, 'sequence', file).diags, ...validateSchema('sequence', p, file));
+      diags.push(...mig.diags, ...validateSchema('sequence', p, file));
       const r = parseSequence(file, role.name, role.folder, p);
       diags.push(...r.diags);
       if (r.sequence.name !== role.name) {
@@ -204,7 +208,8 @@ export function loadProject(files: Files): ProjectModel {
     }
     if (role.kind !== 'strategy' || typeof content !== 'string') continue;
 
-    const p = parseYaml(content);
+    const mig = migrateParsed(parseYaml(content), 'strategy', file);
+    const p = mig.parsed;
     parsedByFile.set(file, p);
     const base: Strategy = {
       file,
@@ -222,7 +227,7 @@ export function loadProject(files: Files): ProjectModel {
       strategies.push(base);
       continue;
     }
-    diags.push(...migrateDocument(p.doc, 'strategy', file).diags, ...validateSchema('strategy', p, file));
+    diags.push(...mig.diags, ...validateSchema('strategy', p, file));
     const d = isObj(p.data) ? p.data : {};
     const name = str(d.strategy) ?? role.name;
     if (name !== role.name) {
@@ -279,7 +284,7 @@ export function loadProject(files: Files): ProjectModel {
   }
   for (const t of lib.index.all) {
     if (!t.diagram) continue;
-    const p = parseYaml(files[t.file] as string);
+    const p = migrateParsed(parseYaml(files[t.file] as string), 'blocktype', t.file).parsed;
     diags.push(...validateDiagram(t.diagram, { file: t.file, parsed: p, base: ['diagram'], composite: t }));
   }
 

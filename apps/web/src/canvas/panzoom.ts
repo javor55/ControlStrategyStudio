@@ -9,8 +9,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 
 export const MIN_K = 0.1;
 export const MAX_K = 8;
-/** px reserved at the top for the floating toolbar when fitting. */
-export const FIT_TOP = 44;
+/** Margin (px) above the drawing when fitting (the toolbar is docked above the canvas). */
+export const FIT_TOP = 16;
 
 export interface View {
   x: number;

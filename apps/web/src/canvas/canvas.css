@@ -1,14 +1,37 @@
-/* Diagram canvas. The drawing itself is white paper rendered by @csd/render. */
-.cv { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.cv-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow: hidden; }
-.cv-header strong { font-weight: 600; }
-.cv-path, .cv-title { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
-.cv-header.composite { background: var(--accent-soft); }
+/* Diagram canvases (FBD, SFC, composite). The drawing itself is white paper rendered
+   by @csd/render; the chrome around it uses the :root tokens only. */
+.cv { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 
+/* --- header ------------------------------------------------------------------------- */
+.cv-header { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 3px 10px; background: var(--panel); border-bottom: 1px solid var(--rule); white-space: nowrap; overflow: hidden; }
+.cv-header .btn { flex: none; }
+.cv-name { font-weight: 600; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.cv-path, .cv-title { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cv-path { flex: 0 1 auto; }
+.cv-title { flex: 0 10 auto; }
+.cv-header .spacer { flex: 1 1 0; min-width: 8px; }
+.cv-hint { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); font-size: 12px; }
+.cv-kind { flex: none; font: 600 10px/14px var(--f-ui); letter-spacing: .06em; padding: 0 5px; border: 1px solid currentColor; border-radius: var(--radius); color: var(--accent); text-transform: uppercase; }
+.cv-kind.sfc { color: var(--sfc, #7a4fb5); }
+.cv-kind.composite { color: var(--ink-2); }
+
+/* --- toolbar: docked in one row under the header (never over the drawing) ---------- */
+.cv-toolbar { position: relative; flex: none; display: flex; align-items: center; gap: 3px; height: 32px; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--rule-strong); overflow: hidden; white-space: nowrap; }
+.cv-toolbar .btn { flex: none; }
+.cv-toolbar .btn .ico { flex: none; }
+.cv-toolbar .btn.active { background: var(--accent-soft); border-color: var(--accent); }
+.cv-toolbar .spacer { flex: 1; min-width: 0; }
+.cv-tb-group { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.cv-zoom { min-width: 52px; justify-content: center; font: 11px var(--f-mono); color: var(--ink-2); }
+.cv-sep { flex: none; width: 1px; height: 18px; margin: 0 3px; background: var(--rule); }
+.cv-tb-item { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.cv-toolbar-measure { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 3px; visibility: hidden; pointer-events: none; }
+
+/* --- drawing area ------------------------------------------------------------------- */
 .cv-main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .cv-host { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg); cursor: default; touch-action: none; user-select: none; -webkit-user-select: none; outline: none; }
-/* Subtle focus ring: keyboard shortcuts act on the canvas while it has focus. */
-.cv-host:focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+/* Subtle focus frame: keyboard shortcuts act on the canvas while it has the focus. */
+.cv-host:focus, .cv-host:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
 .cv-host.space, .cv-host.space * { cursor: grab !important; }
 .cv-host.panning, .cv-host.panning * { cursor: grabbing !important; }
 /* Pan = translate only; zoom = SVG width/height (vector, never a scaled bitmap). */
@@ -19,77 +42,70 @@
 .cv-overlay line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .cv-marquee { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; }
 
-.cv-toolbar { position: absolute; top: 8px; right: 10px; z-index: 5; max-width: calc(100% - 20px); display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 3px; padding: 3px; background: var(--panel); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
-.cv-zoom { min-width: 44px; text-align: center; font: 11px var(--f-mono); color: var(--ink-2); }
-.cv-sep { width: 1px; align-self: stretch; margin: 2px 3px; background: var(--rule); }
-.cv-dd { position: relative; display: inline-flex; }
-.cv-dd-panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 6; display: flex; flex-direction: column; gap: 2px; min-width: 190px; padding: 6px; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
-.cv-dd-panel label { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 2px; cursor: pointer; white-space: nowrap; }
-.cv-dd-panel label:hover { background: var(--hover); }
+/* Empty sheet hint (does not catch the pointer). */
+.cv-empty { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 4; display: grid; gap: 4px; max-width: min(420px, calc(100% - 32px)); padding: 12px 16px; text-align: center; color: var(--ink-2); background: var(--panel); border: 1px dashed var(--rule-strong); border-radius: 6px; pointer-events: none; }
+.cv-empty strong { color: var(--ink); font-weight: 600; }
+.cv-empty kbd, .cv-help kbd { font: 11px var(--f-mono); padding: 0 4px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--code-bg); white-space: nowrap; }
 
-/* Quick insert popup. */
-.cv-qi { position: absolute; z-index: 20; width: 300px; display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+/* --- quick insert --------------------------------------------------------------------- */
+.cv-qi { position: absolute; z-index: 20; width: 320px; display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
 .cv-qi-title { padding: 6px 8px 0; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cv-qi > .input { margin: 6px; width: auto; }
-.cv-qi-list { max-height: 280px; overflow-y: auto; padding: 0 4px 4px; }
+.cv-qi-list { max-height: 300px; overflow-y: auto; padding: 0 4px 4px; }
 .cv-qi-item { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; padding: 4px 6px; border-radius: 2px; cursor: pointer; }
 .cv-qi-item.active { background: var(--accent-soft); }
-.cv-qi-name { font: 600 12px var(--f-mono); }
+.cv-qi-item.disabled { cursor: default; }
+.cv-qi-item.disabled .cv-qi-name { color: var(--ink-3); }
+.cv-qi-item.first-pinned { margin-top: 3px; border-top: 1px solid var(--rule); border-radius: 0; padding-top: 6px; }
+.cv-qi-name { font-size: 12.5px; }
+.cv-qi-name.mono { font: 600 12px var(--f-mono); }
 .cv-qi-cat { font-size: 11px; color: var(--ink-3); }
 .cv-qi-desc { grid-column: 1 / -1; font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cv-qi-empty { padding: 8px; color: var(--ink-3); }
 
-/* In-place editor over the drawing. */
-.cv-inline { position: absolute; z-index: 15; box-sizing: border-box; padding: 0 4px; border: 1.5px solid var(--accent); border-radius: 2px; background: var(--sheet); color: var(--ink); font-family: var(--f-ui); box-shadow: var(--shadow); outline: none; }
+/* --- in-place editor over the drawing ------------------------------------------------- */
+.cv-inline { position: absolute; z-index: 15; box-sizing: border-box; padding: 0 4px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--sheet); color: var(--ink); font-family: var(--f-ui); box-shadow: var(--shadow); outline: none; }
 .cv-inline.mono { font-family: var(--f-mono); }
+.cv-inline.multiline { padding: 4px; resize: none; line-height: 1.35; }
 
-/* Shortcut overlay. */
-.cv-help { position: absolute; right: 10px; top: 48px; bottom: 10px; z-index: 25; width: min(520px, calc(100% - 20px)); display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+/* --- shortcut help -------------------------------------------------------------------- */
+.cv-help { position: absolute; right: 10px; top: 8px; bottom: 8px; z-index: 25; width: min(560px, calc(100% - 20px)); display: flex; flex-direction: column; background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
 .cv-help-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--rule); }
 .cv-help-body { overflow-y: auto; padding: 4px 12px 12px; }
-.cv-help h4 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.cv-help h4 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
 .cv-help table { width: 100%; border-collapse: collapse; }
 .cv-help td { padding: 3px 0; vertical-align: top; border-bottom: 1px solid var(--rule); }
-.cv-help td:first-child { width: 48%; padding-right: 10px; }
-.cv-help kbd { font: 11px var(--f-mono); padding: 1px 4px; border: 1px solid var(--rule-strong); border-radius: 2px; background: var(--code-bg); white-space: nowrap; }
+.cv-help td:first-child { width: 46%; padding-right: 10px; }
+.cv-help-gesture { color: var(--ink-2); font-style: italic; }
 
-.cv-tabs { display: flex; align-items: stretch; gap: 1px; height: 28px; padding: 0 6px; background: var(--panel); border-top: 1px solid var(--rule-strong); overflow-x: auto; overflow-y: hidden; }
-.cv-tab { flex: none; padding: 0 12px; border: 0; border-top: 2px solid transparent; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+/* --- sheet tabs ------------------------------------------------------------------------- */
+.cv-tabs { flex: none; display: flex; align-items: stretch; gap: 1px; height: 28px; padding: 0 6px; background: var(--panel); border-top: 1px solid var(--rule-strong); overflow-x: auto; overflow-y: hidden; }
+.cv-tab { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px; border: 0; border-top: 2px solid transparent; background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
 .cv-tab:hover { background: var(--hover); }
+.cv-tab:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .cv-tab.active { background: var(--sheet); color: var(--ink); border-top-color: var(--accent); font-weight: 600; }
-.cv-tab.doc { font-style: italic; margin-right: 6px; border-right: 1px solid var(--rule); }
-.cv-tab.add { font-weight: 600; }
+.cv-tab.doc { margin-right: 6px; border-right: 1px solid var(--rule); }
+.cv-tab.add { padding: 0 10px; color: var(--ink-3); }
 
-/* Wire drawing / reconnecting: magnetic snap ring on the target pin. */
+/* --- wiring: magnetic snap ring on the target pin ---------------------------------------- */
 .cv-overlay line.reconnect { stroke-dasharray: none; stroke-width: 2; opacity: .85; }
-.cv-overlay line.ok { stroke: #1e8a46; }
-.cv-overlay line.bad { stroke: #c62828; }
+.cv-overlay line.ok { stroke: var(--diff-add, var(--ok)); }
+.cv-overlay line.bad { stroke: var(--error); }
 .cv-snap circle { fill: none; stroke-width: 2.5; }
 .cv-snap circle.dot { stroke: none; }
-.cv-snap.ok circle { stroke: #1e8a46; }
-.cv-snap.ok circle.dot { fill: #1e8a46; }
-.cv-snap.bad circle { stroke: #c62828; }
-.cv-snap.bad circle.dot { fill: #c62828; }
+.cv-snap.ok circle { stroke: var(--diff-add, var(--ok)); }
+.cv-snap.ok circle.dot { fill: var(--diff-add, var(--ok)); }
+.cv-snap.bad circle { stroke: var(--error); }
+.cv-snap.bad circle.dot { fill: var(--error); }
 .cv-host.link-end, .cv-host.link-end * { cursor: crosshair !important; }
 .cv-host.wiring, .cv-host.wiring * { cursor: crosshair !important; }
 
-.cv-dd-panel .cv-dd-group { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; margin-top: 2px; border-top: 1px solid var(--rule); }
-.cv-dd-panel .cv-dd-h { padding: 2px 6px; font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
-.cv-dd-panel .cv-seg { display: flex; gap: 2px; padding: 0 6px 2px; }
-.cv-dd-panel .cv-seg .btn { flex: 1; }
-.cv-dd-panel .cv-dd-group:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
-.cv-dd-panel .cv-dd-note { color: var(--ink-3); }
-.cv-dd-panel .cv-dd-item { display: block; width: 100%; text-align: left; padding: 4px 6px 4px 26px; border: 0; border-radius: 2px; background: none; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
-.cv-dd-panel .cv-dd-item:hover:not(:disabled) { background: var(--hover); }
-.cv-dd-panel .cv-dd-item:disabled { color: var(--ink-3); cursor: default; }
-
-/* --- sequence canvas ------------------------------------------------------------------- */
-.cv-header .seq-kind { font: 600 10px var(--f-mono); letter-spacing: .06em; padding: 1px 5px; border: 1px solid var(--accent); border-radius: 2px; color: var(--accent); }
+/* --- sequence canvas ----------------------------------------------------------------------- */
 .cv-overlay circle.seq-handle { fill: var(--accent); stroke: var(--sheet); stroke-width: 1.5; }
-.cv-overlay rect.seq-target { fill: none; stroke: #1e8a46; stroke-width: 2; stroke-dasharray: 5 3; }
+.cv-overlay rect.seq-target { fill: none; stroke: var(--diff-add, var(--ok)); stroke-width: 2; stroke-dasharray: 5 3; }
 .cv-overlay .seq-drop line { stroke: var(--accent); stroke-width: 3; stroke-dasharray: none; }
 .cv-overlay .seq-drop circle { fill: var(--accent); }
 .cv-overlay rect.seq-drop-box { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 2; }
 .cv-overlay rect.seq-drop-box.ghost { stroke-dasharray: 5 3; }
 .cv-overlay .seq-drop-label rect { fill: var(--accent); }
-.cv-overlay .seq-drop-label text { fill: #fff; font: 600 11.5px var(--font-sans, system-ui); }
+.cv-overlay .seq-drop-label text { fill: var(--accent-ink); font: 600 11.5px var(--f-ui); }

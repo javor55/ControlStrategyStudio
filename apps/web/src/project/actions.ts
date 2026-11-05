@@ -21,7 +21,9 @@ import {
 } from '@csd/core';
 import { store } from '../state/store';
 import { zipToFiles } from '../state/persist';
-import { confirmDialog, promptDialog } from '../ui/dialogs';
+import { confirmDialog, pickFolderDialog, promptDialog, type PickFolder } from '../ui/dialogs';
+import { plural } from '../ui/text';
+import { setProjectField } from '../settings/projectFields';
 
 const TAG = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const TYPE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -125,7 +127,7 @@ export function editFolderDescription(node: FolderNode) {
   if (!(readme in st().files)) {
     const ok = node.path
       ? store().dispatch({ op: 'createFolder', folder: node.path }, { label: 'Add folder description' })
-      : store().dispatch({ op: 'createFile', file: readme, content: `# ${st().model.meta.name}\n` }, { label: 'Add project README' });
+      : store().dispatch({ op: 'createFile', file: readme, content: `# ${st().model.meta.name}\n` }, { label: 'Add project introduction' });
     if (!ok) return;
   }
   store().open(readme);
@@ -137,12 +139,13 @@ export async function deleteFolder(node: FolderNode) {
   const sequences = files.filter((f) => classify(f).kind === 'sequence').length;
   const ok = await confirmDialog({
     title: `Delete folder ${node.name}?`,
-    message: `${node.path} and everything in it will be deleted: ${strategies} ${strategies === 1 ? 'strategy' : 'strategies'}, ${sequences ? `${sequences} sequence${sequences === 1 ? '' : 's'}, ` : ''}${files.length} file${files.length === 1 ? '' : 's'} in total. You can undo this.`,
-    okLabel: 'Delete',
+    message: `${node.path} and everything in it will be deleted: ${[plural(strategies, 'continuous strategy', 'continuous strategies'), sequences ? plural(sequences, 'sequence strategy', 'sequence strategies') : ''].filter(Boolean).join(', ')}; ${plural(files.length, 'file')} in total.`,
+    okLabel: 'Delete folder',
     danger: true,
   });
   if (!ok || !files.length) return;
-  store().dispatch({ op: 'batch', label: `Delete folder ${node.name}`, ops: files.map((file): Op => ({ op: 'deleteFile', file })) }, { label: `Delete folder ${node.name}` });
+  if (store().dispatch({ op: 'batch', label: `Delete folder ${node.name}`, ops: files.map((file): Op => ({ op: 'deleteFile', file })) }, { label: `Delete folder ${node.name}` }))
+    store().toastUndo(`Deleted folder ${node.name}`);
 }
 
 export async function renameStrategy(file: string) {
@@ -176,25 +179,31 @@ export async function duplicateStrategy(file: string) {
 export async function moveStrategy(file: string) {
   const role = classify(file);
   if (role.kind !== 'strategy' && role.kind !== 'sequence') return;
-  const folders: string[] = [];
-  const walk = (n: FolderNode) => {
-    if (n.path) folders.push(n.path);
-    n.folders.forEach(walk);
+  const m = st().model;
+  const levels = m.meta.levels;
+  const folders: PickFolder[] = [{ path: '', name: m.meta.name || 'Top level', depth: 0 }];
+  const walk = (n: FolderNode, depth: number) => {
+    for (const f of n.folders) {
+      folders.push({ path: f.path, name: f.name, depth, level: f.level });
+      walk(f, depth + 1);
+    }
   };
-  walk(st().model.root);
-  const raw = await promptDialog({
-    title: `Move ${role.name}`,
-    message: `Folder path below strategies/, empty = top level. Existing: ${folders.slice(0, 6).join(', ')}${folders.length > 6 ? ', …' : ''}`,
-    label: 'Folder',
-    value: role.folder,
+  walk(m.root, 1);
+  const raw = await pickFolderDialog({
+    title: `Move ${role.name} to folder`,
+    folders,
+    current: role.folder,
     okLabel: 'Move',
-    validate: (v) => validateFolderPath(cleanFolder(v)),
+    levelAt: (depth) => levels[depth - 1] ?? undefined,
   });
   if (raw === null) return;
   const folder = cleanFolder(raw);
-  if (folder === role.folder) return;
+  if (folder === role.folder || validateFolderPath(folder)) return;
   const wasActive = st().activeFile === file;
-  if (store().dispatch({ op: 'moveStrategy', file, folder }, { label: `Move ${role.name}` }) && wasActive) store().open(sameKindFile(file, folder, role.name));
+  if (store().dispatch({ op: 'moveStrategy', file, folder }, { label: `Move ${role.name}` })) {
+    if (wasActive) store().open(sameKindFile(file, folder, role.name));
+    store().toastUndo(`Moved ${role.name} to ${folder || 'the top level'}`);
+  }
 }
 
 export function openFunctionDescription(file: string) {
@@ -221,15 +230,15 @@ export async function deleteStrategy(file: string) {
   const ok = await confirmDialog({
     title: `Delete ${name}?`,
     message:
-      `${file}${md in st().files ? ' and its function description' : ''} will be deleted. You can undo this.` +
-      (readers.length ? ` Warning: it is connected to ${readers.join(', ')} (signals read or written).` : ''),
+      `${file}${md in st().files ? ' and its function description' : ''} will be deleted.` +
+      (readers.length ? ` It is connected to ${readers.join(', ')} (signals read or written).` : ''),
     okLabel: 'Delete',
     danger: true,
   });
   if (!ok) return;
   const ops: Op[] = [{ op: 'deleteFile', file }];
   if (md in st().files) ops.push({ op: 'deleteFile', file: md });
-  store().dispatch({ op: 'batch', label: `Delete ${name}`, ops }, { label: `Delete ${name}` });
+  if (store().dispatch({ op: 'batch', label: `Delete ${name}`, ops }, { label: `Delete ${name}` })) store().toastUndo(`Deleted ${name}`);
 }
 
 // --- libraries -------------------------------------------------------------------------
@@ -294,13 +303,16 @@ export async function deleteTypeVersion(def: BlockTypeDef) {
   const ok = await confirmDialog({
     title: `Delete ${def.type}@${def.version}?`,
     message:
-      `${def.file} will be deleted. You can undo this.` +
-      (uses.length ? ` ${uses.length} block${uses.length === 1 ? '' : 's'} currently use${uses.length === 1 ? 's' : ''} this version${others.length ? ' and will switch to another one' : ' and will become unknown'}.` : ''),
-    okLabel: 'Delete',
+      `${def.file} will be deleted.` +
+      (uses.length ? ` ${plural(uses.length, 'block')} ${uses.length === 1 ? 'uses' : 'use'} this version${others.length ? ' and will switch to another one' : ' and will become unknown'}.` : ''),
+    okLabel: 'Delete version',
     danger: true,
   });
   if (!ok) return;
-  if (store().dispatch({ op: 'deleteFile', file: def.file }, { label: `Delete ${def.type}@${def.version}` }) && others[0] && st().activeFile === null) store().open(others[0].file);
+  if (store().dispatch({ op: 'deleteFile', file: def.file }, { label: `Delete ${def.type}@${def.version}` })) {
+    if (others[0] && st().activeFile === null) store().open(others[0].file);
+    store().toastUndo(`Deleted ${def.type}@${def.version}`);
+  }
 }
 
 export async function importLibraryZip(zip: File) {
@@ -343,7 +355,7 @@ export async function importLibraryZip(zip: File) {
   for (const [file, content] of Object.entries(files)) if (libs.some((l) => file.startsWith(`library/${l}/`))) ops.push({ op: 'createFile', file, content });
   if (store().dispatch({ op: 'batch', label: 'Import libraries', ops }, { label: `Import ${libs.join(', ')}` })) {
     const types = ops.filter((o) => o.op === 'createFile' && classify(o.file).kind === 'blocktype').length;
-    store().toast(`Imported ${libs.join(', ')} (${types} block type file${types === 1 ? '' : 's'})`);
+    store().toast(`Imported ${libs.join(', ')} (${plural(types, 'block type file')})`);
   }
 }
 
@@ -424,17 +436,35 @@ export async function renameFolder(node: FolderNode): Promise<string | undefined
     label: 'New name',
     value: node.name,
     okLabel: 'Rename',
-    validate: (v) => {
-      if (v.includes('/')) return 'The name cannot contain "/" — use Move for strategies';
-      const e = validateFolderSegment(v);
-      if (e) return e;
-      if (v === node.name) return undefined;
-      const to = joinPath(parent, v);
-      if (Object.keys(st().files).some((f) => f.startsWith(`strategies/${to}/`))) return 'A folder with this name already exists';
-      return undefined;
-    },
+    validate: (v) => validateFolderRename(node, v),
   });
   if (!name || name === node.name) return undefined;
+  return renameFolderTo(node, name);
+}
+
+/** Validation message for a new name of folder `node`, or undefined. */
+export function validateFolderRename(node: FolderNode, v: string): string | undefined {
+  const slash = node.path.lastIndexOf('/');
+  const parent = slash < 0 ? '' : node.path.slice(0, slash);
+  if (v.includes('/')) return 'The name cannot contain "/"; use Move to folder for strategies';
+  const e = validateFolderSegment(v);
+  if (e) return e;
+  if (v === node.name) return undefined;
+  const to = joinPath(parent, v);
+  if (Object.keys(st().files).some((f) => f.startsWith(`strategies/${to}/`))) return 'A folder with this name already exists';
+  return undefined;
+}
+
+/** Renames folder `node` to `name` (same parent); returns the new path. */
+export function renameFolderTo(node: FolderNode, name: string): string | undefined {
+  const err = validateFolderRename(node, name);
+  if (err) {
+    store().toast(err, 'error');
+    return undefined;
+  }
+  if (name === node.name) return node.path;
+  const slash = node.path.lastIndexOf('/');
+  const parent = slash < 0 ? '' : node.path.slice(0, slash);
   const to = joinPath(parent, name);
   const s = store();
   const active = s.getState().activeFile;
@@ -450,4 +480,71 @@ export async function renameFolder(node: FolderNode): Promise<string | undefined
     }
   }
   return to;
+}
+
+// --- assets & files ------------------------------------------------------------------------
+
+/** Copies text to the clipboard with a toast. */
+export function copyText(text: string, what = 'Copied') {
+  const ok = () => store().toast(`${what}: ${text}`);
+  if (!navigator.clipboard) return ok();
+  navigator.clipboard.writeText(text).then(ok, ok);
+}
+
+export function copyAssetReference(path: string) {
+  copyText(`![](${path})`, 'Copied Markdown reference');
+}
+
+export async function renameAsset(path: string): Promise<string | undefined> {
+  const name = basename(path);
+  const dot = name.lastIndexOf('.');
+  const next = await promptDialog({
+    title: `Rename ${name}`,
+    message: 'Markdown documents that show the image are not updated.',
+    label: 'New name',
+    value: name,
+    okLabel: 'Rename',
+    validate: (v) => (!v ? 'Enter a name' : /[\\/:*?"<>|]/.test(v) ? 'Not a valid file name' : v !== name && `assets/${v}` in st().files ? 'An asset with this name already exists' : undefined),
+  });
+  if (!next || next === name) return undefined;
+  const to = `assets/${next.includes('.') || dot < 0 ? next : next + name.slice(dot)}`;
+  const wasActive = st().activeFile === path;
+  if (!store().dispatch({ op: 'moveFile', from: path, to }, { label: `Rename ${name}` })) return undefined;
+  if (wasActive) store().open(to);
+  return to;
+}
+
+export async function deleteAsset(path: string) {
+  const ok = await confirmDialog({ title: `Delete ${basename(path)}?`, message: `${path} will be deleted. Documents that show it will show a missing image.`, okLabel: 'Delete', danger: true });
+  if (!ok) return;
+  if (store().dispatch({ op: 'deleteFile', file: path }, { label: `Delete ${path}` })) store().toastUndo(`Deleted ${basename(path)}`);
+}
+
+/** Renames the project (project.yaml name) after asking. */
+export async function renameProject() {
+  const old = st().model.meta.name;
+  const name = await promptDialog({ title: 'Rename project', label: 'Project name', value: old, okLabel: 'Rename', validate: (v) => (v ? undefined : 'Enter a name') });
+  if (!name || name === old) return;
+  setProjectField(['name'], name, 'Rename project');
+}
+
+/** Renames a block type (all versions, every usage) after asking for the name. */
+export async function renameBlockTypeDialog(def: BlockTypeDef) {
+  const m = st().model;
+  const versions = m.types.versions(def.type, def.library);
+  const uses = versions.reduce((n, t) => n + usagesOf(t).length, 0);
+  const to = await promptDialog({
+    title: `Rename ${def.type}`,
+    message: `All ${plural(versions.length, 'version')} in library ${def.library} are renamed${uses ? ` and ${plural(uses, 'block')} using the type are updated` : ''}.`,
+    label: 'New name',
+    value: def.type,
+    okLabel: 'Rename',
+    validate: (v) => (!v ? 'Enter a name' : !TYPE_NAME.test(v) ? 'Use letters, digits and "_", starting with a letter' : v !== def.type && m.types.versions(v, def.library).length ? `${v} already exists in ${def.library}` : undefined),
+  });
+  if (!to || to === def.type) return;
+  const wasActive = versions.some((v) => v.file === st().activeFile);
+  if (store().dispatch({ op: 'renameBlockType', file: def.file, type: to }, { label: `Rename type ${def.type} → ${to}` })) {
+    if (wasActive) store().open(blockTypeFile(def.library, to, def.version));
+    store().toastUndo(`Renamed ${def.type} to ${to}`);
+  }
 }

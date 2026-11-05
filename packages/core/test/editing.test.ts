@@ -201,7 +201,7 @@ describe('drawing style and block display', () => {
     f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'color'] });
     f = run(f, { op: 'setDrawing', path: ['signals', 'bool', 'style'] });
     expect(f['project.yaml']).not.toContain('bool:');
-    expect(() => applyOp(f, { op: 'setDrawing', path: ['nope'], value: 1 })).toThrow(/Unknown/);
+    expect(() => applyOp(f, { op: 'setDrawing', path: ['nope'], value: 1 })).toThrow(/does not exist/);
   });
   it('collapses parameters per block with a footer to expand them', () => {
     const f = run(demo, { op: 'setBlockDisplay', file: FIC, id: 'FIC101', params: false });

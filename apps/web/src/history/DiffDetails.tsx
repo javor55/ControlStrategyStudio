@@ -1,16 +1,18 @@
-// Inspector section in comparison mode: field changes of the selected block or
-// link (before → after), or an overview of all changes of the open strategy,
-// including removed items that no longer exist on the canvas.
-import { formatEndpoint, type FieldChange, type StrategyDiff } from '@csd/core';
-import { DIFF_COLORS } from '@csd/render';
+// Inspector box in comparison mode for continuous strategies: field changes of
+// the selected block or link (before → after), or an overview of all changes of
+// the open strategy, including removed items that no longer exist on the canvas.
+// Sequences use the same box (SequenceInspector) and the same Fields table.
+import { formatEndpoint, type FieldChange, type Selection, type StrategyDiff } from '@csd/core';
 import { store, useEditor } from '../state/store';
-import { strategyDiffOf, stopCompare, useCompare } from './compare';
+import { strategyDiffOf, useCompare } from './compare';
 import { summarizeStrategy } from './format';
+import { ChangesBox } from '../inspector/Scaffold';
 import './history.css';
 
 const fieldLabel = (f: string) => (f.startsWith('params.') ? f.slice(7) : f);
 
-function Fields({ changes }: { changes: FieldChange[] }) {
+/** before → after table of field changes. */
+export function Fields({ changes }: { changes: readonly FieldChange[] }) {
   if (!changes.length) return null;
   return (
     <table className="hx-fields">
@@ -34,12 +36,9 @@ function Fields({ changes }: { changes: FieldChange[] }) {
   );
 }
 
-function Kind({ kind }: { kind: 'added' | 'changed' | 'removed' }) {
-  return (
-    <span className="hx-dk" style={{ color: DIFF_COLORS[kind], borderColor: DIFF_COLORS[kind] }}>
-      {kind}
-    </span>
-  );
+/** "added" / "changed" / "removed" chip in the diff colour. */
+export function Kind({ kind }: { kind: 'added' | 'changed' | 'removed' }) {
+  return <span className={`hx-dk ${kind}`}>{kind}</span>;
 }
 
 function Overview({ sd, label }: { sd: StrategyDiff; label: string }) {
@@ -136,55 +135,45 @@ function Overview({ sd, label }: { sd: StrategyDiff; label: string }) {
   );
 }
 
-export function CompareDetails() {
+/** Changes box of a continuous strategy for the current selection (nothing outside comparison mode). */
+export function StrategyChanges({ file, selection }: { file: string; selection: Selection | null }) {
   const { target, diff } = useCompare();
-  const file = useEditor((s) => s.activeFile);
-  const selection = useEditor((s) => s.selection);
-  const isStrategy = useEditor((s) => !!(s.activeFile && s.model.strategyByFile.get(s.activeFile)));
-  if (!target || !diff || !isStrategy) return null;
+  if (!target || !diff) return null;
   const sd = strategyDiffOf(diff, file);
+  const all = (
+    <button type="button" className="btn small" onClick={() => store().select(null)}>
+      All changes in this strategy
+    </button>
+  );
   let body;
-  if (!sd) body = <div className="hx-muted hx-dd-p">No changes in this strategy since {target.label}.</div>;
-  else if (sd.kind === 'added') body = <div className="hx-dd-p">New — it did not exist in {target.label}.</div>;
+  if (!sd) body = <div className="hx-muted hx-dd-p">No changes in this strategy.</div>;
+  else if (sd.kind === 'added') body = <div className="hx-dd-p">New: it did not exist in {target.label}.</div>;
   else if (selection?.kind === 'block') {
     const b = sd.blocks.find((x) => x.id === selection.id);
     body = (
       <>
         <div className="hx-dd-p">
-          Block <b className="mono">{selection.id}</b>{' '}
-          {!b ? 'is unchanged.' : b.kind === 'added' ? 'was added.' : b.changes.length ? <Kind kind="changed" /> : 'was only moved.'}
+          {!b ? 'Unchanged.' : b.kind === 'added' ? <Kind kind="added" /> : b.changes.length ? <Kind kind="changed" /> : 'Only moved.'}
         </div>
         {b && <Fields changes={b.changes} />}
-        <button className="btn small" onClick={() => store().select(null)}>
-          All changes in this strategy
-        </button>
+        {all}
       </>
     );
   } else if (selection?.kind === 'link') {
     const l = sd.links.find((x) => x.after?.index === selection.index);
     body = (
       <>
-        <div className="hx-dd-p">
-          Link to <b className="mono">{l?.key ?? 'this input'}</b> {!l ? 'is unchanged.' : l.kind === 'added' ? 'was added.' : <Kind kind="changed" />}
-        </div>
+        <div className="hx-dd-p">{!l ? 'Unchanged.' : <Kind kind={l.kind === 'added' ? 'added' : 'changed'} />}</div>
         {l && <Fields changes={l.changes} />}
-        <button className="btn small" onClick={() => store().select(null)}>
-          All changes in this strategy
-        </button>
+        {all}
       </>
     );
-  } else body = <Overview sd={sd} label={target.label} />;
+  } else if (selection) return null;
+  else body = <Overview sd={sd} label={target.label} />;
   return (
-    <section className="hx-dd" aria-label={`Changes since ${target.label}`} data-testid="compare-details">
-      <div className="hx-dd-head">
-        <span>Changes since {target.label}</span>
-        <span className="spacer" />
-        <button className="btn small ghost" onClick={stopCompare} title="Leave comparison mode">
-          Exit
-        </button>
-      </div>
+    <ChangesBox label={target.label} testId="compare-details">
       {body}
-    </section>
+    </ChangesBox>
   );
 }
 
@@ -197,9 +186,10 @@ export function ChangeDot({ file }: { file: string }) {
     const sd = strategyDiffOf(diff, file);
     if (!sd) return null;
     const kind = sd.kind === 'added' ? 'added' : 'changed';
-    return <span className="hx-tree-dot" style={{ background: DIFF_COLORS[kind] }} title={`${kind === 'added' ? 'New' : 'Changed'} since ${target.label}: ${summarizeStrategy(sd)}`} aria-label={`${kind} since ${target.label}`} />;
+    return <span className={`hx-tree-dot ${kind}`} title={`${kind === 'added' ? 'New' : 'Changed'} since ${target.label}: ${summarizeStrategy(sd)}`} aria-label={`${kind} since ${target.label}`} />;
   }
   if (!uncommitted) return null;
   const kind = uncommitted.kind === 'added' ? 'added' : 'changed';
-  return <span className="hx-tree-dot hollow" style={{ borderColor: DIFF_COLORS[kind] }} title={`Uncommitted: ${uncommitted.kind}`} aria-label={`uncommitted ${uncommitted.kind}`} />;
+  const what = uncommitted.kind === 'added' ? 'new, not committed yet' : uncommitted.kind === 'deleted' ? 'deleted, not committed yet' : 'changed since the last commit';
+  return <span className={`hx-tree-dot hollow ${kind}`} title={`Uncommitted: ${what}`} aria-label={`uncommitted: ${what}`} />;
 }

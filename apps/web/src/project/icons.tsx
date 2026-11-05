@@ -1,4 +1,5 @@
-// Tiny inline icons for the left panel (stroke = currentColor, 14 px).
+// Inline SVG icons used across the app (stroke = currentColor, 14 px by default).
+// Use these instead of Unicode glyphs (× ↑ ↓ ↗ ⋯ ▾ ✎ ⎇) so every icon has the same weight.
 import type { ReactNode } from 'react';
 
 function Svg({ children, size = 14 }: { children: ReactNode; size?: number }) {
@@ -20,6 +21,7 @@ export const Icon = {
       <path d="M1.5 4.5v8h13v-7H7.5L6 4H1.5z" />
     </Svg>
   ),
+  /** FBD: two function blocks joined by a link. */
   strategy: (
     <Svg>
       <rect x="1.5" y="3" width="5" height="4" />
@@ -103,6 +105,82 @@ export const Icon = {
     <Svg size={13}>
       <circle cx="7" cy="7" r="4.5" />
       <path d="M10.5 10.5L14 14" />
+    </Svg>
+  ),
+  close: (
+    <Svg size={12}>
+      <path d="M4 4l8 8 M12 4l-8 8" />
+    </Svg>
+  ),
+  up: (
+    <Svg size={12}>
+      <path d="M8 13V3 M4 7l4-4 4 4" />
+    </Svg>
+  ),
+  down: (
+    <Svg size={12}>
+      <path d="M8 3v10 M4 9l4 4 4-4" />
+    </Svg>
+  ),
+  edit: (
+    <Svg size={12}>
+      <path d="M10.5 2.5l3 3-8 8h-3v-3z M9 4l3 3" />
+    </Svg>
+  ),
+  external: (
+    <Svg size={11}>
+      <path d="M6.5 3.5H3v9.5h9.5V9.5 M9 2.5h4.5V7 M13.5 2.5L7.5 8.5" />
+    </Svg>
+  ),
+  copy: (
+    <Svg size={12}>
+      <rect x="5" y="5" width="8.5" height="8.5" />
+      <path d="M3 10.5H2.5v-8h8V3" />
+    </Svg>
+  ),
+  undo: (
+    <Svg>
+      <path d="M5 4L2 7l3 3 M2 7h7.5a4 4 0 010 8H7" />
+    </Svg>
+  ),
+  redo: (
+    <Svg>
+      <path d="M11 4l3 3-3 3 M14 7H6.5a4 4 0 000 8H9" />
+    </Svg>
+  ),
+  check: (
+    <Svg size={12}>
+      <path d="M3 8.5l3 3 7-7" />
+    </Svg>
+  ),
+  /** Saved in the browser: a disk with a check. */
+  saved: (
+    <Svg>
+      <path d="M2.5 2.5h9l2 2v9h-11z M5 2.5v3.5h5V2.5 M5.5 10.5l1.7 1.7 3.3-3.3" />
+    </Svg>
+  ),
+  saving: (
+    <Svg>
+      <path d="M2.5 2.5h9l2 2v9h-11z M5 2.5v3.5h5V2.5" />
+      <circle cx="8" cy="10.5" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
+  branch: (
+    <Svg size={12}>
+      <circle cx="4.5" cy="3.5" r="1.5" />
+      <circle cx="4.5" cy="12.5" r="1.5" />
+      <circle cx="11.5" cy="5.5" r="1.5" />
+      <path d="M4.5 5v6 M11.5 7c0 3-7 2-7 4" />
+    </Svg>
+  ),
+  caret: (
+    <Svg size={10}>
+      <path d="M4 6l4 4 4-4" />
+    </Svg>
+  ),
+  warning: (
+    <Svg size={12}>
+      <path d="M8 2l6.5 11.5h-13z M8 6.5v3.5 M8 12v.2" />
     </Svg>
   ),
 };

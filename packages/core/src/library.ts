@@ -1,7 +1,7 @@
 // Block libraries. Each library is a self-contained folder `library/<lib>/`
 // that can be copied between projects.
 import { classify, libraryFile } from './paths';
-import { migrateDocument } from './format';
+import { migrateParsed } from './format';
 import { validateSchema } from './schema';
 import { parseDiagram, type TypeResolution } from './diagram';
 import type { BlockTypeDef, Diag, Files, LibraryDef, PortDef } from './types';
@@ -140,13 +140,15 @@ export function loadLibraries(files: Files): LibraryLoad {
     if (typeof content !== 'string') continue;
     const role = classify(file);
     if (role.kind !== 'library' && role.kind !== 'blocktype') continue;
-    const p = parseYaml(content);
-    if (p.error) {
-      diags.push({ severity: 'error', code: 'yaml-syntax', message: p.error.message, file, line: p.error.line });
+    const text = parseYaml(content);
+    if (text.error) {
+      diags.push({ severity: 'error', code: 'yaml-syntax', message: text.error.message, file, line: text.error.line });
       continue;
     }
+    const mig = migrateParsed(text, role.kind, file);
+    const p = mig.parsed;
     if (role.kind === 'library') {
-      diags.push(...migrateDocument(p.doc, 'library', file).diags, ...validateSchema('library', p, file));
+      diags.push(...mig.diags, ...validateSchema('library', p, file));
       const d = isObj(p.data) ? p.data : {};
       const l = libOf(role.lib);
       l.uid = str(d.uid);
@@ -156,7 +158,7 @@ export function loadLibraries(files: Files): LibraryLoad {
       l.ext = pickExt(d);
       continue;
     }
-    diags.push(...migrateDocument(p.doc, 'blocktype', file).diags, ...validateSchema('blocktype', p, file));
+    diags.push(...mig.diags, ...validateSchema('blocktype', p, file));
     const d = isObj(p.data) ? p.data : {};
     const type = str(d.type);
     const version = str(d.version);
@@ -206,7 +208,7 @@ export function loadLibraries(files: Files): LibraryLoad {
   for (const def of types) {
     const d = raw.get(def)!;
     if (def.kind !== 'composite' || !isObj(d.diagram)) continue;
-    const p = parseYaml(files[def.file] as string);
+    const p = migrateParsed(parseYaml(files[def.file] as string), 'blocktype', def.file).parsed;
     const res = parseDiagram(d.diagram, (ref) => index.resolve(ref), { file: def.file, parsed: p, base: ['diagram'] });
     def.diagram = res.diagram;
     diags.push(...res.diags);

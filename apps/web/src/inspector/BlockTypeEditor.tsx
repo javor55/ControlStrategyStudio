@@ -12,7 +12,10 @@ import { indentWithTab } from '@codemirror/commands';
 import { blockTypeFile, checkValue, formatValue, SIGNAL_TYPES, type BlockTypeDef, type Op, type PortDef, type PortList, type PortSpec } from '@csd/core';
 import { store, useEditor } from '../state/store';
 import { Field } from '../ui/kit';
-import { confirmDialog, promptDialog } from '../ui/dialogs';
+import { promptDialog } from '../ui/dialogs';
+import { AddButton } from '../ui/parts';
+import { plural } from '../ui/text';
+import { Icon } from '../project/icons';
 import { newTypeVersion, usagesOf } from '../project/actions';
 import { parseParamText } from './values';
 import './blocktype.css';
@@ -94,7 +97,7 @@ function ColorInput({ value, onCommit }: { value: string | undefined; onCommit: 
       <span className="mono bte-muted">{value ?? 'default'}</span>
       {value && (
         <button className="btn small ghost" title="Use the default colour" onClick={() => cb.current(undefined)}>
-          Clear
+          Use default
         </button>
       )}
     </span>
@@ -307,18 +310,18 @@ function PortRow(props: { file: string; list: PortList; port: PortDef; index: nu
   const actions = (
     <span className="bte-actions">
       {compact && (
-        <button className={`btn small ghost icon${open ? ' on' : ''}`} title={open ? 'Hide details' : 'Unit, description …'} aria-expanded={open} onClick={() => setOpen(!open)}>
-          ⋯
+        <button className={`btn small ghost icon${open ? ' on' : ''}`} title={open ? 'Hide details' : 'Unit, description …'} aria-label="Details" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {Icon.more}
         </button>
       )}
-      <button className="btn small ghost icon" title="Move up" disabled={index === 0} onClick={() => dispatch({ op: 'movePort', file, list, name: port.name, to: index - 1 }, `Move ${port.name}`)}>
-        ↑
+      <button className="btn small ghost icon" title="Move up" aria-label={`Move ${port.name} up`} disabled={index === 0} onClick={() => dispatch({ op: 'movePort', file, list, name: port.name, to: index - 1 }, `Move ${port.name}`)}>
+        {Icon.up}
       </button>
-      <button className="btn small ghost icon" title="Move down" disabled={index === count - 1} onClick={() => dispatch({ op: 'movePort', file, list, name: port.name, to: index + 1 }, `Move ${port.name}`)}>
-        ↓
+      <button className="btn small ghost icon" title="Move down" aria-label={`Move ${port.name} down`} disabled={index === count - 1} onClick={() => dispatch({ op: 'movePort', file, list, name: port.name, to: index + 1 }, `Move ${port.name}`)}>
+        {Icon.down}
       </button>
-      <button className="btn small ghost icon danger" title={`Delete ${LIST_INFO[list].one}`} onClick={() => dispatch({ op: 'removePort', file, list, name: port.name }, `Delete ${port.name}`)}>
-        ×
+      <button className="btn small ghost icon danger" title={`Delete ${LIST_INFO[list].one}`} aria-label={`Delete ${port.name}`} onClick={() => dispatch({ op: 'removePort', file, list, name: port.name }, `Delete ${port.name}`)}>
+        {Icon.close}
       </button>
     </span>
   );
@@ -381,11 +384,7 @@ function PortTable({ def, list, compact }: { def: BlockTypeDef; list: PortList; 
     const name = `${info.prefix}${n}`;
     if (dispatch({ op: 'addPort', file: def.file, list, port: { name, type: 'REAL' } }, `Add ${info.one} ${name}`)) setFocusName(name);
   };
-  const addBtn = (
-    <button className="btn small" onClick={add} title={`Add ${info.one}`}>
-      + Add {info.one}
-    </button>
-  );
+  const addBtn = <AddButton label={`Add ${info.one}`} onClick={add} />;
   return (
     <section className={`bte-sec${compact ? ' compact' : ''}`} aria-label={info.title}>
       <h3>
@@ -394,7 +393,7 @@ function PortTable({ def, list, compact }: { def: BlockTypeDef; list: PortList; 
         {addBtn}
       </h3>
       {!ports.length ? (
-        <p className="bte-muted bte-none">No {info.title.toLowerCase()}.</p>
+        <p className="bte-muted bte-none">No {info.title.toLowerCase()} yet.</p>
       ) : compact ? (
         <div className="bte-ports">
           <div className="bte-port-head">
@@ -452,8 +451,8 @@ function ImplementationEditor({ def, compact }: { def: BlockTypeDef; compact?: b
         Implementation
         <span className="spacer" />
         {impl && (
-          <button className="btn small danger" onClick={() => set(undefined, undefined, 'Remove implementation')}>
-            Remove implementation
+          <button className="btn small ghost danger" onClick={() => set(undefined, undefined, 'Delete implementation') && store().toastUndo('Deleted the implementation')}>
+            Delete implementation
           </button>
         )}
       </h3>
@@ -476,7 +475,7 @@ function ImplementationEditor({ def, compact }: { def: BlockTypeDef; compact?: b
               {l}
             </option>
           ))}
-          <option value={'\u0000other'}>other…</option>
+          <option value={'\u0000other'}>Other…</option>
         </select>
         {other && <Field mono value={known ? '' : lang} placeholder="Language name" onCommit={(v) => set(v.trim(), impl?.source, 'Implementation language')} />}
       </div>
@@ -494,36 +493,24 @@ function HeaderFields({ def, compact }: { def: BlockTypeDef; compact?: boolean }
   const setField = (field: 'category' | 'description' | 'color' | 'kind', value: string | undefined, label: string) =>
     dispatch({ op: 'setTypeField', file: def.file, field, value }, label);
 
-  const rename = async (v: string) => {
+  const rename = (v: string) => {
     const to = v.trim();
     if (!to || to === def.type) return;
     if (!IDENT.test(to)) return store().toast(`Invalid type name "${to}" — use letters, digits and "_"`, 'error');
     const versions = model.types.versions(def.type, def.library);
     const uses = versions.reduce((n, t) => n + usagesOf(t).length, 0);
-    // Let the Enter that committed the field finish first, or it would press the dialog's OK button.
-    await new Promise((r) => setTimeout(r, 0));
-    const ok = await confirmDialog({
-      title: `Rename ${def.type} to ${to}?`,
-      message: `All ${versions.length} version${versions.length === 1 ? '' : 's'} in library ${def.library} are renamed${uses ? ` and ${uses} block${uses === 1 ? '' : 's'} using the type are updated` : ''}. You can undo this.`,
-      okLabel: 'Rename',
-    });
-    if (!ok) return;
-    if (dispatch({ op: 'renameBlockType', file: def.file, type: to }, `Rename type ${def.type} → ${to}`)) store().open(blockTypeFile(def.library, to, def.version));
+    // Undoable: no confirmation, a toast says what changed.
+    if (dispatch({ op: 'renameBlockType', file: def.file, type: to }, `Rename type ${def.type} → ${to}`)) {
+      store().open(blockTypeFile(def.library, to, def.version));
+      store().toastUndo(`Renamed ${def.type} to ${to}: ${plural(versions.length, 'version')}${uses ? `, ${plural(uses, 'block')} updated` : ''}`);
+    }
   };
 
-  const setKind = async (kind: string) => {
+  const setKind = (kind: string) => {
     if (kind === def.kind) return;
-    if (kind === 'basic') {
-      const n = def.diagram?.blocks.length ?? 0;
-      const ok = await confirmDialog({
-        title: `Make ${def.type} a basic block?`,
-        message: `The inner diagram${n ? ` with ${n} block${n === 1 ? '' : 's'}` : ''} is deleted. You can undo this.`,
-        okLabel: 'Make basic',
-        danger: true,
-      });
-      if (!ok) return;
-    }
-    setField('kind', kind, kind === 'basic' ? 'Make basic block' : 'Make composite block');
+    const n = def.diagram?.blocks.length ?? 0;
+    if (setField('kind', kind, kind === 'basic' ? 'Make basic block' : 'Make composite block') && kind === 'basic' && n)
+      store().toastUndo(`${def.type} is a basic block now; the inner diagram (${plural(n, 'block')}) was deleted`);
   };
 
   return (

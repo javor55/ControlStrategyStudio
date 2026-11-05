@@ -41,15 +41,13 @@ export function sfcInsertOps(seq: Sequence, kind: SfcInsertKind, stepId: string,
   if (kind === 'after') {
     const plain = outgoing.length === 1 && outgoing[0].from.length === 1;
     if (plain) {
-      ops.push({ op: 'insertStep', file, transition: outgoing[0].index, id: newId });
+      ops.push({ op: 'insertStep', file, transition: outgoing[0].index, id: newId, sheet: step.sheet });
     } else {
       ops.push(add);
       for (const t of outgoing) ops.push({ op: 'setTransition', file, index: t.index, from: one(replace(t.from, stepId, newId)) });
       ops.push({ op: 'addTransition', file, from: stepId, to: newId });
     }
     ops.push(...room(seq, step, 'below', newId));
-    // insertStep adds the step without a sheet: keep it on the sheet of its neighbour.
-    if (plain && step.sheet !== 1) ops.push({ op: 'setStepField', file, id: newId, field: 'sheet', value: step.sheet });
     return { ops };
   }
   if (kind === 'before') {
@@ -117,8 +115,7 @@ export function sfcInsertIntoTransitionOps(seq: Sequence, kind: SfcBlockKind, in
   const [a, b] = ids;
   const ops: Op[] = [];
   if (kind === 'step') {
-    ops.push({ op: 'insertStep', file, transition: index, id: a });
-    if (sheet !== 1) ops.push({ op: 'setStepField', file, id: a, field: 'sheet', value: sheet });
+    ops.push({ op: 'insertStep', file, transition: index, id: a, sheet });
   } else {
     if (!b) return { error: 'A branch needs two new step names' };
     ops.push({ op: 'addStep', file, id: a, sheet }, { op: 'addStep', file, id: b, sheet });

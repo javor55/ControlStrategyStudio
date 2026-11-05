@@ -5,6 +5,7 @@
 // become unreadable. Files without `format` are treated as the current version.
 import type { Document } from 'yaml';
 import type { Diag } from './types';
+import type { ParsedYaml } from './yamlutil';
 
 export type DocKind = 'project' | 'library' | 'blocktype' | 'strategy' | 'sequence';
 
@@ -43,7 +44,36 @@ export interface MigrationResult {
   diags: Diag[];
 }
 
-/** Checks the `format` key and applies pending migrations to `doc`. */
+/** Format version written in `doc` when a migration to the current version is pending. */
+function pendingFrom(doc: Document, kind: DocKind): number | undefined {
+  const f = parseFormat(doc.get('format'));
+  return f && f.kind === kind && f.version < CURRENT_FORMAT[kind] ? f.version : undefined;
+}
+
+const migratedCache = new WeakMap<ParsedYaml, Map<string, { parsed: ParsedYaml; result: MigrationResult }>>();
+
+/**
+ * Loads a parsed file in the current format: checks `format` and, when the file
+ * is older, applies the migrations to a *copy* of the (cached, read-only)
+ * document and derives `data` from the migrated copy. The model always sees the
+ * current format; line numbers stay those of the file as written.
+ */
+export function migrateParsed(p: ParsedYaml, kind: DocKind, file: string): { parsed: ParsedYaml; diags: Diag[]; migrated: boolean } {
+  if (p.error) return { parsed: p, diags: [], migrated: false };
+  if (pendingFrom(p.doc, kind) === undefined) return { parsed: p, diags: migrateDocument(p.doc, kind, file).diags, migrated: false };
+  const key = `${kind}/${CURRENT_FORMAT[kind]}/${MIGRATIONS.length}/${file}`;
+  let byKey = migratedCache.get(p);
+  const hit = byKey?.get(key);
+  if (hit) return { parsed: hit.parsed, diags: hit.result.diags, migrated: hit.result.migrated };
+  const doc = p.doc.clone();
+  const result = migrateDocument(doc, kind, file);
+  const parsed: ParsedYaml = { doc, data: doc.toJS({ maxAliasCount: 100 }), lc: p.lc };
+  if (!byKey) migratedCache.set(p, (byKey = new Map()));
+  byKey.set(key, { parsed, result });
+  return { parsed, diags: result.diags, migrated: result.migrated };
+}
+
+/** Checks the `format` key and applies pending migrations to `doc` (mutates it). */
 export function migrateDocument(doc: Document, kind: DocKind, file: string): MigrationResult {
   const diags: Diag[] = [];
   const raw = doc.get('format');

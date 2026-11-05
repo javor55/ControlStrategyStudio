@@ -6,8 +6,10 @@ import { CommitDialog } from './CommitDialog';
 import { HistoryPanel } from './HistoryPanel';
 import { TextDiffDialog } from './TextDiffDialog';
 import { revisionLabel, shortOid } from './format';
+import { plural } from '../ui/text';
 import { openCommit, toggleHistory, useHistoryUi } from './ui';
 import './history.css';
+import { keys } from '../ui/keys';
 
 /** Opens the commit dialog, or says why not. */
 export function requestCommit() {
@@ -28,7 +30,7 @@ export function VcsStatus() {
         className={`btn ghost hx-status-btn${panel ? ' on' : ''}`}
         aria-pressed={panel}
         aria-label={`History: branch ${vcs.branch}, ${rev}, ${n ? `${n} uncommitted changes` : 'no changes'}`}
-        title="Show history, branches and revisions (Ctrl+Shift+H)"
+        title={`Show history, branches and revisions (${keys('Mod+Shift+H')})`}
         onClick={toggleHistory}
         disabled={!vcs.ready}
         data-testid="vcs-status"
@@ -38,7 +40,7 @@ export function VcsStatus() {
         <span className={vcs.revision ? 'hx-rev' : 'hx-muted'}>{rev}</span>
         <span className={`hx-changes${n ? ' dirty' : ''}`}>{n ? `${n} ${n === 1 ? 'change' : 'changes'}` : 'No changes'}</span>
       </button>
-      <button className="btn" title={n ? `Commit ${n} ${n === 1 ? 'change' : 'changes'} (Ctrl+Shift+C)` : 'No changes to commit (Ctrl+Shift+C)'} disabled={!vcs.ready || !n} onClick={openCommit}>
+      <button className="btn" title={n ? `Commit ${plural(n, 'change')} (${keys('Mod+Shift+C')})` : `No changes to commit (${keys('Mod+Shift+C')})`} disabled={!vcs.ready || !n} onClick={openCommit}>
         Commit…
       </button>
     </span>

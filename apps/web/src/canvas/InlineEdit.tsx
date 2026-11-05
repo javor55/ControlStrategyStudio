@@ -1,4 +1,6 @@
-// In-place editor shown over the drawing (block name, parameter / constant value).
+// In-place editor shown over the drawing (names, descriptions, conditions, notes,
+// parameter / constant values). Enter (Ctrl+Enter in a multi-line note) or leaving
+// the field commits; Escape cancels.
 import { useEffect, useRef, useState } from 'react';
 
 export interface InlineEditProps {
@@ -12,6 +14,9 @@ export interface InlineEditProps {
   /** When set, a select with these values (plus "(none)") instead of a text input. */
   options?: string[];
   mono?: boolean;
+  /** Text area (notes): Enter = new line, Ctrl+Enter commits. */
+  multiline?: boolean;
+  placeholder?: string;
   label: string;
   onCommit: (value: string) => void;
   onCancel: () => void;
@@ -20,7 +25,7 @@ export interface InlineEditProps {
 export function InlineEdit(p: InlineEditProps) {
   const [v, setV] = useState(p.value);
   const done = useRef(false);
-  const ref = useRef<HTMLInputElement & HTMLSelectElement>(null);
+  const ref = useRef<HTMLInputElement & HTMLSelectElement & HTMLTextAreaElement>(null);
   useEffect(() => {
     ref.current?.focus();
     if (ref.current && 'select' in ref.current && !p.options) ref.current.select();
@@ -39,7 +44,7 @@ export function InlineEdit(p: InlineEditProps) {
   const style: React.CSSProperties = { left: p.x, top: p.y, width: p.w, height: p.h, fontSize: p.fontSize };
   const onKeyDown = (e: React.KeyboardEvent) => {
     e.stopPropagation();
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && (!p.multiline || e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       commit();
     } else if (e.key === 'Escape') {
@@ -72,9 +77,27 @@ export function InlineEdit(p: InlineEditProps) {
       </select>
     );
   }
+  if (p.multiline) {
+    return (
+      <textarea
+        ref={ref}
+        className={`cv-inline multiline${p.mono ? ' mono' : ''}`}
+        style={style}
+        aria-label={p.label}
+        placeholder={p.placeholder}
+        value={v}
+        spellCheck={false}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => commit()}
+        onKeyDown={onKeyDown}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+    );
+  }
   return (
     <input
       ref={ref}
+      placeholder={p.placeholder}
       className={`cv-inline${p.mono ? ' mono' : ''}`}
       style={style}
       aria-label={p.label}

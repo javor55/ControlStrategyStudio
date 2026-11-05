@@ -67,18 +67,23 @@ export function extractFragment(
     const { from, to } = linkEnds(l);
     return from && to && !from.strategy && set.has(from.block) && set.has(to.block);
   });
-  const notes = (isObj(body) && Array.isArray(body.notes) ? body.notes : [])
-    .filter((_, i) => opts.notes?.includes(i))
-    .map((n) => {
-      const c = { ...(n as Record<string, unknown>) };
-      delete c.sheet;
-      return c;
-    });
+  const notes = copyNotes(body, opts.notes);
   const out: Record<string, unknown> = { [FRAGMENT_KEY]: 1, blocks };
   if (links.length) out.links = links;
   if (notes.length) out.notes = notes;
   const doc = new Document(out);
   return stringifyDoc(doc);
+}
+
+/** Notes `indices` of a diagram / sequence body, without their sheet. */
+function copyNotes(body: unknown, indices: number[] | undefined): Record<string, unknown>[] {
+  return (isObj(body) && Array.isArray(body.notes) ? body.notes : [])
+    .filter((n, i) => isObj(n) && indices?.includes(i))
+    .map((n) => {
+      const c = { ...(n as Record<string, unknown>) };
+      delete c.sheet;
+      return c;
+    });
 }
 
 /** Parses clipboard text. Returns undefined when it is not a fragment. */
@@ -147,12 +152,13 @@ export const SEQ_FRAGMENT_KEY = 'csd-sequence-fragment';
 export interface SequenceFragment {
   steps: Record<string, Record<string, unknown>>;
   transitions: Record<string, unknown>[];
+  notes: Record<string, unknown>[];
 }
 
 const stepsOf = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === 'string' ? [v] : []);
 
-/** Copies steps `ids` and the transitions whose ends are all among them. */
-export function extractSequenceFragment(text: string, ids: string[], opts: { positions?: Record<string, [number, number]> } = {}): string {
+/** Copies steps `ids`, the transitions whose ends are all among them, and the given notes. */
+export function extractSequenceFragment(text: string, ids: string[], opts: { positions?: Record<string, [number, number]>; notes?: number[] } = {}): string {
   const data = parseYaml(text).data;
   const src = isObj(data) && isObj(data.steps) ? data.steps : {};
   const steps: Record<string, Record<string, unknown>> = {};
@@ -173,6 +179,8 @@ export function extractSequenceFragment(text: string, ids: string[], opts: { pos
   }) as Record<string, unknown>[];
   const out: Record<string, unknown> = { [SEQ_FRAGMENT_KEY]: 1, steps };
   if (transitions.length) out.transitions = transitions;
+  const notes = copyNotes(data, opts.notes);
+  if (notes.length) out.notes = notes;
   return stringifyDoc(new Document(out));
 }
 
@@ -182,7 +190,11 @@ export function parseSequenceFragment(text: string): SequenceFragment | undefine
   if (p.error || !isObj(p.data) || p.data[SEQ_FRAGMENT_KEY] === undefined) return undefined;
   const steps: SequenceFragment['steps'] = {};
   if (isObj(p.data.steps)) for (const [id, s] of Object.entries(p.data.steps)) if (TAG_RE.test(id)) steps[id] = isObj(s) ? s : {};
-  return { steps, transitions: Array.isArray(p.data.transitions) ? (p.data.transitions.filter(isObj) as Record<string, unknown>[]) : [] };
+  return {
+    steps,
+    transitions: Array.isArray(p.data.transitions) ? (p.data.transitions.filter(isObj) as Record<string, unknown>[]) : [],
+    notes: Array.isArray(p.data.notes) ? (p.data.notes.filter(isObj) as Record<string, unknown>[]) : [],
+  };
 }
 
 /** New step names: `S10` → next free multiple of 10 above the highest existing step. */

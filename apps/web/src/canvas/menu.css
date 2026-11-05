@@ -1,0 +1,10 @@
+/* kit.Menu additions (the base .menu rules live in styles.css). */
+.menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+.menu button { color: var(--ink); }
+.menu button:focus, .menu button:focus-visible { outline: none; background: var(--hover); }
+.menu button.danger { color: var(--error); }
+.menu button.danger:disabled { color: var(--ink-3); }
+.menu .menu-check { flex: none; width: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+.menu.has-checks .label { padding-left: 32px; }
+.menu .hint.sub { display: inline-flex; align-items: center; }
+.menu button.desc .menu-check { margin-top: 2px; }

@@ -7,7 +7,7 @@
 // bounds × zoom (the browser re-rasterises the vectors crisply), and the pan is
 // a plain CSS translate of the pane whose origin is the drawing origin (0,0).
 // Both are updated directly on the DOM on wheel / drag, without re-rendering.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   applyOp,
   autoOrder,
@@ -35,20 +35,23 @@ import { store, useEditor, type EditorState } from '../state/store';
 import { activeDiagramOf, diagsOf, layoutActiveSheet, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
 import { setCanvasPrefs, useCanvasPrefs, type ParamsMode, type PinsMode } from '../settings/prefs';
-import { confirmDialog, promptDialog } from '../ui/dialogs';
+import { promptDialog } from '../ui/dialogs';
 import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
-import { QuickInsert } from './QuickInsert';
+import { QuickInsert, type QuickItem } from './QuickInsert';
 import { InlineEdit, parseParamValue } from './InlineEdit';
 import { ShortcutHelp } from './ShortcutHelp';
 import { strategyDiffOf, useCompare } from '../history/compare';
 import { CompareBanner } from '../history/CompareBanner';
+import { usePanZoom, type Bounds } from './panzoom';
+import { useCanvasKeys } from './useCanvasKeys';
+import { CanvasHeader, CanvasToolbar, folderPath, SheetTabs, sheetLabel, sheetTabMenu, type ToolItem } from './CanvasChrome';
+import { CIcon } from './icons';
+import { mod } from './help';
+import { plural } from './plural';
 import './canvas.css';
 
 const DND_TYPE = 'application/x-csd-type';
-const MIN_K = 0.1;
-const MAX_K = 8;
 const CLICK_SLOP = 3; // px of movement before a press becomes a drag
-const FIT_TOP = 44; // px reserved for the toolbar when fitting
 const PASTE_STEP = 30;
 /** Screen px within which a dragged wire end snaps to a pin. */
 const SNAP_PX = 15;
@@ -59,12 +62,6 @@ const snap = (v: number) => Math.round(v / 10) * 10;
 
 /** Last strategy shown on the canvas — target of "Back" from composite internals. */
 let lastStrategyFile: string | null = null;
-
-interface View {
-  x: number;
-  y: number;
-  k: number;
-}
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
@@ -132,6 +129,8 @@ const PARAMS_MODES: [ParamsMode, string, string][] = [
 
 type Inline =
   | { kind: 'rename'; id: string }
+  | { kind: 'desc'; id: string }
+  | { kind: 'note'; index: number }
   | { kind: 'param'; id: string; name: string; line?: number };
 
 interface QuickState {
@@ -190,11 +189,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const [endHover, setEndHover] = useState(false);
   const endHoverRef = useRef(false);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [zoomPct, setZoomPct] = useState(100);
   const display = useCanvasPrefs();
-  const [showView, setShowView] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
   const [quick, setQuick] = useState<QuickState | null>(null);
   const [inline, setInline] = useState<Inline | null>(null);
@@ -202,9 +198,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const svgBoxRef = useRef<HTMLDivElement>(null);
-  const view = useRef<View>({ x: 0, y: 0, k: 1 });
   const gesture = useRef<Gesture | null>(null);
-  const space = useRef(false);
   /** Last pointer position over the canvas (client px), null when outside. */
   const mouse = useRef<{ x: number; y: number } | null>(null);
   /** Repeated pastes of the same clipboard text without a mouse position step +30/+30. */
@@ -296,122 +290,24 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     [layout, selection, errors, model.meta, display.grid, reconnecting, renderDiff],
   );
 
-  // --- view transform ----------------------------------------------------------------
-  const frame = useRef(0);
-  const writeView = useCallback(() => {
-    frame.current = 0;
-    const v = view.current;
-    const b = layoutRef.current.bounds;
-    if (paneRef.current) paneRef.current.style.transform = `translate(${Math.round(v.x)}px, ${Math.round(v.y)}px)`;
-    const box = svgBoxRef.current;
-    if (box) {
-      const w = b.w * v.k;
-      const h = b.h * v.k;
-      box.style.left = `${Math.round(b.x * v.k)}px`;
-      box.style.top = `${Math.round(b.y * v.k)}px`;
-      box.style.width = `${w}px`;
-      box.style.height = `${h}px`;
-      const el = box.firstElementChild;
-      if (el) {
-        el.setAttribute('width', String(w));
-        el.setAttribute('height', String(h));
-      }
-    }
-    setZoomPct(Math.round(v.k * 100));
-  }, []);
-  /** Writes the view to the DOM once per animation frame (wheel / trackpad send many events per frame). */
-  const applyView = useCallback(() => {
-    if (!frame.current) frame.current = requestAnimationFrame(writeView);
-  }, [writeView]);
-  useEffect(() => () => cancelAnimationFrame(frame.current), []);
-
-  // Size the freshly rendered SVG before paint.
-  useLayoutEffect(() => {
-    cancelAnimationFrame(frame.current);
-    writeView();
-  }, [svg, writeView]);
-
-  const toDrawing = (clientX: number, clientY: number): [number, number] => {
-    const r = hostRef.current!.getBoundingClientRect();
-    const v = view.current;
-    return [(clientX - r.left - v.x) / v.k, (clientY - r.top - v.y) / v.k];
-  };
-  /** Drawing → canvas-area px. */
-  const toScreen = (x: number, y: number): [number, number] => {
-    const v = view.current;
-    return [v.x + x * v.k, v.y + y * v.k];
-  };
+  // --- view transform (shared with the sequence canvas) ---------------------------------
+  const boundsRef = useRef<Bounds>(layout.bounds);
+  boundsRef.current = layout.bounds;
+  const pz = usePanZoom({ host: hostRef, pane: paneRef, svgBox: svgBoxRef }, boundsRef, svg, () => {
+    setInline(null);
+    setQuick(null);
+  });
+  const { view, zoomAt, fit, toDrawing, toScreen, applyView } = pz;
 
   const closePopups = () => {
     setQuick(null);
     setInline(null);
   };
 
-  const zoomAt = useCallback(
-    (k: number, cx?: number, cy?: number) => {
-      const host = hostRef.current;
-      if (!host) return;
-      const r = host.getBoundingClientRect();
-      const px = cx === undefined ? r.width / 2 : cx - r.left;
-      const py = cy === undefined ? r.height / 2 : cy - r.top;
-      const v = view.current;
-      const nk = Math.min(MAX_K, Math.max(MIN_K, k));
-      view.current = { k: nk, x: px - ((px - v.x) / v.k) * nk, y: py - ((py - v.y) / v.k) * nk };
-      setInline(null);
-      setQuick(null);
-      applyView();
-    },
-    [applyView],
-  );
-
-  const fit = useCallback(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const b = layoutRef.current.bounds;
-    const cw = host.clientWidth;
-    const ch = host.clientHeight;
-    if (!cw || !ch) return;
-    // Keep the top strip free for the floating toolbar.
-    const top = FIT_TOP;
-    const k = Math.min(MAX_K, Math.max(MIN_K, Math.min(1, (cw - 32) / b.w, (ch - top - 16) / b.h)));
-    view.current = { k, x: (cw - b.w * k) / 2 - b.x * k, y: top + (ch - top - 16 - b.h * k) / 2 - b.y * k };
-    setInline(null);
-    setQuick(null);
-    cancelAnimationFrame(frame.current);
-    writeView();
-  }, [writeView]);
-
   // Fit on request and when another file is shown.
   useLayoutEffect(() => {
     fit();
   }, [fitRequest, ad.file, fit]);
-
-  // Wheel: scroll (Shift = horizontal); Ctrl/Cmd + wheel or pinch = zoom at the cursor.
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? host.clientHeight : 1;
-      let dx = e.deltaX * unit;
-      let dy = e.deltaY * unit;
-      if (e.ctrlKey || e.metaKey) {
-        const d = Math.max(-120, Math.min(120, dy));
-        zoomAt(view.current.k * Math.exp(-d * 0.0025), e.clientX, e.clientY);
-        return;
-      }
-      if (e.shiftKey && !dx) {
-        dx = dy;
-        dy = 0;
-      }
-      view.current = { ...view.current, x: view.current.x - dx, y: view.current.y - dy };
-      setInline(null);
-      setQuick(null);
-      applyView();
-    };
-    host.addEventListener('wheel', onWheel, { passive: false });
-    return () => host.removeEventListener('wheel', onWheel);
-  }, [zoomAt, applyView]);
 
   // --- ops -------------------------------------------------------------------------
   const target = { file: ad.file, root: ad.root };
@@ -426,18 +322,28 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
 
   const allBlockIds = () => layoutRef.current.blocks.filter((b) => !b.iface).map((b) => b.id);
 
-  const removeIds = (ids: string[]) => {
+  /** Deletes without asking (undo exists) and offers Undo in a toast. */
+  const removeIds = (ids: string[], verb = 'Deleted') => {
     if (!ids.length) return;
-    if (ids.length === 1) dispatch({ op: 'removeBlock', id: ids[0], ...target }, { label: `Delete ${ids[0]}`, select: null });
-    else dispatch({ op: 'removeBlocks', ids, ...target }, { label: `Delete ${ids.length} blocks`, select: null });
+    const ok =
+      ids.length === 1
+        ? dispatch({ op: 'removeBlock', id: ids[0], ...target }, { label: `Delete ${ids[0]}`, select: null })
+        : dispatch({ op: 'removeBlocks', ids, ...target }, { label: `Delete ${ids.length} blocks`, select: null });
+    if (ok) store().toastUndo(ids.length === 1 ? `${verb} block ${ids[0]}` : `${verb} ${plural(ids.length, 'block')}`);
+  };
+  const removeLink = (index: number) => {
+    if (dispatch({ op: 'disconnect', index, ...target }, { label: 'Delete link', select: null })) store().toastUndo('Deleted link');
+  };
+  const removeNote = (index: number) => {
+    if (dispatch({ op: 'removeNote', index, ...target }, { label: 'Delete note', select: null })) store().toastUndo('Deleted note');
   };
 
   const removeSelection = () => {
     const sel = store().getState().selection;
     if (!sel) return;
-    if (sel.kind === 'block' || sel.kind === 'blocks') removeIds(selectedIds(sel));
-    else if (sel.kind === 'link') dispatch({ op: 'disconnect', index: sel.index, ...target }, { label: 'Delete link', select: null });
-    else dispatch({ op: 'removeNote', index: sel.index, ...target }, { label: 'Delete note', select: null });
+    if (sel.kind === 'block' || sel.kind === 'blocks') removeIds(selectedOnSheet());
+    else if (sel.kind === 'link') removeLink(sel.index);
+    else if (sel.kind === 'note') removeNote(sel.index);
   };
 
   /** Fragment text of the selection (blocks with their drawn positions, or the selected note). */
@@ -741,11 +647,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     openQuick(m.x, m.y);
   };
 
-  const pickQuick = (def: BlockTypeDef) => {
-    const q = quick;
-    setQuick(null);
+  const pickQuick = (q: QuickState, def: BlockTypeDef) => {
     hostRef.current?.focus({ preventScroll: true });
-    if (!q) return;
     const ref = typeRefFor(def, allTypes);
     const id = suggestBlockId(
       ref,
@@ -768,6 +671,26 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     const to = w.dir === 'out' ? `${id}.${port.name}` : `${w.owner}.${w.port}`;
     const replace = w.dir === 'in' && ad.diagram.links.some((l) => l.to.block === w.owner && l.to.port === w.port) ? true : undefined;
     dispatch({ op: 'batch', ops: [add, { op: 'connect', from, to, replace, ...target }] }, { label: `Add ${id} and connect`, select: { kind: 'block', id } });
+  };
+
+  const quickItems = (q: QuickState): QuickItem[] => {
+    const types = quickTypes.map(
+      (def): QuickItem => ({
+        key: `t:${def.library}/${def.type}`,
+        label: def.type,
+        mono: true,
+        category: def.library === 'std' ? def.category : `${def.category} · ${def.library}`,
+        description: def.description,
+        keywords: `${def.library}/${def.type}`,
+        run: () => pickQuick(q, def),
+      }),
+    );
+    if (q.wire) return types;
+    return [
+      ...types,
+      { key: 'note', label: 'Add note here', category: 'Note', keywords: 'comment text', pinned: true, run: () => addNote([q.dx, q.dy]) },
+      { key: 'paste', label: 'Paste here', category: mod('V'), keywords: 'clipboard', pinned: true, run: () => void readClipboard().then((t) => insertFragmentText(t, { at: [q.dx, q.dy] }, 'Paste')) },
+    ];
   };
 
   // --- inline editing -------------------------------------------------------------------
@@ -799,6 +722,11 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       const to = value.trim();
       if (!to || to === ed.id) return;
       dispatch({ op: 'renameBlock', from: ed.id, to, ...target }, { label: `Rename ${ed.id} → ${to}`, select: { kind: 'block', id: to } });
+    } else if (ed.kind === 'desc') {
+      dispatch({ op: 'setBlockField', id: ed.id, field: 'description', value: value.trim() || undefined, ...target }, { label: `Describe ${ed.id}` });
+    } else if (ed.kind === 'note') {
+      if (!value.trim()) removeNote(ed.index);
+      else dispatch({ op: 'setNote', index: ed.index, text: value, ...target }, { label: 'Edit note' });
     } else {
       const def = ad.diagram.blocks.find((b) => b.id === ed.id)?.def;
       const pd = def?.inputs.find((p) => p.name === ed.name) ?? def?.params.find((p) => p.name === ed.name);
@@ -808,15 +736,26 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   };
 
   const inlineProps = (ed: Inline) => {
-    const b = geomById.get(ed.id);
-    if (!b) return null;
     const k = view.current.k;
-    const inst = ad.diagram.blocks.find((x) => x.id === ed.id);
     const font = Math.max(11, Math.min(18, 11 * k));
     const h = Math.max(20, Math.min(30, 16 * k));
+    if (ed.kind === 'note') {
+      const n = layoutRef.current.notes.find((x) => x.index === ed.index);
+      const note = ad.diagram.notes.find((x) => x.index === ed.index);
+      if (!n || !note) return null;
+      const [sx, sy] = toScreen(n.x, n.y);
+      return { x: sx, y: sy, w: Math.max(200, n.w * k), h: Math.max(60, n.h * k), fontSize: font, value: note.text, label: 'Note text', mono: false, multiline: true };
+    }
+    const b = geomById.get(ed.id);
+    if (!b) return null;
+    const inst = ad.diagram.blocks.find((x) => x.id === ed.id);
     if (ed.kind === 'rename') {
       const [sx, sy] = toScreen(b.x + 2, b.y + 7);
       return { x: sx, y: sy - h / 2, w: Math.max(120, (b.w - 4) * k), h, fontSize: font, value: ed.id, label: 'Block name', mono: false };
+    }
+    if (ed.kind === 'desc') {
+      const [sx, sy] = toScreen(b.x - 4, b.y + M.HEADER + 2);
+      return { x: sx, y: sy, w: Math.max(220, (b.w + 8) * k), h, fontSize: font, value: inst?.description ?? '', label: `Description of ${ed.id}`, mono: false, placeholder: 'Short description (drawn on the block)' };
     }
     const pd = inst?.def?.inputs.find((p) => p.name === ed.name) ?? inst?.def?.params.find((p) => p.name === ed.name);
     const raw = inst?.params[ed.name];
@@ -851,12 +790,11 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const host = hostRef.current!;
     host.focus({ preventScroll: true });
-    setShowView(false);
     if (e.button === 2) return; // context menu
     const el = e.target as Element;
     const s = store();
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
-    if (e.button === 1 || (e.button === 0 && space.current)) {
+    if (e.button === 1 || (e.button === 0 && keys.space.current)) {
       e.preventDefault();
       startPan(e);
     } else if (e.button !== 0) return;
@@ -1076,7 +1014,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {
-    if (space.current) return;
+    if (keys.space.current) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (!el || !hostRef.current?.contains(el)) return;
     const [x, y] = toDrawing(e.clientX, e.clientY);
@@ -1091,75 +1029,56 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         return;
       }
     }
-    if (el.closest('[data-port], [data-iface], [data-note], [data-link], [data-conn], [data-params-toggle]')) return;
+    const noteEl = el.closest('[data-note]');
+    if (noteEl) {
+      const index = Number(noteEl.getAttribute('data-note'));
+      store().select({ kind: 'note', index });
+      setQuick(null);
+      setInline({ kind: 'note', index });
+      return;
+    }
+    if (el.closest('[data-port], [data-iface], [data-link], [data-conn], [data-params-toggle]')) return;
     const blockEl = el.closest('[data-block]');
     if (blockEl) openComposite(blockEl.getAttribute('data-block')!);
     else openQuick(e.clientX, e.clientY);
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.target !== e.currentTarget) return;
-    const mod = e.ctrlKey || e.metaKey;
-    const key = e.key;
-    const lower = key.toLowerCase();
-    // Undo / redo and copy / cut / paste are left to the app and the DOM clipboard events.
-    if (mod && ['z', 'y', 'c', 'x', 'v', 's'].includes(lower)) return;
-    const s = store();
-    const done = () => e.preventDefault();
-    if (key === ' ' || e.code === 'Space') {
-      done();
-      if (mod) openQuickAtMouse();
-      else if (!space.current) {
-        space.current = true;
-        setSpaceHeld(true);
-      }
-      return;
-    }
-    if (mod && lower === 'a') {
-      done();
-      s.select(selectionOf(allBlockIds()));
-    } else if (mod && lower === 'd') {
-      done();
-      duplicate();
-    } else if (mod && key === '0') {
-      done();
-      zoomAt(1);
-    } else if (key === '+' || key === '=' || (mod && e.code === 'Equal')) {
-      done();
-      zoomAt(view.current.k * 1.25);
-    } else if (key === '-' || key === '_') {
-      done();
-      zoomAt(view.current.k / 1.25);
-    } else if (key === '?') {
-      done();
-      if (!showHelp) setShowHelp(true);
-    } else if (key === '/') {
-      done();
-      openQuickAtMouse();
-    } else if (!mod && (lower === 'f' || (e.shiftKey && e.code === 'Digit1'))) {
-      done();
-      fit();
-    } else if (key.startsWith('Arrow') && !mod) {
-      done();
-      const d = e.shiftKey ? 50 : 10;
-      nudge(key === 'ArrowLeft' ? -d : key === 'ArrowRight' ? d : 0, key === 'ArrowUp' ? -d : key === 'ArrowDown' ? d : 0);
-    } else if (key === 'Delete' || key === 'Backspace') {
-      done();
-      removeSelection();
-    } else if (key === 'Escape') {
+  // --- keyboard (same keys on every canvas: useCanvasKeys) ---------------------------------
+  /** The one selected block, note or link on this sheet. */
+  const single = () => {
+    const sel = store().getState().selection;
+    if (sel?.kind === 'block') return geomOf(sel.id) && !geomOf(sel.id)!.iface ? sel : undefined;
+    if (sel?.kind === 'note' || sel?.kind === 'link') return sel;
+    return undefined;
+  };
+  const keys = useCanvasKeys({
+    selectAll: () => store().select(selectionOf(allBlockIds())),
+    duplicate,
+    deleteSelection: removeSelection,
+    nudge,
+    fit,
+    zoomBy: (f) => zoomAt(view.current.k * f),
+    zoomTo: (k) => zoomAt(k),
+    quickInsert: () => openQuickAtMouse(),
+    toggleHelp: () => setShowHelp((h) => !h),
+    rename: () => {
+      const s = single();
+      if (s?.kind === 'block') setInline({ kind: 'rename', id: s.id });
+    },
+    editText: () => {
+      const s = single();
+      if (s?.kind === 'block') setInline({ kind: 'desc', id: s.id });
+      else if (s?.kind === 'note') setInline({ kind: 'note', index: s.index });
+    },
+    escape: () => {
       if (gesture.current) cancelGesture();
       else if (showHelp) setShowHelp(false);
       else if (quick || inline) closePopups();
-      else s.select(null);
-    }
-  };
-
-  const onKeyUp = (e: React.KeyboardEvent) => {
-    if (e.key === ' ' || e.code === 'Space') {
-      space.current = false;
-      setSpaceHeld(false);
-    }
-  };
+      else return false;
+      return true;
+    },
+    clearSelection: () => store().select(null),
+  });
 
   // --- clipboard (DOM events; work offline and from file://) ----------------------------
   const clip = useRef({ copy: (_e: ClipboardEvent, _cut: boolean) => {}, paste: (_e: ClipboardEvent) => {} });
@@ -1171,7 +1090,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       e.preventDefault();
       rememberClipboard(f.text);
       pasteCount.current = { text: f.text, n: 0 };
-      if (cut) removeIds(f.ids);
+      if (cut) removeIds(f.ids, 'Cut');
     },
     paste: (e) => {
       const text = e.clipboardData?.getData('text/plain') ?? '';
@@ -1194,26 +1113,29 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     };
   }, []);
 
-  // --- context menu ----------------------------------------------------------------------
-  const sheetItems = (ids: string[]): MenuEntry[] => {
+  // --- context menus (same structure on every canvas) ----------------------------------------
+  // Section header naming the target; Open → Insert → Edit → Clipboard → Move to ▸ → Delete.
+  const moveToItems = (ids: string[]): MenuEntry[] => {
     const others = ad.diagram.sheets.filter((x) => x.id !== sheet);
     if (!others.length) return [];
-    return [{ section: 'Move to sheet' }, ...others.map((o) => ({ label: sheetLabel(o), onClick: () => moveToSheet(ids, o.id) })), 'separator'];
+    return [{ label: 'Move to sheet', submenu: others.map((o) => ({ label: sheetLabel(o), onClick: () => moveToSheet(ids, o.id) })) }, 'separator'];
   };
 
   const clipItems = (): MenuEntry[] => [
-    { label: 'Copy', hint: 'Ctrl+C', onClick: () => copySelection(true) },
+    { label: 'Copy', hint: mod('C'), onClick: () => copySelection(true) },
     {
       label: 'Cut',
-      hint: 'Ctrl+X',
+      hint: mod('X'),
       onClick: () => {
         const ids = selectedOnSheet();
-        if (copySelection(true)) removeIds(ids);
+        if (copySelection(true)) removeIds(ids, 'Cut');
       },
     },
-    { label: 'Duplicate', hint: 'Ctrl+D', onClick: duplicate },
+    { label: 'Duplicate', hint: mod('D'), onClick: duplicate },
     'separator',
   ];
+
+  const deleteItem = (run: () => void): MenuEntry => ({ label: 'Delete', hint: 'Del', danger: true, onClick: run });
 
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1230,53 +1152,54 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       if (!b) return;
       const cur = selectedIds(s.getState().selection);
       if (cur.length > 1 && cur.includes(id)) {
-        menu.open(e, [
-          { section: `${cur.length} blocks` },
-          ...clipItems(),
-          ...sheetItems(cur),
-          { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeIds(cur) },
-        ]);
+        menu.open(e, [{ section: plural(cur.length, 'block') }, ...clipItems(), ...moveToItems(cur), deleteItem(() => removeIds(cur))]);
         return;
       }
       s.select({ kind: 'block', id });
-      const items: MenuEntry[] = [];
-      if (b.def?.kind === 'composite') items.push({ label: 'Open inside', onClick: () => openComposite(id) });
-      items.push({ label: 'Rename…', onClick: () => setInline({ kind: 'rename', id }) });
-      if (b.pos) items.push({ label: 'Unpin position', onClick: () => dispatch({ op: 'moveBlock', id, pos: null, ...target }, { label: `Unpin ${id}` }) });
+      const items: MenuEntry[] = [{ section: `Block ${id} · ${b.def?.type ?? b.typeRef}` }];
+      if (b.def?.kind === 'composite') items.push({ label: 'Open inside', onClick: () => openComposite(id) }, 'separator');
+      items.push({ label: 'Rename', hint: 'F2', onClick: () => setInline({ kind: 'rename', id }) });
+      items.push({ label: 'Edit description', hint: 'Enter', onClick: () => setInline({ kind: 'desc', id }) });
       const tg = geomOf(id)?.paramsToggle;
       if (tg) items.push({ label: tg.expanded ? 'Hide parameters' : `Show parameters (${tg.count})`, onClick: () => toggleParams(id) });
-      items.push('separator', ...clipItems(), ...sheetItems([id]));
-      items.push({
-        label: 'Delete',
-        hint: 'Del',
-        danger: true,
-        onClick: () => dispatch({ op: 'removeBlock', id, ...target }, { label: `Delete ${id}`, select: null }),
-      });
+      if (b.pos) items.push({ label: 'Unpin position', onClick: () => dispatch({ op: 'moveBlock', id, pos: null, ...target }, { label: `Unpin ${id}` }) });
+      items.push('separator', ...clipItems(), ...moveToItems([id]), deleteItem(() => removeIds([id])));
       menu.open(e, items);
     } else if (noteEl) {
       const index = Number(noteEl.getAttribute('data-note'));
       s.select({ kind: 'note', index });
       menu.open(e, [
-        { label: 'Copy', hint: 'Ctrl+C', onClick: () => copySelection(true) },
-        { label: 'Delete', hint: 'Del', danger: true, onClick: () => dispatch({ op: 'removeNote', index, ...target }, { label: 'Delete note', select: null }) },
+        { section: 'Note' },
+        { label: 'Edit text', hint: 'Enter', onClick: () => setInline({ kind: 'note', index }) },
+        'separator',
+        { label: 'Copy', hint: mod('C'), onClick: () => copySelection(true) },
+        'separator',
+        deleteItem(() => removeNote(index)),
       ]);
     } else if (linkEl) {
       const index = Number(linkEl.getAttribute('data-link'));
+      const l = ad.diagram.links.find((x) => x.index === index);
       s.select({ kind: 'link', index });
-      menu.open(e, [
-        { label: 'Delete', hint: 'Del', danger: true, onClick: () => dispatch({ op: 'disconnect', index, ...target }, { label: 'Delete link', select: null }) },
-      ]);
+      menu.open(e, [{ section: l ? `${formatEndpoint(l.from)} → ${formatEndpoint(l.to)}` : 'Link' }, deleteItem(() => removeLink(index))]);
     } else if (!el.closest('[data-conn], [data-port]')) {
       const at = toDrawing(e.clientX, e.clientY);
       const cx = e.clientX;
       const cy = e.clientY;
-      menu.open(e, [
-        { label: 'Add block…', hint: '/', onClick: () => openQuick(cx, cy) },
-        { label: 'Paste', hint: 'Ctrl+V', onClick: () => readClipboard().then((t) => insertFragmentText(t, { at }, 'Paste')) },
-        { label: 'Select all', hint: 'Ctrl+A', onClick: () => s.select(selectionOf(allBlockIds())) },
-      ]);
+      menu.open(e, paperItems(at, () => openQuick(cx, cy)));
     }
   };
+
+  /** Empty-paper menu (same on every canvas). */
+  const paperItems = (at: [number, number], quickHere: () => void): MenuEntry[] => [
+    { label: 'Add block here…', onClick: quickHere },
+    { label: 'Add note here', onClick: () => addNote(at) },
+    { label: 'Insert…', hint: '/', onClick: quickHere },
+    'separator',
+    { label: 'Paste here', hint: mod('V'), onClick: () => void readClipboard().then((t) => insertFragmentText(t, { at }, 'Paste')) },
+    'separator',
+    { label: 'Select all', hint: mod('A'), onClick: () => store().select(selectionOf(allBlockIds())) },
+    { label: 'Reset layout', title: 'Remove the hand-placed positions on this sheet', onClick: resetLayout },
+  ];
 
   // --- palette drop -----------------------------------------------------------------------
   const onDragOver = (e: React.DragEvent) => {
@@ -1299,46 +1222,40 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   };
 
   // --- toolbar actions -------------------------------------------------------------------
-  const addNote = () => {
-    const host = hostRef.current!;
-    const r = host.getBoundingClientRect();
-    const [x, y] = toDrawing(r.left + r.width / 2, r.top + r.height / 2);
+  /** Drawing point in the centre of the view. */
+  const viewCentre = (): [number, number] => {
+    const r = hostRef.current!.getBoundingClientRect();
+    return toDrawing(r.left + r.width / 2, r.top + r.height / 2);
+  };
+  const addNote = (at?: [number, number]) => {
+    const [x, y] = at ?? ((c) => [c[0] - 100, c[1] - 20] as [number, number])(viewCentre());
     const index = ad.diagram.notes.length;
-    dispatch({ op: 'addNote', text: 'Note', sheet, pos: [snap(x - 100), snap(y - 20)], ...target }, { label: 'Add note', select: { kind: 'note', index } });
+    dispatch({ op: 'addNote', text: 'Note', sheet, pos: [snap(x), snap(y)], ...target }, { label: 'Add note', select: { kind: 'note', index } });
+    hostRef.current?.focus({ preventScroll: true });
   };
-  const doAutoOrder = () => dispatch({ op: 'setOrders', orders: Object.fromEntries(autoOrder(ad.diagram)), ...target }, { label: 'Auto order' });
-  const pinAll = () =>
-    dispatch(
-      { op: 'pinAll', positions: Object.fromEntries(layout.blocks.filter((b) => !b.iface).map((b) => [b.id, [b.x, b.y] as [number, number]])), ...target },
-      { label: 'Pin all positions' },
-    );
-  const resetLayout = async () => {
-    if (
-      !(await confirmDialog({
-        title: 'Reset layout?',
-        message: 'All hand-placed block positions are removed and the diagram is laid out automatically.',
-        okLabel: 'Reset',
-        danger: true,
-      }))
-    )
-      return;
-    dispatch({ op: 'unpinAll', ...target }, { label: 'Reset layout' });
+  const doAutoOrder = () => {
+    if (dispatch({ op: 'setOrders', orders: Object.fromEntries(autoOrder(ad.diagram)), ...target }, { label: 'Auto order' })) store().toastUndo('Execution order set from the signal flow');
   };
-  const alignByOrder = async () => {
-    if (
-      !(await confirmDialog({
-        title: 'Align by order?',
-        message: 'Reset manual positions and arrange blocks by execution order?',
-        okLabel: 'Align',
-      }))
-    )
+  const pinAll = () => {
+    const blocks = layout.blocks.filter((b) => !b.iface);
+    if (dispatch({ op: 'pinAll', positions: Object.fromEntries(blocks.map((b) => [b.id, [b.x, b.y] as [number, number]])), ...target }, { label: 'Pin all positions' }))
+      store().toastUndo(`Pinned ${plural(blocks.length, 'block')} on sheet ${sheet}`);
+  };
+  /** Back to automatic layout on this sheet: no confirmation (undo exists), toast with Undo. */
+  const resetLayout = () => {
+    if (!layout.blocks.some((b) => b.pinned && !b.iface)) {
+      store().toast(`The blocks on sheet ${sheet} are already laid out automatically`);
       return;
+    }
+    if (dispatch({ op: 'unpinAll', sheet, ...target }, { label: 'Reset layout' })) store().toastUndo(`Layout of sheet ${sheet} reset`);
+  };
+  const alignByOrder = () => {
     const ops: Op[] = [];
     const real = ad.diagram.blocks;
     // Blocks without an order would be placed arbitrarily: number all blocks from the signal flow first.
     if (real.some((b) => b.order === undefined)) ops.push({ op: 'setOrders', orders: Object.fromEntries(autoOrder(ad.diagram)), ...target });
     ops.push({ op: 'unpinAll', ...target });
-    dispatch({ op: 'batch', label: 'Align by order', ops }, { label: 'Align by order' });
+    if (dispatch({ op: 'batch', label: 'Align by order', ops }, { label: 'Align by order' })) store().toastUndo('Blocks arranged by execution order');
   };
   const setDisplayOpt = setCanvasPrefs;
 
@@ -1361,7 +1278,6 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       const b = ad.diagram.blocks.find((x) => x.id === g.id);
       if (b && b.display?.params !== value) ops.push({ op: 'setBlockDisplay', id: b.id, params: value, ...target });
     }
-    setShowView(false);
     if (!ops.length) return;
     const label = `${expanded ? 'Expand' : 'Collapse'} parameters on sheet ${sheet}`;
     dispatch({ op: 'batch', label, ops }, { label });
@@ -1388,16 +1304,72 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   }
   const inlineP = inline ? inlineProps(inline) : null;
 
+  // --- toolbar (docked; order: zoom | View | Insert | Arrange | Add note | ?) ---------------
+  const perBlock = display.paramsMode === 'block';
+  const toolItems: ToolItem[] = [
+    {
+      kind: 'menu',
+      key: 'view',
+      label: 'View',
+      title: 'What the drawing shows (also in Settings → Editor)',
+      sep: true,
+      items: [
+        { label: 'Grid', checked: display.grid, onClick: () => setDisplayOpt({ grid: !display.grid }) },
+        { section: 'Parameters' },
+        ...PARAMS_MODES.map(([m, label, title]): MenuEntry => ({ label, title, radio: true, checked: display.paramsMode === m, onClick: () => setDisplayOpt({ paramsMode: m }) })),
+        { section: 'Pins' },
+        ...PINS_MODES.map(([m, label, title]): MenuEntry => ({ label, title, radio: true, checked: display.ports === m, onClick: () => setDisplayOpt({ ports: m }) })),
+        'separator',
+        { label: 'Comments', title: 'Block comments under the blocks', checked: display.comments, onClick: () => setDisplayOpt({ comments: !display.comments }) },
+      ],
+    },
+    { kind: 'button', key: 'add', label: 'Add block…', icon: CIcon.block, title: 'Search a block type and add it (/ or double-click empty paper)', sep: true, onClick: () => openQuickAtMouse() },
+    {
+      kind: 'menu',
+      key: 'arrange',
+      label: 'Arrange',
+      sep: true,
+      items: [
+        { label: 'Auto order', title: 'Set the execution order from the signal flow', onClick: doAutoOrder },
+        { label: 'Align by order', title: 'Arrange the blocks by execution order (fills missing orders first)', onClick: alignByOrder },
+        'separator',
+        { label: 'Pin all', title: 'Store the current position of every block on this sheet', onClick: pinAll },
+        { label: 'Reset layout', title: 'Remove the hand-placed positions on this sheet', onClick: resetLayout },
+        'separator',
+        { label: 'Expand all parameters', disabled: !perBlock, description: perBlock ? undefined : 'Only with View → Parameters → Per block', onClick: () => setSheetParams(true) },
+        { label: 'Collapse all parameters', disabled: !perBlock, description: perBlock ? undefined : 'Only with View → Parameters → Per block', onClick: () => setSheetParams(false) },
+      ],
+    },
+    { kind: 'button', key: 'note', label: 'Add note', icon: CIcon.note, title: 'Add a note in the centre of the view', sep: true, onClick: () => addNote() },
+  ];
+
+  const focusHost = () => hostRef.current?.focus({ preventScroll: true });
+  const back = ad.composite && lastStrategyFile && lastStrategyFile in store().getState().files ? lastStrategyFile : null;
+  const empty = !layout.blocks.some((b) => !b.iface) && !layout.notes.length;
+
   return (
     <div className="cv">
-      <CanvasHeader ad={ad} />
-      {compare.target && ad.strategy && <CompareBanner diff={strategyDiff} />}
+      {ad.strategy ? (
+        <CanvasHeader kind="fbd" path={folderPath(ad.strategy.folder)} name={ad.strategy.name} title={ad.strategy.title} />
+      ) : (
+        <CanvasHeader
+          kind="composite"
+          path={ad.composite!.library}
+          name={`${ad.composite!.type}@${ad.composite!.version}`}
+          hint="Edits change this block type"
+          onBack={back ? () => store().open(back) : undefined}
+          backTitle="Back to the strategy"
+        />
+      )}
+      <CanvasToolbar zoomPct={pz.zoomPct} fit={fit} zoomBy={(f) => zoomAt(view.current.k * f)} zoomTo={(k) => zoomAt(k)} items={toolItems} helpOpen={showHelp} toggleHelp={() => setShowHelp((h) => !h)} focusCanvas={focusHost} />
+      {compare.target && ad.strategy && <CompareBanner kind="strategy" diff={strategyDiff} />}
       <div className="cv-main">
         <div
           ref={hostRef}
-          className={`cv-host${spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}${endHover || wire?.reconnect ? ' link-end' : ''}${wire ? ' wiring' : ''}`}
+          className={`cv-host${keys.spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}${endHover || wire?.reconnect ? ' link-end' : ''}${wire ? ' wiring' : ''}`}
           tabIndex={0}
           aria-label="Diagram canvas"
+          data-testid="fbd-canvas"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -1410,12 +1382,9 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             if (r && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) mouse.current = null;
           }}
           onDoubleClick={onDoubleClick}
-          onKeyDown={onKeyDown}
-          onKeyUp={onKeyUp}
-          onBlur={() => {
-            space.current = false;
-            setSpaceHeld(false);
-          }}
+          onKeyDown={keys.onKeyDown}
+          onKeyUp={keys.onKeyUp}
+          onBlur={keys.onBlur}
           onContextMenu={onContextMenu}
           onDragOver={onDragOver}
           onDrop={onDrop}
@@ -1445,14 +1414,22 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             </svg>
           )}
         </div>
+        {empty && !quick && (
+          <div className="cv-empty" role="note">
+            <strong>{ad.composite ? 'This composite block has no internal blocks yet' : 'This sheet is empty'}</strong>
+            <span>
+              Press <kbd>/</kbd> or double-click the paper to add a block, or drag one from the palette.
+            </span>
+          </div>
+        )}
         {inline && inlineP && (
           <InlineEdit
-            key={`${inline.kind}:${inline.id}:${'name' in inline ? inline.name : ''}`}
+            key={`${inline.kind}:${inline.kind === 'note' ? inline.index : inline.id}:${inline.kind === 'param' ? inline.name : ''}`}
             {...inlineP}
             onCommit={(v) => commitInline(inline, v)}
             onCancel={() => {
               setInline(null);
-              hostRef.current?.focus({ preventScroll: true });
+              focusHost();
             }}
           />
         )}
@@ -1460,141 +1437,34 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
           <QuickInsert
             x={quick.sx}
             y={quick.sy}
-            title={quick.wire ? `Connect to ${quick.wire.owner}.${quick.wire.port} (${quick.wire.type})` : undefined}
-            types={quickTypes}
-            onPick={pickQuick}
+            title={quick.wire ? `Connect to ${quick.wire.owner}.${quick.wire.port} (${quick.wire.type})` : 'Insert'}
+            placeholder="Search block types…"
+            items={quickItems(quick)}
             onClose={() => {
               setQuick(null);
-              hostRef.current?.focus({ preventScroll: true });
+              focusHost();
             }}
           />
         )}
         {showHelp && (
           <ShortcutHelp
+            kind={ad.composite ? 'composite' : 'fbd'}
             onClose={() => {
               setShowHelp(false);
-              hostRef.current?.focus({ preventScroll: true });
+              focusHost();
             }}
           />
         )}
-        <div className="cv-toolbar" onPointerDown={(e) => e.stopPropagation()}>
-          <button className="btn small" title="Fit drawing to view (F)" onClick={fit}>
-            Fit
-          </button>
-          <button className="btn small icon" title="Zoom out (−)" onClick={() => zoomAt(view.current.k / 1.25)}>
-            −
-          </button>
-          <span className="cv-zoom">{zoomPct} %</span>
-          <button className="btn small icon" title="Zoom in (+)" onClick={() => zoomAt(view.current.k * 1.25)}>
-            +
-          </button>
-          <button className="btn small" title="Zoom to 100 % (Ctrl+0)" onClick={() => zoomAt(1)}>
-            100 %
-          </button>
-          <span className="cv-sep" />
-          <span className="cv-dd">
-            <button className={`btn small${showView ? ' active' : ''}`} title="What blocks show" aria-expanded={showView} onClick={() => setShowView((v) => !v)}>
-              View ▾
-            </button>
-            {showView && (
-              <div className="cv-dd-panel" role="menu">
-                <div className="cv-dd-group" role="radiogroup" aria-label="Parameters">
-                  <span className="cv-dd-h">Parameters</span>
-                  {PARAMS_MODES.map(([mode, label, title]) => (
-                    <label key={mode} title={title}>
-                      <input type="radio" name="cv-params" checked={display.paramsMode === mode} onChange={() => setDisplayOpt({ paramsMode: mode })} /> {label}
-                      {mode === 'block' && <span className="cv-dd-note"> (default)</span>}
-                    </label>
-                  ))}
-                  <button type="button" className="cv-dd-item" disabled={display.paramsMode !== 'block'} title="Show the parameters of every block on this sheet" onClick={() => setSheetParams(true)}>
-                    Expand all on this sheet
-                  </button>
-                  <button type="button" className="cv-dd-item" disabled={display.paramsMode !== 'block'} title="Hide the parameters of every block on this sheet" onClick={() => setSheetParams(false)}>
-                    Collapse all on this sheet
-                  </button>
-                </div>
-                <label>
-                  <input type="checkbox" checked={display.comments} onChange={() => setDisplayOpt({ comments: !display.comments })} /> Show comments
-                </label>
-                <div className="cv-dd-group" role="radiogroup" aria-label="Pins">
-                  <span className="cv-dd-h">Pins</span>
-                  {PINS_MODES.map(([mode, label, title]) => (
-                    <label key={mode} title={title}>
-                      <input type="radio" name="cv-pins" checked={display.ports === mode} onChange={() => setDisplayOpt({ ports: mode })} /> {label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-          </span>
-          <button className="btn small" title="Set execution order from signal flow" onClick={doAutoOrder}>
-            Auto order
-          </button>
-          <button className="btn small" title="Store the current position of every block on this sheet" onClick={pinAll}>
-            Pin all
-          </button>
-          <button className="btn small" title="Remove all hand-placed positions" onClick={resetLayout}>
-            Reset layout
-          </button>
-          <button className="btn small" title="Reset manual positions and arrange blocks by execution order (fills missing orders first)" onClick={alignByOrder}>
-            Align by order
-          </button>
-          <button className="btn small" title="Add a note in the centre of the view" onClick={addNote}>
-            Add note
-          </button>
-          <span className="cv-sep" />
-          <button className="btn small icon" title="Shortcuts and gestures (?)" aria-label="Shortcuts" onClick={() => setShowHelp((h) => !h)}>
-            ?
-          </button>
-        </div>
       </div>
-      <SheetTabs ad={ad} sheet={sheet} />
+      <FbdSheetTabs ad={ad} sheet={sheet} />
       {menu.element}
-    </div>
-  );
-}
-
-function sheetLabel(s: { id: number; title?: string }): string {
-  return s.title ? `${s.id} · ${s.title}` : String(s.id);
-}
-
-// --- header ----------------------------------------------------------------------------------
-
-function CanvasHeader({ ad }: { ad: ActiveDiagram }) {
-  if (ad.strategy) {
-    const st = ad.strategy;
-    return (
-      <div className="cv-header">
-        <span className="seq-kind" title="Continuous strategy (function block diagram)">
-          FBD
-        </span>
-        {st.folder && <span className="cv-path">{st.folder.split('/').join(' / ')} /</span>}
-        <strong>{st.name}</strong>
-        {st.title && <span className="cv-title">{st.title}</span>}
-      </div>
-    );
-  }
-  const c = ad.composite!;
-  const back = lastStrategyFile && lastStrategyFile in store().getState().files ? lastStrategyFile : null;
-  return (
-    <div className="cv-header composite">
-      {back && (
-        <button className="btn small" onClick={() => store().open(back)} title="Back to the strategy">
-          ← Back
-        </button>
-      )}
-      <span>
-        {c.library} / <strong>{c.type}</strong>@{c.version}
-      </span>
-      <span className="cv-title">— composite block (edits change this block type)</span>
     </div>
   );
 }
 
 // --- sheet tabs ------------------------------------------------------------------------------
 
-function SheetTabs({ ad, sheet }: { ad: ActiveDiagram; sheet: number }) {
-  const menu = useMenu();
+function FbdSheetTabs({ ad, sheet }: { ad: ActiveDiagram; sheet: number }) {
   const target = { file: ad.file, root: ad.root };
 
   const openDescription = () => {
@@ -1607,56 +1477,43 @@ function SheetTabs({ ad, sheet }: { ad: ActiveDiagram; sheet: number }) {
   };
 
   const addSheet = async () => {
-    const title = await promptDialog({ title: 'New sheet', label: 'Sheet title (optional)' });
+    const title = await promptDialog({ title: 'New sheet', label: 'Sheet title (optional)', okLabel: 'Add sheet' });
     if (title === null) return;
     const s = store();
-    if (!s.dispatch({ op: 'addSheet', title: title || undefined, ...target }, { label: 'Add sheet' })) return;
+    const ops: Op[] = [{ op: 'addSheet', title: title || undefined, ...target }];
+    // The first sheet keeps its label: core titles an implicit sheet 1 "Sheet 1" when it materialises the list.
+    const first = ad.diagram.sheets;
+    if (first.length === 1 && first[0].id === 1 && !first[0].title) ops.push({ op: 'renameSheet', id: 1, ...target });
+    if (!s.dispatch({ op: 'batch', label: 'Add sheet', ops }, { label: 'Add sheet' })) return;
     const d = activeDiagramOf(s.getState());
     const ids = d?.diagram.sheets.map((x) => x.id) ?? [];
     if (ids.length) s.setSheet(Math.max(...ids));
   };
 
-  const tabMenu = (e: React.MouseEvent, sh: { id: number; title?: string }) =>
-    menu.open(e, [
-      {
-        label: 'Rename…',
-        onClick: async () => {
-          const title = await promptDialog({ title: `Rename sheet ${sh.id}`, label: 'Title', value: sh.title ?? '' });
-          if (title === null) return;
-          store().dispatch({ op: 'renameSheet', id: sh.id, title: title || undefined, ...target }, { label: 'Rename sheet' });
-        },
-      },
-      {
-        label: 'Delete',
-        danger: true,
-        disabled: ad.diagram.sheets.length <= 1,
-        onClick: () => store().dispatch({ op: 'removeSheet', id: sh.id, ...target }, { label: `Delete sheet ${sh.id}` }),
-      },
-    ]);
+  const rename = async (sh: { id: number; title?: string }) => {
+    const title = await promptDialog({ title: `Rename sheet ${sh.id}`, label: 'Title', value: sh.title ?? '', okLabel: 'Rename' });
+    if (title === null) return;
+    store().dispatch({ op: 'renameSheet', id: sh.id, title: title.trim() || undefined, ...target }, { label: 'Rename sheet' });
+  };
+
+  const remove = (id: number) => {
+    if (store().dispatch({ op: 'removeSheet', id, ...target }, { label: `Delete sheet ${id}` })) store().toastUndo(`Deleted sheet ${id}`);
+  };
+
+  const used = (id: number) => {
+    const first = ad.diagram.sheets[0]?.id;
+    const eff = (s: number) => (ad.diagram.sheets.some((x) => x.id === s) ? s : first);
+    return ad.diagram.blocks.filter((b) => eff(b.sheet) === id).length + ad.diagram.notes.filter((n) => eff(n.sheet) === id).length;
+  };
 
   return (
-    <div className="cv-tabs" role="tablist">
-      {ad.strategy && (
-        <button className="cv-tab doc" role="tab" onClick={openDescription} title="Function description (Markdown)">
-          Description
-        </button>
-      )}
-      {ad.diagram.sheets.map((sh) => (
-        <button
-          key={sh.id}
-          role="tab"
-          aria-selected={sh.id === sheet}
-          className={`cv-tab${sh.id === sheet ? ' active' : ''}`}
-          onClick={() => store().setSheet(sh.id)}
-          onContextMenu={(e) => tabMenu(e, sh)}
-        >
-          {sheetLabel(sh)}
-        </button>
-      ))}
-      <button className="cv-tab add" title="Add sheet" onClick={addSheet}>
-        +
-      </button>
-      {menu.element}
-    </div>
+    <SheetTabs
+      sheets={ad.diagram.sheets}
+      active={sheet}
+      onSelect={(id) => store().setSheet(id)}
+      onAdd={addSheet}
+      description={ad.strategy ? { onOpen: openDescription, title: 'Function description (Markdown)' } : undefined}
+      tabMenu={(sh) => sheetTabMenu({ sheet: sh, count: ad.diagram.sheets.length, used: used(sh.id), usedWhat: 'blocks and notes', rename: () => rename(sh), remove: () => remove(sh.id) })}
+    />
   );
 }

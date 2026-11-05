@@ -116,9 +116,9 @@ export async function projectZip(): Promise<Blob> {
   return filesToZip({ ...st.files, ...git });
 }
 
-export async function openZip(data: Blob | ArrayBuffer, projectId: string) {
+export async function openZip(data: Blob | ArrayBuffer, projectId: string, prepare?: (files: Files) => Promise<Files>) {
   const { files, git } = await zipToProject(data);
-  await openSession(projectId, files, Object.keys(git).length ? git : undefined, { save: true });
+  await openSession(projectId, prepare ? await prepare(files) : files, Object.keys(git).length ? git : undefined, { save: true });
 }
 
 // --- history actions ----------------------------------------------------------------------

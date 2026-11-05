@@ -3,11 +3,17 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import { basename, libraryFile, PROJECT_FILE, strategyDocFile, type BlockTypeDef, type FolderNode, type LibraryDef } from '@csd/core';
 import { store, useEditor } from '../state/store';
 import { diagsOf } from '../state/selectors';
-import { SeverityBadge, useMenu, type MenuEntry } from '../ui/kit';
+import { useMenu, type MenuEntry } from '../ui/kit';
+import { DiagBadges } from '../ui/parts';
+import { plural } from '../ui/text';
+import { newBlockTypeItems, newStrategyItems } from '../inspector/FilePanels';
+import { openSettings } from '../settings/open';
 import { ChangeDot } from '../history/DiffDetails';
 import { Icon } from './icons';
 import {
   addAsset,
+  copyAssetReference,
+  deleteAsset,
   deleteFolder,
   deleteStrategy,
   deleteTypeVersion,
@@ -15,17 +21,20 @@ import {
   editFolderDescription,
   importLibraryZip,
   moveStrategy,
-  newBlockType,
   newFolder,
   newLibrary,
   newSequence,
   newStrategy,
   newTypeVersion,
   openFunctionDescription,
+  renameAsset,
+  renameBlockTypeDialog,
   renameFolder,
+  renameProject,
   renameStrategy,
 } from './actions';
 import './project.css';
+import { keys } from '../ui/keys';
 
 type MenuOpener = (e: { clientX: number; clientY: number; preventDefault?: () => void }, items: MenuEntry[]) => void;
 
@@ -135,14 +144,6 @@ function TreeRow(p: TreeRowProps) {
   );
 }
 
-/** Menu entries to create either type of strategy in `folder`. */
-function newStrategyItems(folder: string): MenuEntry[] {
-  return [
-    { label: 'New continuous strategy…', hint: 'FBD', description: 'Function blocks and links', onClick: () => newStrategy(folder) },
-    { label: 'New sequence strategy…', hint: 'SFC', description: 'Steps, transitions and actions', onClick: () => newSequence(folder) },
-  ];
-}
-
 function ActBtn(props: { title: string; onClick: (el: HTMLElement) => void; children: ReactNode }) {
   return (
     <button
@@ -159,13 +160,17 @@ function ActBtn(props: { title: string; onClick: (el: HTMLElement) => void; chil
   );
 }
 
-function Section(props: { id: string; title: string; open: boolean; onToggle: () => void; actions?: ReactNode; children: ReactNode; count?: number }) {
+function Section(props: { id: string; title: string; open: boolean; onToggle: () => void; actions?: ReactNode; children: ReactNode; count?: number; countTitle?: string }) {
   return (
     <div className="tree-sec" role="group" aria-label={props.title}>
       <div className="section-h tree-sec-h" onClick={props.onToggle}>
         <span className="twisty">{Icon.chevron(props.open)}</span>
         <span>{props.title}</span>
-        {props.count !== undefined && <span className="tree-count">{props.count}</span>}
+        {props.count !== undefined && (
+          <span className="tree-count" title={props.countTitle}>
+            {props.count}
+          </span>
+        )}
         <span className="spacer" />
         <span className="sec-acts" onClick={(e) => e.stopPropagation()}>
           {props.actions}
@@ -232,21 +237,22 @@ export function ProjectTree() {
         setOpen(`f:${node.path}`, true);
       },
     },
-    { label: node.readme ? 'Edit description' : 'Add description', onClick: () => editFolderDescription(node) },
+    { label: node.readme && node.readme in files ? 'Folder description' : 'Add folder description', onClick: () => editFolderDescription(node) },
     'separator',
     { label: 'Rename…', hint: 'F2', onClick: () => doRenameFolder(node) },
-    { label: 'Delete folder…', danger: true, onClick: () => deleteFolder(node) },
+    'separator',
+    { label: 'Delete…', danger: true, onClick: () => deleteFolder(node) },
   ];
 
   const strategyMenu = (file: string): MenuEntry[] => {
     const s = model.strategyByFile.get(file) ?? model.sequenceByFile.get(file);
     const hasDoc = strategyDocFile(file) in files;
     return [
-      { section: s ? `${s.name}${model.sequenceByFile.has(file) ? ' · sequence' : ''}` : basename(file) },
+      { section: `${s?.name ?? basename(file)} · ${model.sequenceByFile.has(file) ? 'SFC' : 'FBD'}` },
       { label: 'Open', onClick: () => open(file) },
       { label: hasDoc ? 'Function description' : 'Add function description', onClick: () => openFunctionDescription(file) },
       'separator',
-      { label: 'Rename…', onClick: () => renameStrategy(file) },
+      { label: 'Rename…', hint: 'F2', onClick: () => renameStrategy(file) },
       { label: 'Duplicate…', onClick: () => duplicateStrategy(file) },
       { label: 'Move to folder…', onClick: () => moveStrategy(file) },
       'separator',
@@ -272,11 +278,12 @@ export function ProjectTree() {
         onActivate={() => open(file)}
         menu={() => strategyMenu(file)}
         openMenu={menu.open}
+        onRename={() => renameStrategy(file)}
         trailing={
           <>
             {s?.title && <span className="tree-sub">{s.title}</span>}
             <ChangeDot file={file} />
-            <SeverityBadge diags={diags} />
+            <DiagBadges diags={diags} />
           </>
         }
         actions={
@@ -311,7 +318,7 @@ export function ProjectTree() {
           <>
             {s?.title && <span className="tree-sub">{s.title}</span>}
             <ChangeDot file={file} />
-            <SeverityBadge diags={diags} />
+            <DiagBadges diags={diags} />
           </>
         }
         actions={
@@ -323,21 +330,20 @@ export function ProjectTree() {
     );
   };
 
-  const folderDiagCount = (node: FolderNode): { e: number; w: number } => {
-    let e = 0;
-    let w = 0;
+  const folderDiags = (node: FolderNode) => {
+    const out: ReturnType<typeof diagsOf>[number][] = [];
     const walk = (n: FolderNode) => {
-      for (const f of [...n.strategies, ...n.sequences]) for (const d of diagsOf(model, f)) d.severity === 'error' ? e++ : d.severity === 'warning' && w++;
+      for (const f of [...n.strategies, ...n.sequences]) out.push(...diagsOf(model, f));
       n.folders.forEach(walk);
     };
     walk(node);
-    return { e, w };
+    return out;
   };
 
   const renderFolder = (node: FolderNode, depth: number): ReactNode => {
     const key = `f:${node.path}`;
     const expanded = isOpen(key, true);
-    const counts = expanded ? { e: 0, w: 0 } : folderDiagCount(node);
+    const collapsedDiags = expanded ? [] : folderDiags(node);
     return (
       <div key={node.path} role="group">
         <TreeRow
@@ -361,13 +367,12 @@ export function ProjectTree() {
           openMenu={menu.open}
           trailing={
             <>
-              {node.level && <span className="level-badge">{node.level}</span>}
-              {!expanded && (counts.e > 0 || counts.w > 0) && (
-                <span style={{ display: 'inline-flex', gap: 3 }}>
-                  {counts.e > 0 && <span className="badge error">{counts.e}</span>}
-                  {counts.w > 0 && <span className="badge warning">{counts.w}</span>}
+              {node.level && (
+                <span className="level-badge" title={`Hierarchy level: ${node.level}`}>
+                  {node.level}
                 </span>
               )}
+              {!expanded && <DiagBadges diags={collapsedDiags} title={`In this folder: ${plural(collapsedDiags.filter((d) => d.severity === 'error').length, 'error')}, ${plural(collapsedDiags.filter((d) => d.severity === 'warning').length, 'warning')}`} />}
             </>
           }
           actions={
@@ -393,14 +398,16 @@ export function ProjectTree() {
     { label: 'Open', onClick: () => open(def.file) },
     { label: 'New version', hint: 'minor', onClick: () => newTypeVersion(def) },
     'separator',
-    { label: 'Delete this version…', danger: true, onClick: () => deleteTypeVersion(def) },
+    { label: 'Rename…', hint: 'F2', onClick: () => renameBlockTypeDialog(def) },
+    'separator',
+    { label: 'Delete version…', danger: true, onClick: () => deleteTypeVersion(def) },
   ];
 
   const libMenu = (lib: LibraryDef): MenuEntry[] => [
     { section: lib.name },
-    { label: 'Open library.yaml', onClick: () => open(lib.file) },
-    { label: 'New basic block type…', onClick: () => newBlockType(lib.folder, 'basic') },
-    { label: 'New composite block type…', onClick: () => newBlockType(lib.folder, 'composite') },
+    { label: 'Open', onClick: () => open(lib.file) },
+    'separator',
+    ...newBlockTypeItems(lib.folder).map((m) => (typeof m === 'object' && 'label' in m ? { ...m, description: undefined } : m)),
   ];
 
   const renderLibrary = (lib: LibraryDef) => {
@@ -425,14 +432,15 @@ export function ProjectTree() {
           }}
           menu={() => libMenu(lib)}
           openMenu={menu.open}
+          onRename={() => store().toast(`Libraries are renamed by their folder; rename library/${lib.folder}/ outside the editor`)}
           trailing={
             <>
-              <span className="tree-sub">{names.length} {names.length === 1 ? 'type' : 'types'}</span>
-              <SeverityBadge diags={libDiags} />
+              <span className="tree-sub">{plural(names.length, 'type')}</span>
+              <DiagBadges diags={libDiags} />
             </>
           }
           actions={
-            <ActBtn title="New block type" onClick={() => newBlockType(lib.folder, 'basic')}>
+            <ActBtn title="New block type (basic or composite)" onClick={(el) => menu.openBelow(el, newBlockTypeItems(lib.folder))}>
               {Icon.plus}
             </ActBtn>
           }
@@ -462,11 +470,12 @@ export function ProjectTree() {
                   onActivate={() => open(newest.file)}
                   menu={() => typeMenu(newest)}
                   openMenu={menu.open}
+                  onRename={() => renameBlockTypeDialog(newest)}
                   trailing={
                     <>
                       {composite && <span className="kind-badge">composite</span>}
-                      {versions.length > 1 && <span className="tree-sub">{versions.length} versions</span>}
-                      <SeverityBadge diags={versions.flatMap((v) => diagsOf(model, v.file))} />
+                      {versions.length > 1 && <span className="tree-sub">{plural(versions.length, 'version')}</span>}
+                      <DiagBadges diags={versions.flatMap((v) => diagsOf(model, v.file))} />
                     </>
                   }
                 />
@@ -481,7 +490,8 @@ export function ProjectTree() {
                       onActivate={() => open(v.file)}
                       menu={() => typeMenu(v)}
                       openMenu={menu.open}
-                      trailing={<SeverityBadge diags={diagsOf(model, v.file)} />}
+                      onRename={() => renameBlockTypeDialog(v)}
+                      trailing={<DiagBadges diags={diagsOf(model, v.file)} />}
                     />
                   ))}
               </div>
@@ -501,22 +511,32 @@ export function ProjectTree() {
           depth={0}
           icon={Icon.project}
           label={model.meta.name}
-          title={`${PROJECT_FILE} — project settings`}
+          title={`Project: ${PROJECT_FILE}`}
           active={active === PROJECT_FILE}
           onActivate={() => open(PROJECT_FILE)}
           openMenu={menu.open}
-          trailing={<SeverityBadge diags={diagsOf(model, PROJECT_FILE)} />}
+          onRename={() => renameProject()}
+          menu={() => [
+            { section: model.meta.name },
+            { label: 'Open', onClick: () => open(PROJECT_FILE) },
+            { label: 'Settings…', hint: keys('Mod+,'), onClick: () => openSettings('project') },
+            'separator',
+            { label: 'Rename…', hint: 'F2', onClick: () => renameProject() },
+          ]}
+          trailing={<DiagBadges diags={diagsOf(model, PROJECT_FILE)} />}
           testId="project-file"
         />
         <TreeRow
           depth={0}
           icon={Icon.doc}
           label="README.md"
-          title={'README.md' in files ? 'Project introduction' : 'Create the project introduction'}
+          title={'README.md' in files ? 'Project introduction (README.md)' : 'Add the project introduction (README.md)'}
           active={active === 'README.md'}
           className={'README.md' in files ? '' : 'missing'}
           onActivate={() => editFolderDescription(root)}
+          onRename={() => store().toast('The project introduction is always README.md')}
           openMenu={menu.open}
+          menu={() => [{ label: 'README.md' in files ? 'Open' : 'Add project introduction', onClick: () => editFolderDescription(root) }]}
         />
       </Section>
 
@@ -526,6 +546,7 @@ export function ProjectTree() {
         open={hierarchyOpen}
         onToggle={() => toggle('s:hierarchy', true)}
         count={model.strategies.length + model.sequences.length}
+        countTitle={`${plural(model.strategies.length, 'continuous strategy', 'continuous strategies')}, ${plural(model.sequences.length, 'sequence strategy', 'sequence strategies')}`}
         actions={
           <>
             <ActBtn title={`New top-level folder${levels[0] ? ` (${levels[0]})` : ''}`} onClick={() => newFolder(root, levels[0])}>
@@ -576,6 +597,7 @@ export function ProjectTree() {
         open={isOpen('s:libraries', true)}
         onToggle={() => toggle('s:libraries', true)}
         count={model.libraries.length}
+        countTitle={plural(model.libraries.length, 'library')}
         actions={
           <>
             <ActBtn title="New library" onClick={() => newLibrary()}>
@@ -606,7 +628,14 @@ export function ProjectTree() {
           }}
         >
           {model.libraries.map(renderLibrary)}
-          {!model.libraries.length && <div className="tree-empty">No libraries.</div>}
+          {!model.libraries.length && (
+            <div className="tree-empty">
+              No libraries.{' '}
+              <button className="linkish" onClick={() => newLibrary()}>
+                Add library…
+              </button>
+            </div>
+          )}
         </div>
       </Section>
 
@@ -616,6 +645,7 @@ export function ProjectTree() {
         open={isOpen('s:assets', true)}
         onToggle={() => toggle('s:assets', true)}
         count={model.assets.length}
+        countTitle={plural(model.assets.length, 'asset')}
         actions={
           <ActBtn title="Add image…" onClick={() => imgInput.current?.click()}>
             {Icon.upload}
@@ -632,24 +662,21 @@ export function ProjectTree() {
             active={active === a}
             onActivate={() => open(a)}
             openMenu={menu.open}
+            onRename={() => renameAsset(a)}
             menu={() => [
+              { section: a.slice('assets/'.length) },
               { label: 'Open', onClick: () => open(a) },
-              {
-                label: 'Copy Markdown reference',
-                onClick: () => {
-                  navigator.clipboard?.writeText(`![](${a})`).then(
-                    () => store().toast('Copied'),
-                    () => store().toast(`![](${a})`),
-                  );
-                },
-              },
+              { label: 'Copy Markdown reference', onClick: () => copyAssetReference(a) },
               'separator',
-              { label: 'Delete', danger: true, onClick: () => store().dispatch({ op: 'deleteFile', file: a }, { label: `Delete ${a}` }) },
+              { label: 'Rename…', hint: 'F2', onClick: () => renameAsset(a) },
+              'separator',
+              { label: 'Delete…', danger: true, onClick: () => deleteAsset(a) },
             ]}
           />
         ))}
         {!model.assets.length && (
           <div className="tree-empty">
+            No images yet.{' '}
             <button className="linkish" onClick={() => imgInput.current?.click()}>
               Add image…
             </button>

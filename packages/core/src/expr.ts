@@ -13,7 +13,18 @@
 //   prod := unary ( ('*' | '/') unary )*
 //   unary:= '-' unary | atom
 //   atom := number | duration | TRUE | FALSE | reference | '(' or ')'
+//   number   := digits ( '.' digits )? ( ('e' | 'E') ('+' | '-')? digits )?
+//   duration := ( 'T#' )? digits ( '.' digits )? ( 'ms' | 's' | 'min' | 'm' | 'h' )
+//               (same syntax as step times: 500ms, 5s, 2min, 2m, 1h, T#5s; case-insensitive)
+// Keywords (case-insensitive): and, or, not, TRUE, FALSE.
 // References: NAME, NAME.PORT, OTHER:NAME.PORT (other strategy / sequence).
+//   NAME   sequence input (letters, digits, "_")
+//   S10.X  step active, S10.T time in step, SEQ.RUNNING / DONE / ALARM / STEP
+//   LIC100:LT100.PV  signal of another strategy (or another sequence)
+// Tags may contain "-" (FT-101.PV, P-101:P-101.RUNNING): a "-" belongs to a
+// name only when the reference goes on with "." or ":". In a bare name it is
+// the minus operator, so `CNT-1 > 0` means CNT - 1 > 0. Write spaces around
+// a minus between two tag references (`A.X - B.Y`).
 
 export type Expr =
   | { kind: 'bool'; value: boolean }
@@ -39,11 +50,11 @@ export class ExprError extends Error {
 
 type Tok = { t: 'num' | 'dur' | 'id' | 'op' | 'lp' | 'rp' | 'end'; v: string; at: number };
 
-const DUR = /^(\d+(?:\.\d+)?)(ms|s|min|h)\b/;
+const DUR = /^(?:T#)?(\d+(?:\.\d+)?)(ms|s|min|m|h)\b/i;
 const NUM = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 const REF = /^[A-Za-z_][A-Za-z0-9_-]*(?::[A-Za-z_][A-Za-z0-9_-]*)?(?:\.[A-Za-z_][A-Za-z0-9_]*)?/;
 const OPS = ['<=', '>=', '<>', '!=', '==', '&&', '||', '<', '>', '=', '+', '-', '*', '/', '!'];
-const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, min: 60000, h: 3600000 };
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1000, min: 60000, m: 60000, h: 3600000 };
 
 function tokenize(src: string): Tok[] {
   const out: Tok[] = [];
@@ -63,8 +74,10 @@ function tokenize(src: string): Tok[] {
       out.push({ t: 'num', v: m[0], at: i });
       i += m[0].length;
     } else if ((m = REF.exec(rest))) {
-      out.push({ t: 'id', v: m[0], at: i });
-      i += m[0].length;
+      // A bare name (no "." / ":") never contains "-": there it is the minus operator.
+      const v = /[.:]/.test(m[0]) ? m[0] : m[0].split('-')[0];
+      out.push({ t: 'id', v, at: i });
+      i += v.length;
     } else if (c === '(') out.push({ t: 'lp', v: c, at: i++ });
     else if (c === ')') out.push({ t: 'rp', v: c, at: i++ });
     else {
@@ -149,7 +162,7 @@ export function parseExpr(src: string): Expr {
     if (t.t === 'dur') {
       p++;
       const m = DUR.exec(t.v)!;
-      return { kind: 'dur', ms: Number(m[1]) * UNIT_MS[m[2]], text: t.v };
+      return { kind: 'dur', ms: Number(m[1]) * UNIT_MS[m[2].toLowerCase()], text: t.v };
     }
     if (t.t === 'lp') {
       p++;
@@ -176,6 +189,28 @@ export function parseExpr(src: string): Expr {
   const e = or();
   if (peek().t !== 'end') throw new ExprError(`Unexpected "${peek().v}"`, peek().at);
   return e;
+}
+
+export type RefExpr = Extract<Expr, { kind: 'ref' }>;
+
+/**
+ * Rewrites references inside condition text in place (formatting and spacing
+ * stay as written). `fn` returns the new text of a reference, or undefined to
+ * keep it. Text that does not parse is returned unchanged.
+ */
+export function rewriteExprRefs(src: string, fn: (r: RefExpr) => string | undefined): string {
+  let e: Expr;
+  try {
+    e = parseExpr(src);
+  } catch {
+    return src;
+  }
+  let text = src;
+  for (const r of exprRefs(e).sort((x, y) => y.at - x.at)) {
+    const n = fn(r);
+    if (n !== undefined && n !== r.text) text = text.slice(0, r.at) + n + text.slice(r.at + r.text.length);
+  }
+  return text;
 }
 
 /** All references in an expression. */

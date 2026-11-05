@@ -1,36 +1,13 @@
 /* Versioning UI: top-bar status, commit dialog, history drawer, text diff,
-   comparison banner and inspector details. Diff colours match @csd/render
-   DIFF_COLORS (added #2f7d4a, changed #d08700, removed #b3261e). */
-:root {
-  --hx-add: #2f7d4a;
-  --hx-add-soft: #e3f2e7;
-  --hx-chg: #a86d00;
-  --hx-chg-soft: #fbefd6;
-  --hx-del: #b3261e;
-  --hx-del-soft: #fbe5e3;
-  --hx-tag: #6a3fa0;
-  --hx-tag-soft: #efe7f8;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --hx-add: #6cc08a;
-    --hx-add-soft: #1d3326;
-    --hx-chg: #e6a24a;
-    --hx-chg-soft: #3a2c17;
-    --hx-del: #ff8a80;
-    --hx-del-soft: #3a1f1d;
-    --hx-tag: #c7a6f0;
-    --hx-tag-soft: #2c2338;
-  }
-}
-
+   comparison banner and inspector details. Colours: --diff-add / --diff-chg /
+   --diff-del and --tag from styles.css (one value per kind everywhere). */
 .hx-muted { color: var(--ink-3); }
 .hx-pad { padding: 12px; }
 .hx-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-align: left; }
 .hx-link:hover { text-decoration: underline; }
 .hx-strike { text-decoration: line-through; color: var(--ink-2); }
-.hx-before { color: var(--hx-del); background: var(--hx-del-soft); padding: 0 3px; border-radius: 2px; word-break: break-all; }
-.hx-after { color: var(--hx-add); background: var(--hx-add-soft); padding: 0 3px; border-radius: 2px; word-break: break-all; }
+.hx-before { color: var(--diff-del); background: var(--diff-del-soft); padding: 0 3px; border-radius: 2px; word-break: break-all; }
+.hx-after { color: var(--diff-add); background: var(--diff-add-soft); padding: 0 3px; border-radius: 2px; word-break: break-all; }
 .hx-arrow { margin: 0 4px; color: var(--ink-3); }
 
 /* ---- top bar --------------------------------------------------------------- */
@@ -39,14 +16,14 @@
 .hx-status-btn.on { background: var(--accent-soft); border-color: var(--accent); }
 .hx-branch { font-family: var(--f-mono); font-weight: 600; }
 .hx-sep { color: var(--ink-3); }
-.hx-rev { font-weight: 600; color: var(--hx-tag); }
+.hx-rev { font-weight: 600; color: var(--tag); }
 .hx-changes { margin-left: 4px; padding: 0 6px; border-radius: 9px; background: var(--hover); color: var(--ink-3); font-size: 11px; }
-.hx-changes.dirty { background: var(--hx-chg-soft); color: var(--hx-chg); font-weight: 600; }
+.hx-changes.dirty { background: var(--hover); color: var(--ink-2); font-weight: 600; }
 
 /* ---- shared file list ----------------------------------------------------------- */
 .hx-files { display: grid; gap: 6px; }
 .hx-group ul { list-style: none; margin: 0; padding: 0; }
-.hx-group-h, .hx-sec-h { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font: 600 10.5px var(--f-ui); text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
+.hx-group-h, .hx-sec-h { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font: 600 11px var(--f-ui); text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); }
 .hx-sec-h { margin-top: 10px; }
 .hx-count { font-weight: 500; }
 .hx-file { display: flex; gap: 6px; align-items: flex-start; padding: 2px 0; }
@@ -54,10 +31,10 @@
 .hx-file-main > .mono:first-child, .hx-file-main > .hx-link { font-weight: 600; word-break: break-all; }
 .hx-path { display: block; color: var(--ink-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hx-sum { color: var(--ink-2); font-size: 12px; }
-.hx-kind { flex: none; display: inline-grid; place-items: center; width: 17px; height: 17px; margin-top: 1px; border-radius: 3px; font: 700 10px var(--f-mono); }
-.hx-kind.added { color: var(--hx-add); background: var(--hx-add-soft); }
-.hx-kind.modified { color: var(--hx-chg); background: var(--hx-chg-soft); }
-.hx-kind.deleted { color: var(--hx-del); background: var(--hx-del-soft); }
+.hx-kind { flex: none; display: inline-grid; place-items: center; width: 17px; height: 17px; margin-top: 1px; border-radius: 3px; font: 700 11px var(--f-mono); }
+.hx-kind.added { color: var(--diff-add); background: var(--diff-add-soft); }
+.hx-kind.modified { color: var(--diff-chg); background: var(--diff-chg-soft); }
+.hx-kind.deleted { color: var(--diff-del); background: var(--diff-del-soft); }
 
 /* ---- commit dialog ---------------------------------------------------------------- */
 .dialog.hx-commit { width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); grid-template-rows: auto minmax(0, 1fr) auto; }
@@ -79,13 +56,13 @@
 .hx-dock { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
 .hx-dock > .ws { flex: 1 1 auto; }
 /* Docked beside the workspace (not over it): drawing and text stay usable. */
-.hx-panel { position: relative; z-index: 3; flex: 0 0 auto; width: min(400px, 55%); min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--rule-strong); box-shadow: -2px 0 8px rgb(20 30 40 / .08); }
+.hx-panel { position: relative; z-index: 3; flex: 0 0 auto; width: min(400px, 55%); min-height: 0; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--rule-strong); }
 .hx-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--rule); }
-.hx-head h2 { margin: 0; font: 600 17px var(--f-display); letter-spacing: .02em; }
+.hx-head h2 { margin: 0; font: 600 18px var(--f-display); letter-spacing: .02em; }
 .hx-branchbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--rule); }
 .hx-branch-sel { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
 .hx-branch-sel .select { height: 24px; font-family: var(--f-mono); font-size: 12px; border: 1px solid var(--rule-strong); border-radius: var(--radius); background: var(--sheet); min-width: 0; flex: 1; }
-.hx-comparing { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: var(--hx-chg-soft); border-bottom: 1px solid var(--rule); font-size: 12px; }
+.hx-comparing { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: var(--diff-chg-soft); border-bottom: 1px solid var(--rule); font-size: 12px; }
 .hx-list { flex: 0 1 auto; max-height: 42%; min-height: 80px; overflow-y: auto; border-bottom: 1px solid var(--rule-strong); }
 .hx-item { display: flex; width: 100%; gap: 8px; align-items: flex-start; padding: 6px 12px; border: 0; border-bottom: 1px solid var(--rule); background: none; text-align: left; cursor: pointer; }
 .hx-item:hover { background: var(--hover); }
@@ -93,20 +70,20 @@
 .hx-item-main { display: grid; gap: 1px; min-width: 0; flex: 1; }
 .hx-item-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; }
 .hx-item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
-.hx-item-meta { color: var(--ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hx-item-meta { color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hx-dot { flex: none; width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; border: 2px solid var(--ink-3); background: var(--panel); }
 .hx-dot.head { border-color: var(--accent); background: var(--accent); }
-.hx-dot.tagged { border-color: var(--hx-tag); }
-.hx-dot.head.tagged { background: var(--hx-tag); }
-.hx-dot.working { border-style: dashed; border-color: var(--hx-chg); }
-.hx-item.working .hx-item-sum { color: var(--hx-chg); }
-.hx-current { font: 600 10px var(--f-ui); text-transform: uppercase; letter-spacing: .06em; padding: 0 5px; border-radius: 8px; color: var(--accent-ink); background: var(--accent); margin-left: 4px; }
-.hx-tag { display: inline-flex; align-items: center; gap: 2px; font: 600 11px var(--f-mono); padding: 0 6px; border-radius: 9px; color: var(--hx-tag); background: var(--hx-tag-soft); white-space: nowrap; }
+.hx-dot.tagged { border-color: var(--tag); }
+.hx-dot.head.tagged { background: var(--tag); }
+.hx-dot.working { border-style: dashed; border-color: var(--diff-chg); }
+.hx-item.working .hx-item-sum { color: var(--diff-chg); }
+.hx-current { font: 600 11px var(--f-ui); letter-spacing: .02em; padding: 0 5px; border-radius: 8px; color: var(--accent-ink); background: var(--accent); margin-left: 4px; }
+.hx-tag { display: inline-flex; align-items: center; gap: 2px; font: 600 11px var(--f-mono); padding: 0 6px; border-radius: 9px; color: var(--tag); background: var(--tag-soft); white-space: nowrap; }
 .hx-tag-x { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 2px; font-size: 13px; line-height: 1; }
-.hx-tag-x:hover { color: var(--hx-del); }
+.hx-tag-x:hover { color: var(--diff-del); }
 .hx-details { flex: 1; min-height: 0; overflow-y: auto; }
 .hx-det { padding: 10px 12px 16px; display: grid; gap: 6px; }
-.hx-det-title { font-weight: 600; font-size: 14px; }
+.hx-det-title { font-weight: 600; font-size: 15px; }
 .hx-det-body { white-space: pre-wrap; color: var(--ink-2); }
 .hx-det-meta { color: var(--ink-2); font-size: 12px; }
 .hx-det-tags { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -115,7 +92,7 @@
 .hx-other .hx-sec-h { margin-top: 0; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink-2); }
 .hx-empty { padding: 24px 20px; text-align: center; display: grid; gap: 6px; justify-items: center; }
 .hx-empty p { margin: 0; max-width: 340px; }
-.hx-empty-ico { font-size: 34px; color: var(--ink-3); line-height: 1; }
+.hx-empty-ico { font-size: 24px; color: var(--ink-3); line-height: 1; }
 .hx-empty .btn { margin-top: 8px; }
 
 /* ---- text diff ------------------------------------------------------------------------- */
@@ -125,40 +102,44 @@
 .hx-td-body { display: grid; grid-template-columns: minmax(180px, 28%) minmax(0, 1fr); gap: 10px; min-height: 0; }
 .hx-td-list { overflow-y: auto; border: 1px solid var(--rule); border-radius: var(--radius); }
 .hx-td-file { display: flex; gap: 6px; width: 100%; align-items: center; padding: 4px 8px; border: 0; background: none; text-align: left; cursor: pointer; }
-.hx-td-file .mono { word-break: break-all; font-size: 11.5px; }
+.hx-td-file .mono { word-break: break-all; font-size: 12px; }
 .hx-td-file:hover { background: var(--hover); }
 .hx-td-file.on { background: var(--accent-soft); }
 .hx-td-view { overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); }
 .hx-td-file-h { position: sticky; top: 0; z-index: 1; display: flex; gap: 10px; padding: 5px 8px; background: var(--panel); border-bottom: 1px solid var(--rule); font-weight: 600; }
-.hx-stats .add { color: var(--hx-add); }
-.hx-stats .del { color: var(--hx-del); }
+.hx-stats .add { color: var(--diff-add); }
+.hx-stats .del { color: var(--diff-del); }
 .hx-diff { border-collapse: collapse; width: 100%; font: 12px/1.45 var(--f-mono); }
 .hx-diff td { padding: 0 6px; vertical-align: top; }
 .hx-diff .ln { width: 1%; min-width: 34px; text-align: right; color: var(--ink-3); user-select: none; border-right: 1px solid var(--rule); }
 .hx-diff .code { white-space: pre-wrap; word-break: break-all; }
 .hx-diff .sign { display: inline-block; width: 1.2em; color: var(--ink-3); user-select: none; }
-.hx-diff tr.add { background: var(--hx-add-soft); }
-.hx-diff tr.add .sign, .hx-diff tr.add .code { color: var(--hx-add); }
-.hx-diff tr.del { background: var(--hx-del-soft); }
-.hx-diff tr.del .sign, .hx-diff tr.del .code { color: var(--hx-del); }
+.hx-diff tr.add { background: var(--diff-add-soft); }
+.hx-diff tr.add .sign, .hx-diff tr.add .code { color: var(--diff-add); }
+.hx-diff tr.del { background: var(--diff-del-soft); }
+.hx-diff tr.del .sign, .hx-diff tr.del .code { color: var(--diff-del); }
 .hx-diff tr.hunk td { padding: 3px 8px; color: var(--accent); background: var(--accent-soft); }
 
 /* ---- canvas banner ----------------------------------------------------------------------- */
-.hx-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 4px 10px; background: var(--hx-chg-soft); border-bottom: 1px solid var(--rule-strong); font-size: 12px; }
+.hx-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 4px 10px; background: var(--diff-chg-soft); border-bottom: 1px solid var(--rule-strong); font-size: 12px; }
 .hx-legend { display: inline-flex; align-items: center; gap: 4px; }
 .hx-swatch { width: 10px; height: 10px; border-radius: 2px; }
 .hx-banner-sum { color: var(--ink-2); }
 
 /* ---- inspector section --------------------------------------------------------------------- */
-.hx-dd { margin: 6px 8px; padding: 6px 8px 8px; border: 1px solid var(--hx-chg); border-radius: var(--radius); background: var(--hx-chg-soft); display: grid; gap: 4px; }
-.hx-dd-head { display: flex; align-items: center; gap: 6px; font: 600 10.5px var(--f-ui); text-transform: uppercase; letter-spacing: .07em; color: var(--hx-chg); }
+.hx-dd { margin: 6px 10px; padding: 6px 8px 8px; border: 1px solid var(--rule-strong); border-left: 3px solid var(--diff-chg); border-radius: var(--radius); background: var(--sheet); display: grid; gap: 4px; }
+.hx-dd-head { display: flex; align-items: center; gap: 6px; font: 600 12px var(--f-ui); color: var(--ink); }
+.hx-dd-title .mono { font-size: 12px; }
 .hx-dd-sum { font-size: 12px; color: var(--ink-2); }
 .hx-dd-h { margin-top: 4px; font: 600 11px var(--f-ui); color: var(--ink-3); }
 .hx-dd-p { font-size: 12px; }
 .hx-dd .btn { justify-self: start; }
 .hx-dd-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .hx-dd-list li { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: 12px; }
-.hx-dk { font: 600 9.5px var(--f-ui); text-transform: uppercase; letter-spacing: .05em; padding: 0 4px; border: 1px solid; border-radius: 3px; background: var(--sheet); }
+.hx-dk { font: 600 11px/15px var(--f-ui); padding: 0 5px; border: 1px solid; border-radius: var(--radius); background: var(--sheet); }
+.hx-dk.added { color: var(--diff-add); border-color: var(--diff-add); }
+.hx-dk.changed { color: var(--diff-chg); border-color: var(--diff-chg); }
+.hx-dk.removed { color: var(--diff-del); border-color: var(--diff-del); }
 .hx-fields { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--sheet); border-radius: 2px; }
 .hx-fields th { text-align: left; font-weight: 600; padding: 2px 6px; width: 32%; vertical-align: top; word-break: break-all; }
 .hx-fields td { padding: 2px 6px; }
@@ -166,5 +147,8 @@
 
 /* ---- project tree ---------------------------------------------------------------------------- */
 .hx-tree-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
-.hx-tree-dot.hollow { background: transparent; border: 2px solid; }
-.hx-seq { color: var(--ink-3); font-style: italic; }
+.hx-tree-dot.added { background: var(--diff-add); }
+.hx-tree-dot.changed { background: var(--diff-chg); }
+.hx-tree-dot.hollow { background: transparent; border: 2px solid var(--diff-chg); }
+.hx-tree-dot.hollow.added { border-color: var(--diff-add); }
+.hx-seq { color: var(--sfc); }

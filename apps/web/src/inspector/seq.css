@@ -22,7 +22,7 @@
 .seq-lab.grow { flex: 1; }
 
 .seq-chips { display: flex; flex-wrap: wrap; gap: 3px; }
-.seq-chip { padding: 1px 7px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--sheet); color: var(--ink-2); font-size: 11px; cursor: pointer; }
+.seq-chip { padding: 1px 7px; border: 1px solid var(--rule-strong); border-radius: var(--radius-pill); background: var(--sheet); color: var(--ink-2); font-size: 11px; cursor: pointer; }
 .seq-chip:hover { background: var(--hover); }
 .seq-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); font-weight: 600; }
 
@@ -33,15 +33,14 @@
 .cond-opt { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 6px; padding: 3px 6px; border-radius: 2px; cursor: pointer; white-space: nowrap; }
 .cond-opt.active { background: var(--accent-soft); }
 .cond-text { grid-column: 1 / -1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.cond-opt .pill { font-size: 10px; }
+.cond-opt .pill { font-size: 11px; }
 .cond-detail { grid-column: 2; font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
 .cond-opt > .cond-detail:nth-child(2) { grid-column: 1 / -1; }
 .cond-msg { margin-top: 3px; padding: 2px 6px; border-radius: var(--radius); font-size: 11px; line-height: 1.35; }
 .cond-msg.error { color: var(--error); background: var(--error-soft); }
 .cond-msg.info { color: var(--ink-2); background: var(--hover); }
-.cond-msg.ok { color: var(--ok, #1e8a46); }
+.cond-msg.ok { color: var(--ok); background: var(--ok-soft); }
 
-.seq-changes { margin: 6px 10px; padding: 6px 8px; border-left: 3px solid #d08700; background: var(--hover); font-size: 12px; }
-.seq-changes-h { font-weight: 600; margin-bottom: 2px; }
-.seq-change { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .insp-scroll.seq-fill { flex: 1 1 auto; }
+.seq-new td { padding-top: 4px; }
+.seq-new td.insp-muted { font-size: 11px; }

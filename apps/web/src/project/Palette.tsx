@@ -7,6 +7,7 @@ import { useActiveDiagram, useActiveSequence } from '../state/selectors';
 import { Icon } from './icons';
 import { addSfcElement, selectedSteps, setDraggingSfc, SFC_ELEMENTS, SFC_MIME, type SfcElement } from '../canvas/sfcops';
 import './project.css';
+import '../canvas/palette.css';
 
 export const CSD_TYPE_MIME = 'application/x-csd-type';
 const HEIGHT_KEY = 'csd-studio:palette-h';
@@ -24,6 +25,17 @@ function readHeight(): number | undefined {
 export function typeRefFor(def: BlockTypeDef, all: readonly BlockTypeDef[]): string {
   const libs = new Set(all.filter((t) => t.type === def.type).map((t) => t.library));
   return libs.size > 1 ? `${def.library}/${def.type}` : def.type;
+}
+
+/** Moves the keyboard focus to the drawing (after a click in the palette added something). */
+function focusCanvas() {
+  requestAnimationFrame(() => document.querySelector<HTMLElement>('.cv-host')?.focus({ preventScroll: true }));
+}
+
+/** Up / Down between the category headers and items of the palette. */
+function moveFocus(root: HTMLElement | null, from: HTMLElement, dir: 1 | -1) {
+  const all = [...(root?.querySelectorAll<HTMLElement>('.palette-list .pal-cat, .palette-list .pal-item') ?? [])];
+  all[all.indexOf(from) + dir]?.focus();
 }
 
 export function Palette() {
@@ -146,18 +158,24 @@ export function Palette() {
                   setDraggingSfc(el.kind);
                 }}
                 onDragEnd={() => setDraggingSfc(undefined)}
-                onClick={() => addSfc(el.kind)}
+                onClick={(e) => {
+                  addSfc(el.kind);
+                  if (e.detail > 0) focusCanvas();
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     addSfc(el.kind);
+                  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    moveFocus(rootRef.current, e.currentTarget, e.key === 'ArrowDown' ? 1 : -1);
                   }
                 }}
               >
                 <span className="pal-ico">
                   <SfcIcon kind={el.kind} />
                 </span>
-                <span className="pal-name">{el.label}</span>
+                <span className="pal-name ui">{el.label}</span>
                 <span className="pal-desc">{el.description}</span>
               </div>
             ))}
@@ -184,7 +202,7 @@ export function Palette() {
                 if (e.key === 'Enter' && groups.length === 1 && groups[0][1].length === 1) add(groups[0][1][0].ref);
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();
-                  rootRef.current?.querySelector<HTMLElement>('.pal-item')?.focus();
+                  rootRef.current?.querySelector<HTMLElement>('.palette-list .pal-cat, .palette-list .pal-item')?.focus();
                 }
               }}
             />
@@ -195,11 +213,26 @@ export function Palette() {
               const closed = !query && collapsed[cat];
               return (
                 <div key={cat} className="pal-group">
-                  <div className="pal-cat" onClick={() => setCollapsed((c) => ({ ...c, [cat]: !c[cat] }))}>
+                  <button
+                    type="button"
+                    className="pal-cat"
+                    aria-expanded={!closed}
+                    title={closed ? 'Show this category' : 'Hide this category'}
+                    onClick={() => setCollapsed((c) => ({ ...c, [cat]: !c[cat] }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        moveFocus(rootRef.current, e.currentTarget, e.key === 'ArrowDown' ? 1 : -1);
+                      } else if ((e.key === 'ArrowRight' && closed) || (e.key === 'ArrowLeft' && !closed)) {
+                        e.preventDefault();
+                        setCollapsed((c) => ({ ...c, [cat]: !closed }));
+                      }
+                    }}
+                  >
                     <span className="twisty">{Icon.chevron(!closed)}</span>
                     {cat}
                     <span className="tree-count">{items.length}</span>
-                  </div>
+                  </button>
                   {!closed &&
                     items.map(({ def, ref }) => (
                       <div
@@ -207,7 +240,7 @@ export function Palette() {
                         className="pal-item"
                         role="option"
                         aria-disabled={disabled}
-                        tabIndex={0}
+                        tabIndex={disabled ? -1 : 0}
                         draggable={!disabled}
                         data-type={ref}
                         title={`${def.library}/${def.type}@${def.version}${def.kind === 'composite' ? ' (composite)' : ''}\n${def.description}${disabled ? '' : '\n\nClick to add · drag onto the drawing'}`}
@@ -216,15 +249,21 @@ export function Palette() {
                           e.dataTransfer.setData('text/plain', ref);
                           e.dataTransfer.effectAllowed = 'copy';
                         }}
-                        onClick={() => add(ref)}
+                        onClick={(e) => {
+                          if (disabled) return;
+                          add(ref);
+                          if (e.detail > 0) focusCanvas();
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
                             add(ref);
                           } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                             e.preventDefault();
-                            const all = [...(rootRef.current?.querySelectorAll<HTMLElement>('.pal-item') ?? [])];
-                            all[all.indexOf(e.currentTarget) + (e.key === 'ArrowDown' ? 1 : -1)]?.focus();
+                            moveFocus(rootRef.current, e.currentTarget, e.key === 'ArrowDown' ? 1 : -1);
+                          } else if (e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            e.currentTarget.closest('.pal-group')?.querySelector<HTMLElement>('.pal-cat')?.focus();
                           }
                         }}
                       >

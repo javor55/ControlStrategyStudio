@@ -1,0 +1,10 @@
+/* Palette additions (base rules in project/project.css). */
+.palette button.pal-cat { width: 100%; border: 0; background: none; text-align: left; border-radius: 2px; }
+.palette button.pal-cat:hover { background: var(--hover); }
+.palette button.pal-cat:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.palette .pal-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--hover); }
+/* Sequence elements are commands, not type names: normal UI font. */
+.palette .pal-name.ui { font: 500 12.5px var(--f-ui); }
+/* No diagram open: the block list is visibly inactive. */
+.palette.disabled .pal-item { opacity: .5; cursor: not-allowed; }
+.palette.disabled .pal-item .pal-ico, .palette.disabled .pal-item .pal-name { color: var(--ink-3); }

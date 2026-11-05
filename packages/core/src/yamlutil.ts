@@ -1,4 +1,5 @@
 import { LineCounter, parseDocument, isMap, isSeq, isPair, isScalar, type Document, type Node } from 'yaml';
+import { OpError } from './errors';
 import type { Ext } from './types';
 
 export type YamlPath = (string | number)[];
@@ -34,10 +35,14 @@ export function parseYaml(text: string): ParsedYaml {
   return res;
 }
 
-/** Fresh, mutable document for editing. Throws on syntax errors. */
-export function parseForEdit(text: string): Document {
+/** Fresh, mutable document for editing. Throws `OpError` (code `syntax`) on syntax errors. */
+export function parseForEdit(text: string, file?: string): Document {
   const doc = parseDocument(text, { uniqueKeys: true });
-  if (doc.errors.length) throw new Error(`YAML syntax error: ${doc.errors[0].message.split('\n')[0]}`);
+  if (doc.errors.length) {
+    const e = doc.errors[0];
+    const line = e.linePos?.[0]?.line;
+    throw new OpError(`${file ? `${file} has a` : 'A'} YAML syntax error${line ? ` on line ${line}` : ''} — fix it in the text editor first: ${e.message.split('\n')[0]}`, 'syntax');
+  }
   return doc;
 }
 

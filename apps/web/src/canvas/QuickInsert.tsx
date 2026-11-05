@@ -1,20 +1,36 @@
-// Quick insert popup: a searchable list of block types shown at a point of
-// the drawing (double-click on paper, `/`, Ctrl+Space, or a wire dropped on
-// empty paper).
+// Quick insert: one searchable popup for every canvas, shown at a point of the
+// drawing (`/`, Ctrl+Space, double-click on empty paper, a wire dropped on
+// empty paper). FBD lists block types, a note and paste; SFC lists the step /
+// branch insert commands, a note and paste.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { BlockTypeDef } from '@csd/core';
+
+export interface QuickItem {
+  key: string;
+  label: string;
+  /** Monospace label (type names). */
+  mono?: boolean;
+  /** Right-hand column (category, shortcut). */
+  category?: string;
+  description?: string;
+  /** Extra search words. */
+  keywords?: string;
+  disabled?: boolean;
+  /** Pinned items stay at the end of the list and are not re-sorted by the query. */
+  pinned?: boolean;
+  run: () => void;
+}
 
 export interface QuickInsertProps {
   /** Position relative to the canvas area (px). */
   x: number;
   y: number;
   title?: string;
-  types: BlockTypeDef[];
-  onPick: (def: BlockTypeDef) => void;
+  placeholder?: string;
+  items: QuickItem[];
   onClose: () => void;
 }
 
-const MAX_ITEMS = 60;
+const MAX_ITEMS = 80;
 
 export function QuickInsert(props: QuickInsertProps) {
   const [q, setQ] = useState('');
@@ -25,20 +41,23 @@ export function QuickInsert(props: QuickInsertProps) {
 
   const items = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    const out: BlockTypeDef[] = [];
-    for (const t of props.types) {
-      const hay = `${t.type} ${t.library}/${t.type} ${t.category} ${t.description}`.toLowerCase();
-      if (words.every((w) => hay.includes(w))) out.push(t);
+    const main: QuickItem[] = [];
+    const pinned: QuickItem[] = [];
+    for (const t of props.items) {
+      const hay = `${t.label} ${t.category ?? ''} ${t.description ?? ''} ${t.keywords ?? ''}`.toLowerCase();
+      if (words.every((w) => hay.includes(w))) (t.pinned ? pinned : main).push(t);
     }
-    // Names starting with the query first.
+    // Labels starting with the query first.
     if (words.length) {
       const w = words[0];
-      out.sort((a, b) => Number(!a.type.toLowerCase().startsWith(w)) - Number(!b.type.toLowerCase().startsWith(w)));
+      main.sort((a, b) => Number(!a.label.toLowerCase().startsWith(w)) - Number(!b.label.toLowerCase().startsWith(w)));
     }
-    return out.slice(0, MAX_ITEMS);
-  }, [q, props.types]);
+    return [...main.slice(0, MAX_ITEMS), ...pinned];
+  }, [q, props.items]);
 
-  useEffect(() => setActive(0), [q]);
+  const enabled = (i: number) => !!items[i] && !items[i].disabled;
+  const firstEnabled = () => Math.max(0, items.findIndex((t) => !t.disabled));
+  useEffect(() => setActive(firstEnabled()), [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -49,31 +68,48 @@ export function QuickInsert(props: QuickInsertProps) {
     setPos({ left, top });
   }, [props.x, props.y]);
 
+  const closeRef = useRef(props.onClose);
+  closeRef.current = props.onClose;
   useEffect(() => {
-    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && props.onClose();
-    const t = setTimeout(() => document.addEventListener('mousedown', down));
+    const down = (e: Event) => !ref.current?.contains(e.target as Node) && closeRef.current();
+    const t = setTimeout(() => document.addEventListener('pointerdown', down, true));
     return () => {
       clearTimeout(t);
-      document.removeEventListener('mousedown', down);
+      document.removeEventListener('pointerdown', down, true);
     };
-  }, [props.onClose]);
+  }, []);
 
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
+  const move = (dir: 1 | -1, from = active) => {
+    for (let i = 1; i <= items.length; i++) {
+      const n = (from + dir * i + items.length) % items.length;
+      if (enabled(n)) return setActive(n);
+    }
+  };
+
+  const pick = (t: QuickItem | undefined) => {
+    if (!t || t.disabled) return;
+    props.onClose();
+    t.run();
+  };
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setActive((a) => Math.min(items.length - 1, a + 1));
+      move(1);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setActive((a) => Math.max(0, a - 1));
+      move(-1);
+    } else if (e.key === 'Home' && !q) {
+      e.preventDefault();
+      setActive(firstEnabled());
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      const t = items[active];
-      if (t) props.onPick(t);
-    } else if (e.key === 'Escape') {
+      pick(items[active]);
+    } else if (e.key === 'Escape' || e.key === 'Tab') {
       e.preventDefault();
       props.onClose();
     }
@@ -81,26 +117,41 @@ export function QuickInsert(props: QuickInsertProps) {
   };
 
   return (
-    <div className="cv-qi" ref={ref} style={pos} onPointerDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
+    <div className="cv-qi" ref={ref} style={pos} role="dialog" aria-label={props.title ?? 'Insert'} onPointerDown={(e) => e.stopPropagation()} onKeyDown={onKey}>
       {props.title && <div className="cv-qi-title">{props.title}</div>}
-      <input className="input" autoFocus placeholder="Search block types…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search block types" />
-      <div className="cv-qi-list" ref={listRef} role="listbox">
-        {items.length === 0 && <div className="cv-qi-empty">No matching block type</div>}
+      <input
+        className="input"
+        autoFocus
+        placeholder={props.placeholder ?? 'Search…'}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        aria-label={props.placeholder ?? 'Search'}
+        aria-controls="cv-qi-list"
+        aria-activedescendant={items[active] ? `cv-qi-${active}` : undefined}
+      />
+      <div className="cv-qi-list" id="cv-qi-list" ref={listRef} role="listbox">
+        {items.length === 0 && (
+          <div className="cv-qi-empty" role="status">
+            No matches for “{q}”
+          </div>
+        )}
         {items.map((t, i) => (
           <div
-            key={`${t.library}/${t.type}`}
+            key={t.key}
+            id={`cv-qi-${i}`}
             role="option"
             aria-selected={i === active}
-            className={`cv-qi-item${i === active ? ' active' : ''}`}
-            onMouseEnter={() => setActive(i)}
+            aria-disabled={t.disabled || undefined}
+            className={`cv-qi-item${i === active ? ' active' : ''}${t.disabled ? ' disabled' : ''}${t.pinned && (i === 0 || !items[i - 1].pinned) && i > 0 ? ' first-pinned' : ''}`}
+            onMouseEnter={() => !t.disabled && setActive(i)}
             onMouseDown={(e) => {
               e.preventDefault();
-              props.onPick(t);
+              pick(t);
             }}
             title={t.description}
           >
-            <span className="cv-qi-name">{t.type}</span>
-            <span className="cv-qi-cat">{t.category}</span>
+            <span className={`cv-qi-name${t.mono ? ' mono' : ''}`}>{t.label}</span>
+            {t.category && <span className="cv-qi-cat">{t.category}</span>}
             {t.description && <span className="cv-qi-desc">{t.description}</span>}
           </div>
         ))}

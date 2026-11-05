@@ -2,21 +2,28 @@
 // turns gestures into core sequence ops. Same feel as the FBD canvas: crisp
 // zoom, wheel scroll, pan, rubber band, sheet tabs, undo — see panzoom.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { diffSequence, extractSequenceFragment, layoutSequenceSheet, parseSequenceFragment, stepRenameMap, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
-import { DIFF_COLORS, renderSequenceDiffFor, renderSequenceSvg } from '@csd/render';
+import { diffSequence, extractFragment, extractSequenceFragment, layoutSequenceSheet, parseFragment, parseSequenceFragment, stepRenameMap, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
+import { renderSequenceDiffFor, renderSequenceSvg } from '@csd/render';
 import { store, useEditor } from '../state/store';
 import { diagsOf, useActiveSequence } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
 import { promptDialog } from '../ui/dialogs';
-import { useCompare, compareState, stopCompare } from '../history/compare';
+import { useCompare } from '../history/compare';
+import { CompareBanner } from '../history/CompareBanner';
 import { InlineEdit } from './InlineEdit';
-import { MOD, ShortcutHelp, type HelpGroup } from './ShortcutHelp';
+import { ShortcutHelp } from './ShortcutHelp';
+import { QuickInsert, type QuickItem } from './QuickInsert';
+import { useCanvasKeys } from './useCanvasKeys';
+import { CanvasHeader, CanvasToolbar, folderPath, SheetTabs, sheetLabel, sheetTabMenu, type ToolItem } from './CanvasChrome';
+import { CIcon } from './icons';
+import { mod } from './help';
+import { plural } from './plural';
 import { usePanZoom, type Bounds } from './panzoom';
 import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
 import { setCanvasPrefs, useCanvasPrefs } from '../settings/prefs';
 import {
   addSfcElement,
-  autoLayout,
+  resetLayout,
   findTransition,
   freshNames,
   insertStepInto,
@@ -25,6 +32,7 @@ import {
   draggingSfc,
   setDraggingSfc,
   SFC_ELEMENTS,
+  SFC_LABELS,
   moveStepsToSheet,
   nextStepName,
   openDescription,
@@ -51,49 +59,15 @@ type Gesture =
   | { kind: 'link'; from: string; sx: number; sy: number }
   | { kind: 'jump'; step: string; sheet?: number; sx: number; sy: number };
 
-type Inline = { kind: 'desc'; id: string } | { kind: 'rename'; id: string };
+type Inline = { kind: 'desc'; id: string } | { kind: 'rename'; id: string } | { kind: 'cond'; index: number } | { kind: 'note'; index: number };
 
-const HELP: HelpGroup[] = [
-  {
-    title: 'Mouse',
-    rows: [
-      ['Wheel · Shift + wheel', 'Scroll vertically · horizontally'],
-      [`${MOD} + wheel / pinch`, 'Zoom around the cursor'],
-      ['Middle drag · Space + drag', 'Pan'],
-      ['Click', 'Select a step, transition or note'],
-      ['Shift / Ctrl + click', 'Add / remove steps from the selection'],
-      ['Drag on empty paper', 'Rubber-band selection of steps'],
-      ['Drag a step / note', 'Move it (stores its position)'],
-      ['Drag from the bottom edge of a step', 'Draw a transition to another step (drop on empty paper: new step)'],
-      ['Double-click empty paper', 'Add a step there'],
-      ['Right-click empty paper', 'Add a step, a note or paste here'],
-      ['Double-click a transition', 'Insert a step into it'],
-      ['Double-click a step', 'Edit its description in place'],
-      ['Click a jump label', 'Go to the target step'],
-      ['Drag from the palette', 'Drop a step, transition or branch'],
-      ['Right-click', 'Context menu'],
-    ],
-  },
-  {
-    title: 'Keyboard',
-    rows: [
-      ['Delete / Backspace', 'Delete selection (several steps at once)'],
-      [`${MOD}+A`, 'Select all steps on the sheet'],
-      [`${MOD}+C · ${MOD}+X`, 'Copy · cut selected steps (with their actions and the transitions between them)'],
-      [`${MOD}+V`, 'Paste at the mouse (renamed S…, pasted steps selected)'],
-      [`${MOD}+D`, 'Duplicate selected steps'],
-      [`/ · ${MOD}+Space`, 'Quick insert at the mouse: step, transition, branch, jump, note'],
-      ['Enter', 'Edit the description of the selected step'],
-      [`${MOD}+Enter · ${MOD}+Shift+Enter`, 'Insert a step after · before the selected step (into the existing chain)'],
-      ['Arrows · Shift+arrows', 'Move selected steps 10 px · 50 px'],
-      [`${MOD}+Z · ${MOD}+Y`, 'Undo · redo'],
-      ['Escape', 'Clear selection / cancel drag'],
-      ['F', 'Fit drawing'],
-      [`${MOD}+0 · + / −`, 'Zoom 100 % · in / out'],
-      ['?', 'This help'],
-    ],
-  },
-];
+interface QuickState {
+  /** Canvas-area px and drawing coordinates of the insert point. */
+  sx: number;
+  sy: number;
+  dx: number;
+  dy: number;
+}
 
 export function SequenceCanvas() {
   const seq = useActiveSequence();
@@ -115,19 +89,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const [edgeHover, setEdgeHover] = useState<string | null>(null);
   const [inline, setInline] = useState<Inline | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [quick, setQuick] = useState<QuickState | null>(null);
   const [panning, setPanning] = useState(false);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const svgBoxRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
-  const space = useRef(false);
   /** Last pointer position over the canvas (client px), null when outside. */
   const mouse = useRef<{ x: number; y: number } | null>(null);
   const pasteCount = useRef<{ text: string; n: number }>({ text: '', n: 0 });
   const prefs = useCanvasPrefs();
-  const [showView, setShowView] = useState(false);
   const seqRef = useRef(seq);
   seqRef.current = seq;
 
@@ -218,7 +190,10 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     [layout, selection, errors, renderDiff, prefs.grid],
   );
 
-  const pz = usePanZoom({ host: hostRef, pane: paneRef, svgBox: svgBoxRef }, boundsRef, svg, () => setInline(null));
+  const pz = usePanZoom({ host: hostRef, pane: paneRef, svgBox: svgBoxRef }, boundsRef, svg, () => {
+    setInline(null);
+    setQuick(null);
+  });
   const { view, fit, zoomAt, toDrawing, toScreen } = pz;
 
   useLayoutEffect(() => {
@@ -242,21 +217,32 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   };
   const focusHost = () => hostRef.current?.focus({ preventScroll: true });
 
+  /** Deletes without asking (undo exists) and offers Undo in a toast. */
+  const removeTransition = (index: number) => {
+    const t = seq.transitions.find((x) => x.index === index);
+    if (dispatch({ op: 'removeTransition', file, index }, { label: 'Delete transition', select: null })) store().toastUndo(t ? `Deleted transition ${t.from.join('+')} → ${t.to.join('+')}` : 'Deleted transition');
+  };
+  const removeNote = (index: number) => {
+    if (dispatch({ op: 'removeNote', file, index }, { label: 'Delete note', select: null })) store().toastUndo('Deleted note');
+  };
   const removeSelection = () => {
     const sel = store().getState().selection;
     if (!sel) return;
-    if (sel.kind === 'block' || sel.kind === 'blocks') removeSteps(file, selectedSteps(sel));
-    else if (sel.kind === 'link') dispatch({ op: 'removeTransition', file, index: sel.index }, { label: 'Delete transition', select: null });
-    else if (sel.kind === 'note') dispatch({ op: 'removeNote', file, index: sel.index }, { label: 'Delete note', select: null });
+    if (sel.kind === 'block' || sel.kind === 'blocks') removeSteps(file, selectedOnSheet(), { toast: true });
+    else if (sel.kind === 'link') removeTransition(sel.index);
+    else if (sel.kind === 'note') removeNote(sel.index);
   };
 
   // --- clipboard -----------------------------------------------------------------------
   /** Fragment text of the selected steps on this sheet (with their drawn positions). */
   const selectionFragment = (): { text: string; ids: string[] } | null => {
     const ids = selectedOnSheet();
-    if (!ids.length) return null;
     const text = store().getState().files[file];
     if (typeof text !== 'string') return null;
+    const sel = store().getState().selection;
+    // A note travels as a diagram fragment (the same format as notes on the FBD canvas).
+    if (sel?.kind === 'note') return { text: extractFragment(text, [], [], { notes: [sel.index] }), ids: [] };
+    if (!ids.length) return null;
     const positions: Record<string, [number, number]> = {};
     for (const id of ids) {
       const g = geomOf(id);
@@ -269,7 +255,9 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const insertSteps = (text: string, place: { at?: [number, number]; offset?: [number, number] }, label: string): boolean => {
     const frag = parseSequenceFragment(text);
     if (!frag || !Object.keys(frag.steps).length) {
-      store().toast('The clipboard does not contain sequence steps');
+      const notes = parseFragment(text)?.notes ?? [];
+      if (notes.length) return insertNotes(notes, place, label);
+      store().toast('The clipboard does not contain steps or notes');
       return false;
     }
     let offset: [number, number] = place.offset ?? [PASTE_STEP, PASTE_STEP];
@@ -287,6 +275,22 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     const ids = Object.values(map);
     const n = ids.length;
     return dispatch({ op: 'insertSequenceFragment', file, fragment: text, offset, sheet }, { label: n === 1 ? `${label} step ${ids[0]}` : `${label} ${n} steps`, select: stepSelection(ids) });
+  };
+
+  /** Notes copied from a canvas (diagram fragment): added at `at`, or shifted by `offset`. */
+  const insertNotes = (notes: Record<string, unknown>[], place: { at?: [number, number]; offset?: [number, number] }, label: string): boolean => {
+    const posOf = (n: Record<string, unknown>): [number, number] | undefined => (Array.isArray(n.pos) && n.pos.length === 2 && typeof n.pos[0] === 'number' && typeof n.pos[1] === 'number' ? [n.pos[0], n.pos[1]] : undefined);
+    const ps = notes.map(posOf).filter((p): p is [number, number] => !!p);
+    const x0 = ps.length ? Math.min(...ps.map((p) => p[0])) : 0;
+    const y0 = ps.length ? Math.min(...ps.map((p) => p[1])) : 0;
+    const off = place.offset ?? [PASTE_STEP, PASTE_STEP];
+    const ops: Op[] = notes.map((n) => {
+      const p = posOf(n) ?? [x0, y0];
+      const pos: [number, number] = place.at ? [snap(place.at[0] + p[0] - x0), snap(place.at[1] + p[1] - y0)] : [snap(p[0] + off[0]), snap(p[1] + off[1])];
+      return { op: 'addNote', file, text: typeof n.text === 'string' ? n.text : 'Note', sheet, pos };
+    });
+    const first = seqRef.current.notes.length;
+    return dispatch(ops.length === 1 ? ops[0] : { op: 'batch', label, ops }, { label: `${label} ${plural(ops.length, 'note')}`, select: { kind: 'note', index: first } });
   };
 
   const mouseDrawing = (): [number, number] | undefined => (mouse.current ? toDrawing(mouse.current.x, mouse.current.y) : undefined);
@@ -309,9 +313,11 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     return true;
   };
 
-  const cutSelection = () => {
-    const ids = selectedOnSheet();
-    if (copySelection(true)) removeSteps(file, ids);
+  /** After a copy: removes the copied steps (or the selected note). */
+  const cutSelection = (ids: string[]) => {
+    const sel = store().getState().selection;
+    if (ids.length) removeSteps(file, ids, { toast: true, verb: 'Cut' });
+    else if (sel?.kind === 'note') removeNote(sel.index);
   };
 
   const duplicate = () => {
@@ -328,7 +334,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       e.preventDefault();
       rememberClipboard(f.text);
       pasteCount.current = { text: f.text, n: 0 };
-      if (cut) removeSteps(file, f.ids);
+      if (cut) cutSelection(f.ids);
     },
     paste: (e) => {
       const text = e.clipboardData?.getData('text/plain') ?? '';
@@ -352,37 +358,75 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   }, []);
 
   const clipItems = (): MenuEntry[] => [
-    { label: 'Copy', hint: 'Ctrl+C', onClick: () => copySelection(true) },
-    { label: 'Cut', hint: 'Ctrl+X', onClick: cutSelection },
-    { label: 'Duplicate', hint: 'Ctrl+D', onClick: duplicate },
+    { label: 'Copy', hint: mod('C'), onClick: () => copySelection(true) },
+    {
+      label: 'Cut',
+      hint: mod('X'),
+      onClick: () => {
+        const ids = selectedOnSheet();
+        if (copySelection(true)) cutSelection(ids);
+      },
+    },
+    { label: 'Duplicate', hint: mod('D'), onClick: duplicate },
   ];
 
   /** Step after: inserted into the chain, or a new transition when the step has no successor yet. */
   const insertOrAdd = (id: string) => addSfcElement(seq, 'transition', { from: id, sheet });
 
-  /** Quick insert at the mouse (or the centre of the view): "/" and Ctrl+Space. */
-  const openQuick = () => {
+  /** QuickInsert at a client point (default: the pointer, else the centre of the view): `/`, Ctrl+Space, double-click. */
+  const openQuick = (at?: { x: number; y: number }) => {
     const r = hostRef.current!.getBoundingClientRect();
-    const m = mouse.current ?? { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    const [x, y] = toDrawing(m.x, m.y);
-    const sel1 = singleSelected();
-    const from = sel1 && seq.steps.some((x) => x.id === sel1) ? sel1 : undefined;
-    const need = from ? undefined : 'Select a step first';
-    menu.open({ clientX: m.x, clientY: m.y }, [
-      { section: from ? `Insert (relative to ${from})` : 'Insert' },
-      { label: 'Step here', onClick: () => addStepAt(x, y) },
-      { label: 'Step after', hint: `${MOD}+Enter`, disabled: !from, description: need, onClick: () => from && insertOrAdd(from) },
-      { label: 'Step before', hint: `${MOD}+Shift+Enter`, disabled: !from, onClick: () => from && insertStepRelative(seq, 'before', from) },
-      { label: 'Parallel step beside', disabled: !from, onClick: () => from && insertStepRelative(seq, 'parallel', from) },
-      { label: 'Alternative step beside', disabled: !from, onClick: () => from && insertStepRelative(seq, 'alternative', from) },
-      { label: 'Parallel branch after', disabled: !from, onClick: () => addSfcElement(seq, 'parallel', { from, sheet }) },
-      { label: 'Alternative branch after', disabled: !from, onClick: () => addSfcElement(seq, 'alternative', { from, sheet }) },
-      { label: 'Jump to initial step', disabled: !from, onClick: () => addSfcElement(seq, 'jump', { from, sheet }) },
-      'separator',
-      { label: 'Note here', onClick: () => addNote([x, y]) },
-      { label: 'Paste here', hint: 'Ctrl+V', onClick: () => readClipboard().then((t) => insertSteps(t, { at: [x, y] }, 'Paste')) },
-    ]);
+    const m = at ?? mouse.current ?? { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const [dx, dy] = toDrawing(m.x, m.y);
+    setInline(null);
+    setQuick({ sx: m.x - r.left, sy: m.y - r.top, dx, dy });
   };
+
+  /** The selected transition, if exactly one is selected. */
+  const selectedTransition = (): number | undefined => {
+    const s = store().getState().selection;
+    return s?.kind === 'link' && seq.transitions.some((t) => t.index === s.index) ? s.index : undefined;
+  };
+
+  /**
+   * Insert commands (canonical names, see SFC_LABELS) relative to the selected step,
+   * or into the selected transition. Used by QuickInsert and the toolbar "Insert" menu.
+   */
+  const insertCommands = (): { key: string; label: string; hint?: string; disabled: boolean; why?: string; description: string; run: () => void }[] => {
+    const from = singleSelected();
+    const st = from && seq.steps.some((x) => x.id === from) ? from : undefined;
+    const ti = selectedTransition();
+    const needStep = st ? undefined : 'Select a step first';
+    const needT = ti !== undefined ? undefined : 'Select a transition first';
+    const hasOut = !!st && seq.transitions.some((t) => t.from.includes(st));
+    const desc = (k: string) => SFC_ELEMENTS.find((e) => e.kind === k)?.description ?? '';
+    return [
+      { key: 'after', label: SFC_LABELS.after, hint: mod('Enter'), disabled: !st, why: needStep, description: desc('transition'), run: () => st && insertOrAdd(st) },
+      { key: 'before', label: SFC_LABELS.before, hint: mod('Shift+Enter'), disabled: !st, why: needStep, description: desc('before'), run: () => st && insertStepRelative(seq, 'before', st) },
+      { key: 'par', label: SFC_LABELS.parallelStep, disabled: !st, why: needStep, description: desc('beside-parallel'), run: () => st && insertStepRelative(seq, 'parallel', st) },
+      { key: 'alt', label: SFC_LABELS.alternativeStep, disabled: !st, why: needStep, description: desc('beside-alternative'), run: () => st && insertStepRelative(seq, 'alternative', st) },
+      {
+        key: 'pbranch',
+        label: SFC_LABELS.parallelBranch,
+        disabled: !st || hasOut,
+        why: needStep ?? (hasOut ? `${st} already continues — use "${SFC_LABELS.parallelStep}" on the next step` : undefined),
+        description: desc('parallel'),
+        run: () => st && addSfcElement(seq, 'parallel', { from: st, sheet }),
+      },
+      { key: 'abranch', label: SFC_LABELS.alternativeBranch, disabled: !st, why: needStep, description: desc('alternative'), run: () => st && addSfcElement(seq, 'alternative', { from: st, sheet }) },
+      { key: 'jump', label: SFC_LABELS.jump, disabled: !st, why: needStep, description: desc('jump'), run: () => st && addSfcElement(seq, 'jump', { from: st, sheet }) },
+      { key: 'tstep', label: SFC_LABELS.intoTransition, disabled: ti === undefined, why: needT, description: 'Split the selected transition with a new step', run: () => ti !== undefined && insertIntoTransition(seq, 'step', ti) },
+      { key: 'tpar', label: SFC_LABELS.parallelIntoTransition, disabled: ti === undefined, why: needT, description: 'Split the selected transition with two steps that run simultaneously', run: () => ti !== undefined && insertIntoTransition(seq, 'parallel', ti) },
+      { key: 'talt', label: SFC_LABELS.alternativeIntoTransition, disabled: ti === undefined, why: needT, description: 'Split the selected transition with two alternative paths', run: () => ti !== undefined && insertIntoTransition(seq, 'alternative', ti) },
+    ];
+  };
+
+  const quickItems = (q: QuickState): QuickItem[] => [
+    { key: 'step', label: 'Add step here', category: 'Step', description: 'A new step at this point', run: () => addStepAt(q.dx, q.dy) },
+    ...insertCommands().map((c): QuickItem => ({ key: c.key, label: c.label, category: c.hint, description: c.why ?? c.description, disabled: c.disabled, run: c.run })),
+    { key: 'note', label: 'Add note here', category: 'Note', keywords: 'comment text', pinned: true, run: () => addNote([q.dx, q.dy]) },
+    { key: 'paste', label: 'Paste here', category: mod('V'), keywords: 'clipboard', pinned: true, run: () => void readClipboard().then((t) => insertSteps(t, { at: [q.dx, q.dy] }, 'Paste')) },
+  ];
 
   const moveSteps = (positions: Record<string, [number, number]>, label: string, mergeKey?: string) => {
     const ops: Op[] = Object.entries(positions).map(([id, pos]) => ({ op: 'moveStep', file, id, pos }));
@@ -449,35 +493,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     if (g) pz.centerOn(g.x + g.w / 2, g.y + g.h / 2);
   };
 
-  const focusCondition = (index: number) => {
-    store().select({ kind: 'link', index });
-    // The inspector shows the transition; focus its condition editor.
-    setTimeout(() => {
-      const el = document.querySelector<HTMLInputElement>('[data-testid="seq-condition"]');
-      if (el && el.offsetParent) {
-        el.focus();
-        el.select();
-        return;
-      }
-      const t = seqRef.current.transitions.find((x) => x.index === index);
-      void promptDialog({ title: 'Transition condition', label: 'Condition', value: t?.condition ?? '' }).then((v) => {
-        if (v !== null) store().dispatch({ op: 'setTransition', file, index, condition: v.trim() }, { label: 'Edit condition' });
-      });
-    }, 30);
-  };
-
   // --- pointer --------------------------------------------------------------------------
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const host = hostRef.current!;
     host.focus({ preventScroll: true });
-    setShowView(false);
     if (e.button === 2) return;
     const el = e.target as Element;
     const s = store();
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     const [x, y] = toDrawing(e.clientX, e.clientY);
     setInline(null);
-    if (e.button === 1 || (e.button === 0 && space.current)) {
+    if (e.button === 1 || (e.button === 0 && keys.space.current)) {
       e.preventDefault();
       const v = view.current;
       gesture.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y, moved: false };
@@ -655,11 +681,18 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   };
 
   const onDoubleClick = (e: React.MouseEvent) => {
-    if (space.current) return;
+    if (keys.space.current) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
     if (!el || !hostRef.current?.contains(el)) return;
-    const [x, y] = toDrawing(e.clientX, e.clientY);
-    if (el.closest('[data-jump], [data-note]')) return;
+    const [, y] = toDrawing(e.clientX, e.clientY);
+    if (el.closest('[data-jump]')) return;
+    const noteEl = el.closest('[data-note]');
+    if (noteEl) {
+      const index = Number(noteEl.getAttribute('data-note'));
+      store().select({ kind: 'note', index });
+      setInline({ kind: 'note', index });
+      return;
+    }
     const stepEl = el.closest('[data-step], [data-action]');
     if (stepEl) {
       const id = stepEl.getAttribute('data-step') ?? stepEl.getAttribute('data-action')!.replace(/:\d+$/, '');
@@ -676,97 +709,59 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       insertStepInto(seq, Number(tEl.getAttribute('data-transition')));
       return;
     }
-    addStepAt(x, y);
+    openQuick({ x: e.clientX, y: e.clientY });
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.target !== e.currentTarget) return;
-    const mod = e.ctrlKey || e.metaKey;
-    const key = e.key;
-    const lower = key.toLowerCase();
-    if (mod && ['z', 'y', 'c', 'x', 'v', 's'].includes(lower)) return;
-    const done = () => e.preventDefault();
-    if (key === ' ' || e.code === 'Space') {
-      done();
-      if (mod) openQuick();
-      else if (!space.current) {
-        space.current = true;
-        setSpaceHeld(true);
-      }
-      return;
-    }
-    if (mod && lower === 'a') {
-      done();
-      store().select(stepSelection(onSheetIds()));
-    } else if (mod && lower === 'd') {
-      done();
-      duplicate();
-    } else if (key === '/') {
-      done();
-      openQuick();
-    } else if (mod && key === '0') {
-      done();
-      zoomAt(1);
-    } else if (key === '+' || key === '=') {
-      done();
-      zoomAt(view.current.k * 1.25);
-    } else if (key === '-' || key === '_') {
-      done();
-      zoomAt(view.current.k / 1.25);
-    } else if (key === '?') {
-      done();
-      if (!showHelp) setShowHelp(true);
-    } else if (!mod && lower === 'f') {
-      done();
-      fit();
-    } else if (key.startsWith('Arrow') && !mod) {
-      done();
-      const d = e.shiftKey ? 50 : 10;
-      nudge(key === 'ArrowLeft' ? -d : key === 'ArrowRight' ? d : 0, key === 'ArrowUp' ? -d : key === 'ArrowDown' ? d : 0);
-    } else if (key === 'Delete' || key === 'Backspace') {
-      done();
-      removeSelection();
-    } else if (key === 'Enter' && mod && singleSelected()) {
-      done();
-      const id = singleSelected()!;
-      if (e.shiftKey) insertStepRelative(seq, 'before', id);
-      else insertOrAdd(id);
-    } else if (key === 'Enter' && singleSelected()) {
-      done();
-      setInline({ kind: 'desc', id: singleSelected()! });
-    } else if (key === 'Escape') {
+  // --- keyboard (same keys on every canvas: useCanvasKeys) ---------------------------------
+  const keys = useCanvasKeys({
+    selectAll: () => store().select(stepSelection(onSheetIds())),
+    duplicate,
+    deleteSelection: removeSelection,
+    nudge,
+    fit,
+    zoomBy: (f) => zoomAt(view.current.k * f),
+    zoomTo: (k) => zoomAt(k),
+    quickInsert: () => openQuick(),
+    toggleHelp: () => setShowHelp((h) => !h),
+    rename: () => {
+      const id = singleSelected();
+      if (id && geomOf(id)) setInline({ kind: 'rename', id });
+    },
+    editText: () => {
+      const sel = store().getState().selection;
+      const id = singleSelected();
+      if (id && geomOf(id)) setInline({ kind: 'desc', id });
+      else if (sel?.kind === 'link') setInline({ kind: 'cond', index: sel.index });
+      else if (sel?.kind === 'note') setInline({ kind: 'note', index: sel.index });
+    },
+    insertAfter: () => {
+      const id = singleSelected();
+      if (id) insertOrAdd(id);
+    },
+    insertBefore: () => {
+      const id = singleSelected();
+      if (id) insertStepRelative(seq, 'before', id);
+    },
+    escape: () => {
       if (gesture.current) cancelGesture();
       else if (showHelp) setShowHelp(false);
-      else if (inline) setInline(null);
-      else store().select(null);
-    }
-  };
+      else if (quick || inline) {
+        setQuick(null);
+        setInline(null);
+      } else return false;
+      return true;
+    },
+    clearSelection: () => store().select(null),
+  });
 
-  const onKeyUp = (e: React.KeyboardEvent) => {
-    if (e.key === ' ' || e.code === 'Space') {
-      space.current = false;
-      setSpaceHeld(false);
-    }
-  };
-
-  // --- context menu ------------------------------------------------------------------------
-  const sheetItems = (ids: string[]): MenuEntry[] => {
+  // --- context menus (same structure on every canvas) ----------------------------------------
+  // Section header naming the target; Open → Insert → Edit → Clipboard → Move to ▸ → Delete.
+  const moveToItems = (ids: string[]): MenuEntry[] => {
     const others = seq.sheets.filter((x) => x.id !== sheet);
     if (!others.length) return [];
-    return [{ section: 'Move to sheet' }, ...others.map((o) => ({ label: sheetLabel(o), onClick: () => moveStepsToSheet(seq, ids, o.id) })), 'separator'];
+    return [{ label: 'Move to sheet', submenu: others.map((o) => ({ label: sheetLabel(o), onClick: () => moveStepsToSheet(seq, ids, o.id) })) }, 'separator'];
   };
-
-  const renameStep = async (id: string) => {
-    const to = await promptDialog({
-      title: `Rename step ${id}`,
-      message: 'Transitions, conditions and references in strategies are updated too.',
-      label: 'New name',
-      value: id,
-      okLabel: 'Rename',
-      validate: (v) => (!v ? 'Enter a name' : v !== id && seqRef.current.steps.some((s) => s.id === v) ? 'A step with this name exists' : undefined),
-    });
-    if (to && to !== id) dispatch({ op: 'renameStep', file, from: id, to }, { label: `Rename step ${id} → ${to}`, select: { kind: 'block', id: to } });
-  };
+  const deleteItem = (run: () => void): MenuEntry => ({ label: 'Delete', hint: 'Del', danger: true, onClick: run });
 
   const addAction = (id: string) => {
     const st = seq.steps.find((x) => x.id === id);
@@ -774,9 +769,22 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     setTimeout(() => document.getElementById(`action-text-${st?.actions.length ?? 0}`)?.focus(), 40);
   };
 
+  /** Empty-paper menu (same on every canvas). */
+  const paperItems = (x: number, y: number, at: { x: number; y: number }): MenuEntry[] => [
+    { label: 'Add step here', onClick: () => addStepAt(x, y) },
+    { label: 'Add note here', onClick: () => addNote([x, y]) },
+    { label: 'Insert…', hint: '/', onClick: () => openQuick(at) },
+    'separator',
+    { label: 'Paste here', hint: mod('V'), onClick: () => void readClipboard().then((t) => insertSteps(t, { at: [x, y] }, 'Paste')) },
+    'separator',
+    { label: 'Select all', hint: mod('A'), onClick: () => store().select(stepSelection(onSheetIds())) },
+    { label: 'Reset layout', title: 'Remove the hand-placed step positions on this sheet', onClick: () => resetLayout(seq, sheet) },
+  ];
+
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     setInline(null);
+    setQuick(null);
     const el = e.target as Element;
     const s = store();
     const stepEl = el.closest('[data-step], [data-action]');
@@ -788,54 +796,62 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       if (!st) return;
       const cur = selectedSteps(s.getState().selection);
       if (cur.length > 1 && cur.includes(id)) {
-        menu.open(e, [{ section: `${cur.length} steps` }, ...clipItems(), 'separator', ...sheetItems(cur), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, cur) }]);
+        menu.open(e, [{ section: plural(cur.length, 'step') }, ...clipItems(), 'separator', ...moveToItems(cur), deleteItem(() => removeSteps(file, cur, { toast: true }))]);
         return;
       }
       s.select({ kind: 'block', id });
-      const outgoing = seq.transitions.filter((t) => t.from.length === 1 && t.from[0] === id);
+      const hasOut = seq.transitions.some((t) => t.from.includes(id));
       const items: MenuEntry[] = [
         { section: `Step ${id}` },
-        { label: 'Set as initial step', disabled: st.initial, onClick: () => dispatch({ op: 'setStepField', file, id, field: 'initial', value: true }, { label: `Initial step ${id}` }) },
-        { label: 'Insert step after', hint: `${MOD}+Enter`, onClick: () => insertOrAdd(id) },
-        { label: 'Insert step before', hint: `${MOD}+Shift+Enter`, onClick: () => insertStepRelative(seq, 'before', id) },
-        { label: 'Add parallel step beside', onClick: () => insertStepRelative(seq, 'parallel', id) },
-        { label: 'Add alternative step beside', onClick: () => insertStepRelative(seq, 'alternative', id) },
-        { label: 'Start parallel branch after', disabled: outgoing.length > 0, description: outgoing.length ? 'The step already continues — use "parallel step beside" on the next step' : undefined, onClick: () => addSfcElement(seq, 'parallel', { from: id, sheet }) },
-        { label: 'Start alternative branch after', onClick: () => addSfcElement(seq, 'alternative', { from: id, sheet }) },
-        { label: 'Add action', onClick: () => addAction(id) },
+        { label: SFC_LABELS.after, hint: mod('Enter'), onClick: () => insertOrAdd(id) },
+        { label: SFC_LABELS.before, hint: mod('Shift+Enter'), onClick: () => insertStepRelative(seq, 'before', id) },
+        { label: SFC_LABELS.parallelStep, onClick: () => insertStepRelative(seq, 'parallel', id) },
+        { label: SFC_LABELS.alternativeStep, onClick: () => insertStepRelative(seq, 'alternative', id) },
+        {
+          label: SFC_LABELS.parallelBranch,
+          disabled: hasOut,
+          description: hasOut ? `${id} already continues — use "${SFC_LABELS.parallelStep}" on the next step` : undefined,
+          onClick: () => addSfcElement(seq, 'parallel', { from: id, sheet }),
+        },
+        { label: SFC_LABELS.alternativeBranch, onClick: () => addSfcElement(seq, 'alternative', { from: id, sheet }) },
+        { label: SFC_LABELS.jump, disabled: st.initial, onClick: () => addSfcElement(seq, 'jump', { from: id, sheet }) },
         'separator',
+        { label: 'Rename', hint: 'F2', onClick: () => setInline({ kind: 'rename', id }) },
         { label: 'Edit description', hint: 'Enter', onClick: () => setInline({ kind: 'desc', id }) },
-        { label: 'Rename…', onClick: () => renameStep(id) },
+        { label: 'Add action', onClick: () => addAction(id) },
+        { label: 'Set as initial step', disabled: st.initial, onClick: () => dispatch({ op: 'setStepField', file, id, field: 'initial', value: true }, { label: `Initial step ${id}` }) },
       ];
       if (st.pos) items.push({ label: 'Unpin position', onClick: () => dispatch({ op: 'moveStep', file, id, pos: null }, { label: `Unpin ${id}` }) });
-      items.push('separator', ...clipItems(), 'separator', ...sheetItems([id]), { label: 'Delete', hint: 'Del', danger: true, onClick: () => removeSteps(file, [id]) });
+      items.push('separator', ...clipItems(), 'separator', ...moveToItems([id]), deleteItem(() => removeSteps(file, [id], { toast: true })));
       menu.open(e, items);
     } else if (tEl) {
       const index = Number(tEl.getAttribute('data-transition'));
       const t = seq.transitions.find((x) => x.index === index);
       s.select({ kind: 'link', index });
       menu.open(e, [
-        { section: t ? `${t.from.join('+')} → ${t.to.join('+')}` : 'Transition' },
-        { label: 'Edit condition', onClick: () => focusCondition(index) },
-        { label: 'Insert step', onClick: () => insertStepInto(seq, index) },
+        { section: t ? `Transition ${t.from.join('+')} → ${t.to.join('+')}` : 'Transition' },
+        { label: SFC_LABELS.intoTransition, onClick: () => insertIntoTransition(seq, 'step', index) },
+        { label: SFC_LABELS.parallelIntoTransition, onClick: () => insertIntoTransition(seq, 'parallel', index) },
+        { label: SFC_LABELS.alternativeIntoTransition, onClick: () => insertIntoTransition(seq, 'alternative', index) },
         'separator',
-        { label: 'Delete', hint: 'Del', danger: true, onClick: () => dispatch({ op: 'removeTransition', file, index }, { label: 'Delete transition', select: null }) },
+        { label: 'Edit condition', hint: 'Enter', onClick: () => setInline({ kind: 'cond', index }) },
+        'separator',
+        deleteItem(() => removeTransition(index)),
       ]);
     } else if (noteEl) {
       const index = Number(noteEl.getAttribute('data-note'));
       s.select({ kind: 'note', index });
-      menu.open(e, [{ label: 'Delete', hint: 'Del', danger: true, onClick: () => dispatch({ op: 'removeNote', file, index }, { label: 'Delete note', select: null }) }]);
+      menu.open(e, [
+        { section: 'Note' },
+        { label: 'Edit text', hint: 'Enter', onClick: () => setInline({ kind: 'note', index }) },
+        'separator',
+        { label: 'Copy', hint: mod('C'), onClick: () => copySelection(true) },
+        'separator',
+        deleteItem(() => removeNote(index)),
+      ]);
     } else if (!el.closest('[data-jump]')) {
       const [x, y] = toDrawing(e.clientX, e.clientY);
-      menu.open(e, [
-        { label: 'Add step here', onClick: () => addStepAt(x, y) },
-        { label: 'Add note here', onClick: () => addNote([x, y]) },
-        { label: 'Insert…', hint: '/', onClick: () => openQuick() },
-        { label: 'Paste here', hint: 'Ctrl+V', onClick: () => readClipboard().then((t) => insertSteps(t, { at: [x, y] }, 'Paste')) },
-        'separator',
-        { label: 'Select all steps', hint: 'Ctrl+A', onClick: () => s.select(stepSelection(onSheetIds())) },
-        { label: 'Auto layout', onClick: () => autoLayout(seq) },
-      ]);
+      menu.open(e, paperItems(x, y, { x: e.clientX, y: e.clientY }));
     }
   };
 
@@ -865,17 +881,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       const rowRight = Math.max(...L.steps.filter((st) => Math.abs(st.y - g.y) < g.h).map((st) => (st.actionBox ? st.actionBox.x + st.actionBox.w : st.x + st.w)));
       const besideBox = { kind: 'box' as const, ghost: true, x: rowRight + 30, y: g.y, w: g.w, h: g.h };
       const hasOut = seq.transitions.some((t) => t.from.includes(id));
-      if (kind === 'jump') return { key: `jump:${id}`, label: `Jump from ${id} to the initial step`, shape: { kind: 'box', x: g.x, y: g.y, w: g.w, h: g.h }, run: () => addSfcElement(seq, 'jump', { from: id, sheet }) };
+      if (kind === 'jump') return { key: `jump:${id}`, label: `${SFC_LABELS.jump} (from ${id})`, shape: { kind: 'box', x: g.x, y: g.y, w: g.w, h: g.h }, run: () => addSfcElement(seq, 'jump', { from: id, sheet }) };
       if (kind === 'before' || ((kind === 'step' || kind === 'transition') && rel < 0.4))
-        return { key: `before:${id}`, label: `Insert step before ${id}`, shape: above, run: () => insertStepRelative(seq, 'before', id) };
+        return { key: `before:${id}`, label: `${SFC_LABELS.before} ${id}`, shape: above, run: () => insertStepRelative(seq, 'before', id) };
       if (kind === 'step' || kind === 'transition')
-        return { key: `after:${id}`, label: `Insert step after ${id}`, shape: below, run: () => addSfcElement(seq, 'transition', { from: id, sheet }) };
+        return { key: `after:${id}`, label: `${SFC_LABELS.after} ${id}`, shape: below, run: () => addSfcElement(seq, 'transition', { from: id, sheet }) };
       const par = kind === 'parallel' || kind === 'beside-parallel';
       if ((kind === 'parallel' || kind === 'alternative') && !hasOut && rel > 0.6)
-        return { key: `branch:${kind}:${id}`, label: `${par ? 'Parallel' : 'Alternative'} branch after ${id}`, shape: below, run: () => addSfcElement(seq, kind, { from: id, sheet }) };
+        return { key: `branch:${kind}:${id}`, label: `${par ? SFC_LABELS.parallelBranch : SFC_LABELS.alternativeBranch} ${id}`, shape: below, run: () => addSfcElement(seq, kind, { from: id, sheet }) };
       return {
         key: `beside:${kind}:${id}`,
-        label: `${par ? 'Parallel' : 'Alternative'} step beside ${id}`,
+        label: `${par ? SFC_LABELS.parallelStep : SFC_LABELS.alternativeStep} next to ${id}`,
         shape: besideBox,
         run: () => insertStepRelative(seq, par ? 'parallel' : 'alternative', id),
       };
@@ -892,17 +908,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       const name = `${t.transition.from.join('+')} → ${t.transition.to.join('+')}`;
       const shape = { kind: 'line' as const, x1: t.x - 40, x2: t.x + 40, y: t.y };
       if (kind === 'step' || kind === 'transition' || kind === 'before')
-        return { key: `t:step:${t.index}`, label: `Insert step into ${name}`, shape, run: () => insertIntoTransition(seq, 'step', t.index) };
+        return { key: `t:step:${t.index}`, label: `${SFC_LABELS.intoTransition} ${name}`, shape, run: () => insertIntoTransition(seq, 'step', t.index) };
       if (kind === 'parallel' || kind === 'alternative' || kind === 'beside-parallel' || kind === 'beside-alternative') {
         const k = kind.endsWith('parallel') ? 'parallel' : 'alternative';
-        return { key: `t:${k}:${t.index}`, label: `Insert ${k} branch into ${name}`, shape, run: () => insertIntoTransition(seq, k, t.index) };
+        return { key: `t:${k}:${t.index}`, label: `${k === 'parallel' ? SFC_LABELS.parallelIntoTransition : SFC_LABELS.alternativeIntoTransition} ${name}`, shape, run: () => insertIntoTransition(seq, k, t.index) };
       }
       return undefined;
     }
-    if (kind === 'step') return { key: 'paper', label: 'New step here', shape: { kind: 'box', ghost: true, x: x - 66, y: y - 23, w: 132, h: 46 }, run: () => addStepAt(x, y) };
+    if (kind === 'step') return { key: 'paper', label: `${SFC_LABELS.step} here`, shape: { kind: 'box', ghost: true, x: x - 66, y: y - 23, w: 132, h: 46 }, run: () => addStepAt(x, y) };
     const sel1 = singleSelected();
     if (sel1 && seq.steps.some((st) => st.id === sel1))
-      return { key: `sel:${kind}`, label: `${SFC_ELEMENTS.find((e) => e.kind === kind)?.label ?? kind} — at the selected step ${sel1}`, shape: { kind: 'box', x, y, w: 0, h: 0 }, run: () => addSfcElement(seq, kind, { from: sel1, sheet }) };
+      return { key: `sel:${kind}`, label: `${SFC_ELEMENTS.find((e) => e.kind === kind)?.label ?? kind} (selected step ${sel1})`, shape: { kind: 'box', x, y, w: 0, h: 0 }, run: () => addSfcElement(seq, kind, { from: sel1, sheet }) };
     return undefined;
   };
   const [dropHint, setDropHint] = useState<(DropHint & { mx: number; my: number }) | null>(null);
@@ -980,18 +996,78 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       pos = [x - 100, y - 20];
     }
     dispatch({ op: 'addNote', file, text: 'Note', sheet, pos: [snap(pos[0]), snap(pos[1])] }, { label: 'Add note', select: { kind: 'note', index: seq.notes.length } });
+    focusHost();
   };
   const sel = singleSelected();
+  const pinAll = () => {
+    const steps = layout.steps;
+    if (dispatch({ op: 'pinAll', file, positions: Object.fromEntries(steps.map((g) => [g.id, [g.x, g.y] as [number, number]])) }, { label: 'Pin all positions' }))
+      store().toastUndo(`Pinned ${plural(steps.length, 'step')} on sheet ${sheet}`);
+  };
 
   // --- inline edit -------------------------------------------------------------------------------
   const inlineEl = (() => {
     if (!inline) return null;
-    const g = geomOf(inline.id);
-    const st = seq.steps.find((x) => x.id === inline.id);
-    if (!g || !st) return null;
     const k = view.current.k;
     const font = Math.max(11, Math.min(18, 11 * k));
     const h = Math.max(22, Math.min(32, 18 * k));
+    const close = () => {
+      setInline(null);
+      focusHost();
+    };
+    if (inline.kind === 'cond') {
+      const tg = layout.transitions.find((t) => t.index === inline.index);
+      const t = seq.transitions.find((x) => x.index === inline.index);
+      if (!tg || !t) return null;
+      const [sx, sy] = toScreen(tg.x + 12, tg.y);
+      return (
+        <InlineEdit
+          key={`cond:${inline.index}`}
+          x={sx}
+          y={sy - h / 2}
+          w={Math.max(240, 220 * k)}
+          h={h}
+          fontSize={font}
+          value={t.condition ?? ''}
+          mono
+          placeholder="Condition, e.g. LT100 > 80"
+          label={`Condition of ${t.from.join('+')} → ${t.to.join('+')}`}
+          onCommit={(v) => {
+            close();
+            dispatch({ op: 'setTransition', file, index: t.index, condition: v.trim() }, { label: 'Edit condition' });
+          }}
+          onCancel={close}
+        />
+      );
+    }
+    if (inline.kind === 'note') {
+      const n = layout.notes.find((x) => x.index === inline.index);
+      const note = seq.notes.find((x) => x.index === inline.index);
+      if (!n || !note) return null;
+      const [sx, sy] = toScreen(n.x, n.y);
+      return (
+        <InlineEdit
+          key={`note:${inline.index}`}
+          x={sx}
+          y={sy}
+          w={Math.max(200, n.w * k)}
+          h={Math.max(60, n.h * k)}
+          fontSize={font}
+          value={note.text}
+          multiline
+          label="Note text"
+          onCommit={(v) => {
+            close();
+            if (!v.trim()) removeNote(note.index);
+            else dispatch({ op: 'setNote', file, index: note.index, text: v }, { label: 'Edit note' });
+          }}
+          onCancel={close}
+        />
+      );
+    }
+    const g = geomOf(inline.id);
+    const st = seq.steps.find((x) => x.id === inline.id);
+    if (!g || !st) return null;
     const [sx, sy] = toScreen(g.x, g.y + g.h / 2);
     const desc = inline.kind === 'desc';
     return (
@@ -1004,17 +1080,18 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
         fontSize={font}
         value={desc ? st.description ?? '' : st.id}
         mono={!desc}
+        placeholder={desc ? 'Short description (drawn in the step)' : undefined}
         label={desc ? `Description of ${st.id}` : `Name of ${st.id}`}
         onCommit={(v) => {
-          setInline(null);
-          focusHost();
-          if (desc) dispatch({ op: 'setStepField', file, id: st.id, field: 'description', value: v.trim() || undefined }, { label: `Describe ${st.id}` });
-          else if (v.trim() && v.trim() !== st.id) dispatch({ op: 'renameStep', file, from: st.id, to: v.trim() }, { label: `Rename step ${st.id}`, select: { kind: 'block', id: v.trim() } });
+          close();
+          const to = v.trim();
+          if (desc) dispatch({ op: 'setStepField', file, id: st.id, field: 'description', value: to || undefined }, { label: `Describe ${st.id}` });
+          else if (to && to !== st.id) {
+            if (seqRef.current.steps.some((x) => x.id === to)) store().toast(`A step named ${to} exists`, 'error');
+            else dispatch({ op: 'renameStep', file, from: st.id, to }, { label: `Rename step ${st.id} → ${to}`, select: { kind: 'block', id: to } });
+          }
         }}
-        onCancel={() => {
-          setInline(null);
-          focusHost();
-        }}
+        onCancel={close}
       />
     );
   })();
@@ -1041,14 +1118,51 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   });
   const targetBox = link?.target ? geomOf(link.target) : undefined;
 
+  // --- toolbar (docked; order: zoom | View | Insert | Arrange | Add note | ?) ---------------
+  const toolItems: ToolItem[] = [
+    {
+      kind: 'menu',
+      key: 'view',
+      label: 'View',
+      title: 'What the drawing shows (also in Settings → Editor)',
+      sep: true,
+      items: [{ label: 'Grid', checked: prefs.grid, onClick: () => setCanvasPrefs({ grid: !prefs.grid }) }],
+    },
+    { kind: 'button', key: 'add', label: SFC_LABELS.step, icon: CIcon.step, title: 'Add a step in the centre of the view (double-click the paper to place it)', sep: true, onClick: () => addSfcElement(seq, 'step', { sheet }) },
+    {
+      kind: 'menu',
+      key: 'insert',
+      label: 'Insert',
+      title: 'Insert steps and branches at the selected step or transition',
+      items: insertCommands().flatMap((c): MenuEntry[] => [
+        ...(c.key === 'tstep' ? (['separator'] as MenuEntry[]) : []),
+        { label: c.label, hint: c.hint, disabled: c.disabled, description: c.disabled ? c.why : undefined, title: c.description, onClick: c.run },
+      ]),
+    },
+    {
+      kind: 'menu',
+      key: 'arrange',
+      label: 'Arrange',
+      sep: true,
+      items: [
+        { label: 'Pin all', title: 'Store the current position of every step on this sheet', onClick: pinAll },
+        { label: 'Reset layout', title: 'Remove the hand-placed step positions on this sheet', onClick: () => resetLayout(seq, sheet) },
+        'separator',
+        { label: 'Centre selected step', disabled: !sel, description: sel ? undefined : 'Select a step first', onClick: () => sel && navigateJump(sel) },
+      ],
+    },
+    { kind: 'button', key: 'note', label: 'Add note', icon: CIcon.note, title: 'Add a note in the centre of the view', sep: true, onClick: () => addNote() },
+  ];
+
   return (
     <div className="cv seq-cv">
-      <SequenceHeader seq={seq} />
-      {compare.target && <SeqCompareBanner diff={seqDiff} />}
+      <CanvasHeader kind="sfc" path={folderPath(seq.folder)} name={seq.name} title={seq.title} />
+      <CanvasToolbar zoomPct={pz.zoomPct} fit={fit} zoomBy={(f) => zoomAt(view.current.k * f)} zoomTo={(k) => zoomAt(k)} items={toolItems} helpOpen={showHelp} toggleHelp={() => setShowHelp((h) => !h)} focusCanvas={focusHost} />
+      {compare.target && <CompareBanner kind="sequence" diff={seqDiff} />}
       <div className="cv-main">
         <div
           ref={hostRef}
-          className={`cv-host${spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}${edgeHover || link ? ' wiring' : ''}`}
+          className={`cv-host${keys.spaceHeld ? ' space' : ''}${panning ? ' panning' : ''}${edgeHover || link ? ' wiring' : ''}`}
           tabIndex={0}
           aria-label="Sequence canvas"
           data-testid="seq-canvas"
@@ -1061,12 +1175,9 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
             if (edgeHover && !gesture.current) setEdgeHover(null);
           }}
           onDoubleClick={onDoubleClick}
-          onKeyDown={onKeyDown}
-          onKeyUp={onKeyUp}
-          onBlur={() => {
-            space.current = false;
-            setSpaceHeld(false);
-          }}
+          onKeyDown={keys.onKeyDown}
+          onKeyUp={keys.onKeyUp}
+          onBlur={keys.onBlur}
           onContextMenu={onContextMenu}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
@@ -1094,73 +1205,37 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
             {marquee && <rect className="cv-marquee" x={marquee.x + 0.5} y={marquee.y + 0.5} width={marquee.w} height={marquee.h} />}
           </svg>
         </div>
+        {!layout.steps.length && !layout.notes.length && !quick && (
+          <div className="cv-empty" role="note">
+            <strong>This sheet is empty</strong>
+            <span>
+              Press <kbd>/</kbd> or double-click the paper to add a step, or drag one from the palette.
+            </span>
+          </div>
+        )}
         {inlineEl}
+        {quick && (
+          <QuickInsert
+            x={quick.sx}
+            y={quick.sy}
+            title={singleSelected() ? `Insert (relative to ${singleSelected()})` : 'Insert'}
+            placeholder="Search steps, branches…"
+            items={quickItems(quick)}
+            onClose={() => {
+              setQuick(null);
+              focusHost();
+            }}
+          />
+        )}
         {showHelp && (
           <ShortcutHelp
-            title="Sequence canvas"
-            groups={HELP}
+            kind="sfc"
             onClose={() => {
               setShowHelp(false);
               focusHost();
             }}
           />
         )}
-        <div className="cv-toolbar" onPointerDown={(e) => e.stopPropagation()}>
-          <button className="btn small" title="Fit drawing to view (F)" onClick={fit}>
-            Fit
-          </button>
-          <button className="btn small icon" title="Zoom out (−)" onClick={() => zoomAt(view.current.k / 1.25)}>
-            −
-          </button>
-          <span className="cv-zoom">{pz.zoomPct} %</span>
-          <button className="btn small icon" title="Zoom in (+)" onClick={() => zoomAt(view.current.k * 1.25)}>
-            +
-          </button>
-          <button className="btn small" title="Zoom to 100 % (Ctrl+0)" onClick={() => zoomAt(1)}>
-            100 %
-          </button>
-          <span className="cv-sep" />
-          <span className="cv-dd">
-            <button className={`btn small${showView ? ' active' : ''}`} title="What the drawing shows" aria-expanded={showView} onClick={() => setShowView((v) => !v)}>
-              View ▾
-            </button>
-            {showView && (
-              <div className="cv-dd-panel" role="menu">
-                <label>
-                  <input type="checkbox" checked={prefs.grid} onChange={() => setCanvasPrefs({ grid: !prefs.grid })} /> Grid
-                </label>
-                <button type="button" className="cv-dd-item" title="Centre the selected step" disabled={!sel} onClick={() => sel && navigateJump(sel)}>
-                  Centre selected step
-                </button>
-              </div>
-            )}
-          </span>
-          <button className="btn small" title="Add a step (double-click empty paper to place it)" onClick={() => addSfcElement(seq, 'step', { sheet })}>
-            Add step
-          </button>
-          <button className="btn small" disabled={!sel} title={sel ? `New step after ${sel}, inserted into the chain (${MOD}+Enter)` : 'Select a step first'} onClick={() => sel && insertOrAdd(sel)}>
-            Step after
-          </button>
-          <button className="btn small" disabled={!sel} title={sel ? `New step before ${sel} (${MOD}+Shift+Enter)` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'before', sel)}>
-            Step before
-          </button>
-          <button className="btn small" disabled={!sel} title={sel ? `New step running in parallel with ${sel}` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'parallel', sel)}>
-            Parallel ∥
-          </button>
-          <button className="btn small" disabled={!sel} title={sel ? `New alternative path next to ${sel}` : 'Select a step first'} onClick={() => sel && insertStepRelative(seq, 'alternative', sel)}>
-            Alternative
-          </button>
-          <button className="btn small" title="Remove all hand-placed step positions" onClick={() => autoLayout(seq)}>
-            Auto layout
-          </button>
-          <button className="btn small" title="Add a note in the centre of the view" onClick={() => addNote()}>
-            Add note
-          </button>
-          <span className="cv-sep" />
-          <button className="btn small icon" title="Shortcuts and gestures (?)" aria-label="Shortcuts" onClick={() => setShowHelp((h) => !h)}>
-            ?
-          </button>
-        </div>
       </div>
       <SequenceTabs seq={seq} sheet={sheet} />
       {menu.element}
@@ -1168,59 +1243,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   );
 }
 
-function sheetLabel(s: { id: number; title?: string }): string {
-  return s.title ? `${s.id} · ${s.title}` : String(s.id);
-}
-
-function SequenceHeader({ seq }: { seq: Sequence }) {
-  return (
-    <div className="cv-header seq">
-      <span className="seq-kind" title="Sequence strategy (SFC / Grafcet)">
-        SFC
-      </span>
-      {seq.folder && <span className="cv-path">{seq.folder.split('/').join(' / ')} /</span>}
-      <strong>{seq.name}</strong>
-      {seq.title && <span className="cv-title">{seq.title}</span>}
-    </div>
-  );
-}
-
-function SeqCompareBanner({ diff }: { diff?: ReturnType<typeof diffSequence> }) {
-  const { target, loading } = useCompare();
-  if (!target) return null;
-  const count = (kind: string) => (diff?.steps.filter((s) => s.kind === kind).length ?? 0) + (diff?.transitions.filter((t) => t.kind === kind).length ?? 0);
-  const removed = diff ? [...diff.steps.filter((s) => s.kind === 'removed').map((s) => s.id), ...diff.transitions.filter((t) => t.kind === 'removed').map((t) => t.key)] : [];
-  const summary = !diff || diff.kind === 'unchanged' ? 'no changes in this sequence' : diff.kind === 'added' ? 'new sequence' : `${count('added')} added · ${count('changed')} changed · ${count('removed')} removed`;
-  const sw = (k: keyof typeof DIFF_COLORS, label: string) => (
-    <span className="hx-legend">
-      <span className="hx-swatch" style={{ background: DIFF_COLORS[k] }} aria-hidden="true" />
-      {label}
-    </span>
-  );
-  return (
-    <div className="hx-banner" role="status" data-testid="compare-banner">
-      <span>
-        Comparing with <b>{target.label}</b>
-        {loading ? ' — loading…' : ' —'}
-      </span>
-      {!loading && (
-        <>
-          {sw('added', 'added')}
-          {sw('changed', 'changed')}
-          <span className="hx-banner-sum">· {summary}</span>
-          {removed.length > 0 && <span className="hx-banner-sum" style={{ color: DIFF_COLORS.removed }}>removed: {removed.join(', ')}</span>}
-        </>
-      )}
-      <span className="spacer" />
-      <button className="btn small" title="Leave comparison mode" onClick={() => compareState().target && stopCompare()}>
-        Exit
-      </button>
-    </div>
-  );
-}
-
 function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number }) {
-  const menu = useMenu();
   const file = seq.file;
   const hasSheets = useEditor((st) => {
     const t = st.files[file];
@@ -1228,16 +1251,19 @@ function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number }) {
   });
 
   const addSheet = async () => {
-    const title = await promptDialog({ title: 'New sheet', label: 'Sheet title (optional)' });
+    const title = await promptDialog({ title: 'New sheet', label: 'Sheet title (optional)', okLabel: 'Add sheet' });
     if (title === null) return;
     const s = store();
-    if (!s.dispatch({ op: 'addSheet', file, title: title || undefined }, { label: 'Add sheet' })) return;
+    const ops: Op[] = [{ op: 'addSheet', file, title: title || undefined }];
+    // The first sheet keeps its label: core titles an implicit sheet 1 "Sheet 1" when it materialises the list.
+    if (!hasSheets && seq.sheets.length === 1 && seq.sheets[0].id === 1 && !seq.sheets[0].title) ops.push({ op: 'renameSheet', file, id: 1 });
+    if (!s.dispatch({ op: 'batch', label: 'Add sheet', ops }, { label: 'Add sheet' })) return;
     const ids = s.getState().model.sequenceByFile.get(file)?.sheets.map((x) => x.id) ?? [];
     if (ids.length) s.setSheet(Math.max(...ids));
   };
 
   const renameSheet = async (sh: { id: number; title?: string }) => {
-    const title = await promptDialog({ title: `Rename sheet ${sh.id}`, label: 'Title', value: sh.title ?? '' });
+    const title = await promptDialog({ title: `Rename sheet ${sh.id}`, label: 'Title', value: sh.title ?? '', okLabel: 'Rename' });
     if (title === null) return;
     const t = title.trim() || undefined;
     if (hasSheets) store().dispatch({ op: 'renameSheet', file, id: sh.id, title: t }, { label: 'Rename sheet' });
@@ -1245,37 +1271,23 @@ function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number }) {
   };
 
   const removeSheet = (id: number) => {
-    const used = seq.steps.filter((s) => s.sheet === id).length + seq.notes.filter((n) => n.sheet === id).length;
-    if (used) return store().toast(`Sheet ${id} is not empty — move its steps and notes first`, 'error');
-    store().dispatch({ op: 'removeSheet', file, id }, { label: `Delete sheet ${id}` });
+    if (store().dispatch({ op: 'removeSheet', file, id }, { label: `Delete sheet ${id}` })) store().toastUndo(`Deleted sheet ${id}`);
+  };
+
+  const used = (id: number) => {
+    const first = seq.sheets[0]?.id;
+    const eff = (s: number) => (seq.sheets.some((x) => x.id === s) ? s : first);
+    return seq.steps.filter((s) => eff(s.sheet) === id).length + seq.notes.filter((n) => eff(n.sheet) === id).length;
   };
 
   return (
-    <div className="cv-tabs" role="tablist">
-      <button className="cv-tab doc" role="tab" onClick={() => openDescription(seq.docFile ?? strategyDocFile(file))} title="Function description (Markdown)">
-        Description
-      </button>
-      {seq.sheets.map((sh) => (
-        <button
-          key={sh.id}
-          role="tab"
-          aria-selected={sh.id === sheet}
-          className={`cv-tab${sh.id === sheet ? ' active' : ''}`}
-          onClick={() => store().setSheet(sh.id)}
-          onContextMenu={(e) =>
-            menu.open(e, [
-              { label: 'Rename…', onClick: () => renameSheet(sh) },
-              { label: 'Delete', danger: true, disabled: seq.sheets.length <= 1, onClick: () => removeSheet(sh.id) },
-            ])
-          }
-        >
-          {sheetLabel(sh)}
-        </button>
-      ))}
-      <button className="cv-tab add" title="Add sheet" onClick={addSheet}>
-        +
-      </button>
-      {menu.element}
-    </div>
+    <SheetTabs
+      sheets={seq.sheets}
+      active={sheet}
+      onSelect={(id) => store().setSheet(id)}
+      onAdd={addSheet}
+      description={{ onOpen: () => openDescription(seq.docFile ?? strategyDocFile(file)), title: 'Function description (Markdown)' }}
+      tabMenu={(sh) => sheetTabMenu({ sheet: sh, count: seq.sheets.length, used: used(sh.id), usedWhat: 'steps and notes', rename: () => renameSheet(sh), remove: () => removeSheet(sh.id) })}
+    />
   );
 }

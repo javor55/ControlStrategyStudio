@@ -22,6 +22,7 @@ import { startCompare, stopCompare, useCompare } from './compare';
 import { absoluteTime, describeCommit, nextRevision, relativeTime, revisionLabel, shortOid } from './format';
 import { closeHistory, openCommit, openTextDiff, WORKING } from './ui';
 import './history.css';
+import { keys } from '../ui/keys';
 
 interface CommitDetails {
   changes: Change[];
@@ -238,7 +239,7 @@ export function HistoryPanel() {
       <div className="hx-head">
         <h2>History</h2>
         <span className="spacer" />
-        <button className="btn ghost icon hx-close" title="Close history (Ctrl+Shift+H)" aria-label="Close history" onClick={closeHistory}>
+        <button className="btn ghost icon hx-close" title={`Close history (${keys('Mod+Shift+H')})`} aria-label="Close history" onClick={closeHistory}>
           ×
         </button>
       </div>
@@ -337,7 +338,7 @@ function WorkingDetails({ model, head, changes }: { model: ProjectModel; head?: 
     <div className="hx-det">
       <div className="hx-det-title">Uncommitted changes</div>
       <div className="hx-actions">
-        <button className="btn primary small" onClick={openCommit} title="Commit (Ctrl+Shift+C)">
+        <button className="btn primary small" onClick={openCommit} title={`Commit (${keys('Mod+Shift+C')})`}>
           Commit…
         </button>
         <button className="btn small" onClick={() => head && openTextDiff({ from: head, to: WORKING, title: 'Last commit → working copy' })}>
@@ -347,7 +348,7 @@ function WorkingDetails({ model, head, changes }: { model: ProjectModel; head?: 
           className="btn small danger"
           onClick={async () => {
             if (!head) return;
-            if (!(await confirmDialog({ title: 'Discard all changes?', message: 'The working files are reset to the last commit. You can undo this with Ctrl+Z.', okLabel: 'Discard', danger: true }))) return;
+            if (!(await confirmDialog({ title: 'Discard all changes?', message: `The working files are reset to the last commit. You can undo this with ${keys('Mod+Z')}.`, okLabel: 'Discard', danger: true }))) return;
             await restoreVersion(head, 'Discard changes').catch(fail);
           }}
         >
@@ -459,7 +460,7 @@ function CommitView(props: { c: CommitInfo; commits: CommitInfo[]; branches: Bra
     try {
       await takeFileFrom(c.oid, file);
       store().open(file);
-      toast(`${name} taken from ${label} — Ctrl+Z to undo`);
+      store().toastUndo(`${name} taken from ${label}`);
     } catch (e) {
       fail(e);
     }
@@ -469,14 +470,14 @@ function CommitView(props: { c: CommitInfo; commits: CommitInfo[]; branches: Bra
     const n = store().getState().vcs.changes.length;
     const ok = await confirmDialog({
       title: 'Restore this version?',
-      message: `All project files are replaced by ${label}${n ? ` (your ${n} uncommitted ${n === 1 ? 'change is' : 'changes are'} replaced too)` : ''}. History is kept; the restored state shows as uncommitted changes. Undo with Ctrl+Z.`,
+      message: `All project files are replaced by ${label}${n ? ` (your ${n} uncommitted ${n === 1 ? 'change is' : 'changes are'} replaced too)` : ''}. History is kept; the restored state shows as uncommitted changes. Undo with ${keys('Mod+Z')}.`,
       okLabel: 'Restore',
       danger: true,
     });
     if (!ok) return;
     try {
       await restoreVersion(c.oid, `Restore ${c.tags[0] ? revisionLabel(c.tags[0]) : shortOid(c.oid)}`);
-      toast(`Restored ${label} — Ctrl+Z to undo`);
+      store().toastUndo(`Restored ${label}`);
     } catch (e) {
       fail(e);
     }
