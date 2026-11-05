@@ -189,8 +189,15 @@ export class ProjectRepo {
 
   async resolve(ref: string): Promise<string> {
     if (/^[0-9a-f]{40}$/.test(ref)) return ref;
-    if (/^[0-9a-f]{4,39}$/.test(ref)) return git.expandOid({ ...this.opts, oid: ref });
-    const oid = await git.resolveRef({ ...this.opts, ref });
+    // Branch and tag names first (a tag may be called "2025", a branch "cafe"),
+    // then abbreviated commit ids.
+    let oid: string;
+    try {
+      oid = await git.resolveRef({ ...this.opts, ref });
+    } catch (e) {
+      if (/^[0-9a-f]{4,39}$/.test(ref)) return git.expandOid({ ...this.opts, oid: ref });
+      throw e;
+    }
     // Annotated tags point to a tag object; peel to the commit.
     try {
       const t = await git.readTag({ ...this.opts, oid });

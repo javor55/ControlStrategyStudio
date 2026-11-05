@@ -23,7 +23,12 @@ export function parseSequence(file: string, name: string, folder: string, parsed
   const at = (...p: (string | number)[]) => lineAt(parsed, p);
 
   const sheets: SheetDef[] = [];
-  if (Array.isArray(d.sheets)) for (const s of d.sheets) if (isObj(s) && num(s.id) !== undefined && !sheets.some((x) => x.id === s.id)) sheets.push({ id: num(s.id)!, title: str(s.title) });
+  if (Array.isArray(d.sheets))
+    d.sheets.forEach((s, i) => {
+      if (!isObj(s) || num(s.id) === undefined) return;
+      if (sheets.some((x) => x.id === s.id)) diags.push({ severity: 'error', code: 'duplicate-sheet', message: `Sheet ${s.id} is defined twice`, file, line: at('sheets', i) });
+      else sheets.push({ id: num(s.id)!, title: str(s.title) });
+    });
   if (!sheets.length) sheets.push({ id: 1 });
   sheets.sort((a, b) => a.id - b.id);
 
@@ -157,6 +162,7 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
 
   for (const s of seq.steps) {
     if (!TAG_RE.test(s.id)) push('error', 'bad-name', `Invalid step name "${s.id}"`, at('steps', s.id), { block: s.id });
+    else if (s.id === 'SEQ') push('error', 'reserved-name', 'Step name "SEQ" is reserved for the sequence signals (SEQ.RUNNING, SEQ.STEP …)', at('steps', s.id), { block: s.id });
     if (!sheetIds.has(s.sheet)) push('warning', 'unknown-sheet', `${s.id}: sheet ${s.sheet} is not defined in "sheets"`, at('steps', s.id, 'sheet'), { block: s.id });
     const min = s.time?.min ? parseDuration(s.time.min) : undefined;
     const max = s.time?.max ? parseDuration(s.time.max) : undefined;
@@ -247,12 +253,62 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
   for (const s of seq.steps) {
     if (!seq.transitions.some((t) => t.from.includes(s.id))) push('info', 'dead-end-step', `${s.id} has no outgoing transition (end of the sequence)`, at('steps', s.id), { block: s.id });
   }
+  diags.push(...checkParallelStructure(seq, (code, message, t, severity = 'warning') => push(severity, code, message, at('transitions', t.index), { link: t.index })));
+  return diags;
+}
+
+/**
+ * Parallel branches: every fork (transition to several steps) must be closed by
+ * one join (transition from several steps) whose source steps lie one in each of
+ * its branches; and every join must close such a fork — a join of steps that do
+ * not run at the same time (e.g. two alternative branches) would wait for ever.
+ * Branches may contain alternative and nested parallel branches.
+ */
+function checkParallelStructure(seq: Sequence, report: (code: string, message: string, t: SeqTransition, severity?: Diag['severity']) => void): Diag[] {
+  const name = (t: SeqTransition) => `${t.from.join('+')} → ${t.to.join('+')}`;
   const forks = seq.transitions.filter((t) => t.to.length > 1);
   const joins = seq.transitions.filter((t) => t.from.length > 1);
+  const closed = new Set<SeqTransition>();
   for (const f of forks) {
-    if (!joins.some((j) => j.from.length === f.to.length)) push('warning', 'unclosed-parallel', `Parallel branch after ${f.from.join('+')} is not joined again (no transition from ${f.to.length} steps)`, at('transitions', f.index), { link: f.index });
+    const stop = new Set(f.from);
+    // Steps of each branch: everything reachable from its first step, passing
+    // through joins only when all their source steps are inside the branch.
+    const branches = f.to.map((start) => {
+      const r = new Set<string>([start]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const t of seq.transitions) {
+          if (t === f || !t.from.every((x) => r.has(x))) continue;
+          for (const n of t.to) if (!stop.has(n) && !r.has(n)) (r.add(n), (grew = true));
+        }
+      }
+      return r;
+    });
+    // Branches that run into each other (e.g. loops) are not checked further.
+    if (branches.some((b, i) => branches.some((o, j) => i !== j && [...b].some((x) => o.has(x))))) continue;
+    const exits = branches.map((b) => joins.filter((j) => j.from.some((x) => b.has(x)) && !j.from.every((x) => b.has(x))));
+    const first = exits[0];
+    const same = first.length === 1 && exits.every((e) => e.length === 1 && e[0] === first[0]);
+    if (!same) {
+      const open = f.to.filter((_, i) => !exits[i].length);
+      report(
+        'unclosed-parallel',
+        open.length
+          ? `Parallel branch after ${f.from.join('+')}: the branch starting with ${open.join(', ')} is not joined again`
+          : `Parallel branch after ${f.from.join('+')}: its branches end in different joins`,
+        f,
+      );
+      continue;
+    }
+    const j = first[0];
+    const foreign = j.from.filter((x) => !branches.some((b) => b.has(x)));
+    if (!foreign.length) closed.add(j);
   }
-  return diags;
+  for (const j of joins) {
+    if (!closed.has(j)) report('unmatched-join', `Transition ${name(j)} waits for steps that are not started together by one parallel branch — it would wait for ever`, j, 'error');
+  }
+  return [];
 }
 
 type TargetResult = { type: string; port?: PortDef; linked: boolean } | { error: string; code: string };
@@ -279,6 +335,8 @@ export interface SequenceRef {
   sequenceFile: string;
   /** Step that writes (actions) or transition that reads (conditions). */
   step?: string;
+  /** Index of the writing action within its step. */
+  action?: number;
   transition?: number;
   kind: 'reads' | 'writes';
   strategy: string;
@@ -290,9 +348,9 @@ export interface SequenceRef {
 export function sequenceRefs(seq: Sequence): SequenceRef[] {
   const out: SequenceRef[] = [];
   for (const s of seq.steps) {
-    for (const a of s.actions) {
-      if (a.set?.strategy) out.push({ sequence: seq.name, sequenceFile: seq.file, step: s.id, kind: 'writes', strategy: a.set.strategy, block: a.set.block, port: a.set.port });
-    }
+    s.actions.forEach((a, i) => {
+      if (a.set?.strategy) out.push({ sequence: seq.name, sequenceFile: seq.file, step: s.id, action: i, kind: 'writes', strategy: a.set.strategy, block: a.set.block, port: a.set.port });
+    });
   }
   for (const t of seq.transitions) {
     const c = parseCondition(t.condition);

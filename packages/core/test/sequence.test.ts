@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyOp, demoProjectFiles, layoutDiagram, loadProject, parseExpr, exprRefs, type Files, type Op } from '../src';
+import { applyOp, demoProjectFiles, layoutDiagram, layoutSequence, loadProject, parseExpr, exprRefs, type Files, type Op } from '../src';
 
 const U100 = 'strategies/ACME/Brno/WaterTreatment/U100';
 const SEQ = `${U100}/FILL_T100.seq.yaml`;
@@ -83,7 +83,8 @@ describe('sequence operations', () => {
     );
     expect(f[file]).toContain('S10:\n    description: Rinse\n    time: { max: 5min }\n    actions:\n      - { q: S, set: P101:P101.START }\n      - { q: N, text: Open rinse valve }');
     expect(f[file]).toContain('  - { from: S0, to: S10, condition: START }');
-    expect(codes(f, file)).toEqual([]);
+    // FILL_T100 of the demo also starts P101: both sequences are warned.
+    expect(codes(f, file)).toEqual(['multiple-writers']);
     f = run(f, { op: 'insertStep', file, transition: 0, id: 'S5', description: 'Check' });
     const q = loadProject(f).sequenceByName.get('CIP')!;
     expect(q.transitions.map((t) => `${t.from}>${t.to}`)).toEqual(['S0>S5', 'S5>S10', 'S10>S0']);
@@ -280,4 +281,46 @@ describe('inserting a branch into a transition', () => {
   it('parallel', () => expect(go('parallel')).toEqual(expect.arrayContaining(['S0>S1+S2', 'S1+S2>S10'])));
   it('alternative', () => expect(go('alternative')).toEqual(expect.arrayContaining(['S0>S1', 'S0>S2', 'S1>S10', 'S2>S10'])));
   it('step', () => expect(go('step')).toEqual(expect.arrayContaining(['S0>S1', 'S1>S10'])));
+});
+
+describe('parallel branch structure', () => {
+  const seqFile = 'strategies/ACME/T.seq.yaml';
+  const diagsOf = (body: string) => {
+    const files = { ...demoProjectFiles(), [seqFile]: `format: csd-sequence/1\nsequence: T\nsteps:\n  S0: { initial: true }\n  S10: {}\n  S20: {}\n  S21: {}\n  S22: {}\n  S23: {}\n  S30: {}\ntransitions:\n${body}` };
+    return loadProject(files).diags.filter((d) => d.file === seqFile && d.severity !== 'info').map((d) => d.code);
+  };
+  it('accepts a fork closed by its join, also with an alternative inside a branch', () => {
+    const c = (n: number) => `condition: S0.T > ${n}s`;
+    expect(
+      diagsOf(
+        [
+          `  - { from: S0, to: [S10, S20], ${c(1)} }`,
+          `  - { from: S20, to: S21, ${c(2)} }`,
+          `  - { from: S20, to: S22, ${c(3)} }`,
+          `  - { from: S21, to: S23, ${c(4)} }`,
+          `  - { from: S22, to: S23, ${c(5)} }`,
+          `  - { from: [S10, S23], to: S30, ${c(6)} }`,
+          `  - { from: S30, to: S0, ${c(7)} }`,
+          '',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+  });
+  it('flags a branch that is never joined and a join of alternative branches', () => {
+    expect(diagsOf('  - { from: S0, to: [S10, S20], condition: S0.T > 1s }\n  - { from: S20, to: S30, condition: S0.T > 2s }\n  - { from: [S10, S0], to: S21, condition: S0.T > 3s }\n')).toEqual(expect.arrayContaining(['unclosed-parallel', 'unmatched-join']));
+    expect(diagsOf('  - { from: S0, to: S10, condition: S0.T > 1s }\n  - { from: S0, to: S20, condition: S0.T > 2s }\n  - { from: [S10, S20], to: S30, condition: S0.T > 3s }\n')).toContain('unmatched-join');
+  });
+});
+
+describe('sequence layout with hand-placed steps', () => {
+  it('moves automatically placed rows below a pinned step instead of overlapping it', () => {
+    const p = loadProject(demoProjectFiles());
+    const seq = p.sequences[0];
+    const auto = layoutSequence(seq)[0];
+    const s30 = auto.steps.find((g) => g.id === 'S30')!;
+    // Pin S0 right where S30 is drawn.
+    const l = layoutSequence(seq, { overrides: { S0: [s30.x, s30.y] } })[0];
+    const boxes = l.steps.map((g) => ({ id: g.id, x0: g.x, x1: g.actionBox ? g.actionBox.x + g.actionBox.w : g.x + g.w, y0: g.y, y1: g.y + g.h }));
+    for (const a of boxes) for (const b of boxes) if (a !== b) expect(a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1, `${a.id} / ${b.id}`).toBe(false);
+  });
 });

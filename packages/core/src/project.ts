@@ -282,6 +282,25 @@ export function loadProject(files: Files): ProjectModel {
     if (p && !p.error) diags.push(...validateSequence(q, p, { strategies: byName, sequences: seqByName }));
     for (const r of sequenceRefs(q)) seqRefs.set(r.strategy, [...(seqRefs.get(r.strategy) ?? []), r]);
   }
+  // One input written by several sequences: their actions fight over it.
+  const writers = new Map<string, SequenceRef[]>();
+  for (const rs of seqRefs.values()) for (const r of rs) if (r.kind === 'writes') writers.set(`${r.strategy}:${r.block}.${r.port}`, [...(writers.get(`${r.strategy}:${r.block}.${r.port}`) ?? []), r]);
+  for (const [target, rs] of writers) {
+    const seqs = [...new Set(rs.map((r) => r.sequence))];
+    if (seqs.length < 2) continue;
+    for (const r of rs) {
+      const others = seqs.filter((x) => x !== r.sequence);
+      const p = parsedByFile.get(r.sequenceFile);
+      diags.push({
+        severity: 'warning',
+        code: 'multiple-writers',
+        message: `${r.step} action ${(r.action ?? 0) + 1}: ${target} is also written by ${others.join(', ')} — make sure they never run at the same time`,
+        file: r.sequenceFile,
+        line: p ? lineAt(p, ['steps', r.step!, 'actions', r.action ?? 0]) : undefined,
+        block: r.step,
+      });
+    }
+  }
   for (const t of lib.index.all) {
     if (!t.diagram) continue;
     const p = migrateParsed(parseYaml(files[t.file] as string), 'blocktype', t.file).parsed;

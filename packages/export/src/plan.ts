@@ -592,7 +592,7 @@ export function planExport(
     sequences,
     items,
     types,
-    categories: model.meta.signalCategories,
+    categories: lineCategories(model.meta),
     diags: { errors: diagItems.filter((d) => d.severity === 'error').length, warnings: diagItems.filter((d) => d.severity === 'warning').length, items: diagItems },
     history: config.sections.history ? opts.history ?? [] : [],
     uncommitted: !!opts.uncommitted,

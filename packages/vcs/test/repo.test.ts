@@ -34,6 +34,17 @@ describe('ProjectRepo', () => {
     expect(await repo.changesBetween(c1, c2)).toHaveLength(3);
   });
 
+  it('resolves tags with names that look like commit ids', async () => {
+    const repo = await ProjectRepo.open();
+    const files = demoProjectFiles();
+    const c1 = await repo.commit(files, 'Rev A', me);
+    await repo.tag('2025');
+    await repo.tag('cafe');
+    expect(await repo.resolve('2025')).toBe(c1);
+    expect(await repo.resolve('cafe')).toBe(c1);
+    expect(await repo.resolve(c1.slice(0, 7))).toBe(c1);
+  });
+
   it('tags revisions and survives a round trip through stored .git files', async () => {
     const repo = await ProjectRepo.open();
     const files = demoProjectFiles();

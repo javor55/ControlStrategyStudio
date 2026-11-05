@@ -218,7 +218,28 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   // y per layer: step row, then the transitions leaving it
   let y = SFC.MARGIN + 30;
   const barY = new Map<number, number>();
+  // Hand-placed steps (with their action boxes) are obstacles: a row of
+  // automatically placed steps that would overlap one moves down below it.
+  const pinnedBoxes = onSheet
+    .filter((s) => ctx.overrides?.[s.id] ?? s.pos)
+    .map((s) => {
+      const p = (ctx.overrides?.[s.id] ?? s.pos)!;
+      const g = build(s, p[0], p[1], true);
+      return { x0: g.x - 20, x1: (g.actionBox ? g.actionBox.x + g.actionBox.w : g.x + g.w) + 20, y0: g.y - 20, y1: contentBottomOf(g) + 20 };
+    });
   layers.forEach((ids) => {
+    const auto = ids.filter((id) => !(ctx.overrides?.[id] ?? byId.get(id)!.pos));
+    for (let guard = 0; guard < 50 && auto.length; guard++) {
+      const hit = pinnedBoxes.find((b) =>
+        auto.some((id) => {
+          const g = build(byId.get(id)!, colX(col.get(id)!), y, false);
+          const x1 = g.actionBox ? g.actionBox.x + g.actionBox.w : g.x + g.w;
+          return g.x < b.x1 && x1 > b.x0 && g.y < b.y1 && contentBottomOf(g) > b.y0;
+        }),
+      );
+      if (!hit) break;
+      y = snap(hit.y1 + SFC.ROW_GAP);
+    }
     let rowBottom = y + SFC.STEP_H;
     for (const id of ids) {
       const s = byId.get(id)!;
