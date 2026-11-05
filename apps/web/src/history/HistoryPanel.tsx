@@ -204,6 +204,17 @@ export function HistoryPanel() {
   const branchMenu = (el: HTMLElement) => {
     const others = branches.filter((b) => !b.current);
     const items: MenuEntry[] = [
+      { section: 'Switch to' },
+      ...branches.map(
+        (b): MenuEntry => ({
+          label: `⎇ ${b.name}`,
+          checked: b.current,
+          radio: true,
+          keepOpen: false,
+          onClick: () => !b.current && void doSwitch(b.name).then(refresh),
+        }),
+      ),
+      'separator',
       { label: `New branch from ⎇ ${vcs.branch}…`, onClick: () => void newBranch(branches).then(refresh) },
       {
         label: current ? `New branch from ${shortOid(current.oid)}…` : 'New branch from selected commit…',
@@ -211,9 +222,12 @@ export function HistoryPanel() {
         onClick: () => current && void newBranch(branches, { oid: current.oid, label: describeCommit(current) }).then(refresh),
       },
       'separator',
-      { section: 'Delete branch' },
-      ...(others.length
-        ? others.map(
+      {
+        label: 'Delete branch',
+        disabled: !others.length,
+        description: others.length ? undefined : 'No other branches',
+        submenu: others.length
+          ? others.map(
             (b): MenuEntry => ({
               label: `⎇ ${b.name}`,
               danger: true,
@@ -229,7 +243,8 @@ export function HistoryPanel() {
               },
             }),
           )
-        : [{ label: 'No other branches', disabled: true }]),
+          : undefined,
+      },
     ];
     menu.openBelow(el, items);
   };
@@ -261,18 +276,9 @@ export function HistoryPanel() {
       ) : (
         <>
           <div className="hx-branchbar">
-            <label className="hx-branch-sel">
-              <span className="hx-muted">Branch</span>
-              <select className="select" value={vcs.branch} onChange={(e) => void doSwitch(e.target.value).then(refresh)} aria-label="Switch branch">
-                {branches.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    ⎇ {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="btn small" aria-haspopup="menu" onClick={(e) => branchMenu(e.currentTarget)}>
-              Branches ▾
+            <span className="hx-muted">Branch</span>
+            <button className="btn small hx-branch-btn" aria-haspopup="menu" title="Switch, create or delete branches" onClick={(e) => branchMenu(e.currentTarget)}>
+              ⎇ {vcs.branch} ▾
             </button>
           </div>
           {compare.target && (

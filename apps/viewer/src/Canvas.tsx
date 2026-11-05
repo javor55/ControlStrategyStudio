@@ -236,6 +236,8 @@ function PanZoom({ svg, bounds, viewKey, focus, onClick, onNext, label, boxClass
         zoomAt(v.k / 1.25);
         break;
       case '0':
+        zoomAt(1);
+        break;
       case 'f':
       case 'F':
         fit();
@@ -274,8 +276,11 @@ function PanZoom({ svg, bounds, viewKey, focus, onClick, onNext, label, boxClass
           <div ref={boxRef} className={`cv-box${boxClass ? ' ' + boxClass : ''}`} dangerouslySetInnerHTML={{ __html: svg }} />
         </div>
         <div className="cv-tools" role="toolbar" aria-label="Zoom">
-          <button className="btn small" onClick={fit} title="Fit the sheet (double-click, 0)">
+          <button className="btn small" onClick={fit} title="Fit the sheet (F, double-click)">
             Fit
+          </button>
+          <button className="btn small" onClick={() => zoomAt(1)} title="Zoom 100 % (0)">
+            100 %
           </button>
           <button className="btn small icon" onClick={() => zoomAt(view.current.k / 1.25)} title="Zoom out (−)" aria-label="Zoom out">
             −
@@ -427,7 +432,7 @@ export function SeqCanvas({ layout, viewKey, sel, theme, onSelect, onJump, label
       footer={
         jumps.length > 0 && (
           <div className="cv-conns" aria-label="Jumps on this sheet">
-            <span className="muted">Jumps:</span>
+            <span className="muted">Go to:</span>
             {jumps.map((j, i) => (
               <button key={i} className="btn small conn-btn" data-kind="jump" onClick={() => onJump(j.step, j.sheet)}>
                 {j.label}

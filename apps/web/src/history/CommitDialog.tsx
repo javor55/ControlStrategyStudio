@@ -1,5 +1,6 @@
 // Commit dialog: what changed (files with graph summaries), message, author and
 // optionally a revision tag on the new commit.
+import { plural } from '../ui/text';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadProject, type ProjectModel } from '@csd/core';
 import { validRefName, type Change } from '@csd/vcs';
@@ -12,6 +13,48 @@ import './history.css';
 import { keys } from '../ui/keys';
 
 /** Project model at HEAD (empty project before the first commit). */
+/** Many library files (e.g. the first commit with the whole std library): one row per library, expandable. */
+function LibrarySummary({ items, onFile }: { items: readonly { path: string; kind: Change['kind'] }[]; onFile?: (path: string) => void }) {
+  const libs = new Map<string, (typeof items)[number][]>();
+  for (const c of items) {
+    const lib = c.path.split('/')[1] ?? '';
+    libs.set(lib, [...(libs.get(lib) ?? []), c]);
+  }
+  return (
+    <ul>
+      {[...libs].map(([lib, files]) => {
+        const kinds = (['added', 'modified', 'deleted'] as const).map((k) => [k, files.filter((f) => f.kind === k).length] as const).filter(([, n]) => n);
+        return (
+          <li key={lib} className="hx-file">
+            <details className="hx-lib">
+              <summary>
+                <span className="mono">library/{lib}/</span>{' '}
+                <span className="hx-muted">
+                  {plural(files.length, 'file')} · {kinds.map(([k, n]) => `${n} ${k}`).join(', ')}
+                </span>
+              </summary>
+              <ul>
+                {files.map((f) => (
+                  <li key={f.path} className="hx-file">
+                    <ChangeBadge kind={f.kind} />
+                    {onFile ? (
+                      <button type="button" className="hx-link mono" onClick={() => onFile(f.path)}>
+                        {f.path.split('/').pop()}
+                      </button>
+                    ) : (
+                      <span className="mono">{f.path.split('/').pop()}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function useModelAt(oid: string | undefined): ProjectModel | undefined {
   const [m, setM] = useState<{ oid?: string; model: ProjectModel }>();
   useEffect(() => {
@@ -47,6 +90,7 @@ export function ChangeList(props: { changes: readonly Change[]; before?: Project
           <div className="hx-group-h">
             {group} <span className="hx-count">{items.length}</span>
           </div>
+          {group === 'Library' && items.length > 6 ? <LibrarySummary items={items} onFile={props.onFile} /> : (
           <ul>
             {items.map((c) => {
               const g = byFile.get(c.path);
@@ -82,6 +126,7 @@ export function ChangeList(props: { changes: readonly Change[]; before?: Project
               );
             })}
           </ul>
+          )}
         </div>
       ))}
     </div>

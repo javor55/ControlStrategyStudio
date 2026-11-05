@@ -1,4 +1,5 @@
 // Right panel: details of the selected block or signal of the diagram shown.
+import { PRINT_THEME } from '@csd/render';
 import { formatEndpoint, formatValue, typeLabel, type Endpoint, type LinkInst, type SignalCategory } from '@csd/core';
 import { useData } from './context';
 import { blockParams, feedbackOf, linkSignalType, refRoute, seqSelRoute, sheetOfBlock, signalLinks, typeKey, type DiagramCtx } from './data';
@@ -63,6 +64,11 @@ export function Inspector({ ctx, sel, sheet, onSelect, onClose }: InspectorProps
   );
 }
 
+/** Built-in line categories get the same names as in the editor. */
+const CATEGORY_NAMES: Record<string, string> = { bool: 'BOOL', numeric: 'Numeric (REAL, INT …)', other: 'Other signals' };
+/** Colours the drawing uses for built-in categories without an own colour (the paper is printed). */
+const BUILTIN_COLOR: Record<string, string> = { bool: PRINT_THEME.bool, numeric: PRINT_THEME.real, other: PRINT_THEME.other };
+
 function Hint({ ctx }: { ctx?: DiagramCtx }) {
   const d = useData();
   const cats = Object.entries(d.plan.categories);
@@ -72,17 +78,11 @@ function Hint({ ctx }: { ctx?: DiagramCtx }) {
       <h4>Diagram</h4>
       <ul className="legend">
         <li>
-          <CategorySwatch cat={{ color: '#1f5f8b' }} /> analog signal
-        </li>
-        <li>
-          <CategorySwatch cat={{ color: '#2f7d4a', style: 'dashed' }} /> binary signal
-        </li>
-        <li>
           <CategorySwatch cat={{ color: '#8a5a12' }} /> from / to another strategy
         </li>
         {cats.map(([k, c]) => (
           <li key={k}>
-            <CategorySwatch cat={c} /> <b>{k}</b> {c.description && <span className="muted">— {c.description}</span>}
+            <CategorySwatch cat={c.color || !(k in BUILTIN_COLOR) ? c : { ...c, color: BUILTIN_COLOR[k] }} /> <b>{CATEGORY_NAMES[k] ?? k}</b> {c.description && !CATEGORY_NAMES[k] && <span className="muted">— {c.description}</span>}
           </li>
         ))}
         <li>
@@ -95,7 +95,7 @@ function Hint({ ctx }: { ctx?: DiagramCtx }) {
           <kbd>Wheel</kbd> scroll, <kbd>Ctrl</kbd>+<kbd>Wheel</kbd> zoom
         </li>
         <li>
-          Drag the paper to pan, double-click to fit
+          Drag the paper to pan · <kbd>F</kbd> or double-click fit · <kbd>0</kbd>&nbsp;100&nbsp;% · <kbd>+</kbd>&nbsp;/&nbsp;<kbd>−</kbd>&nbsp;zoom
         </li>
         <li>
           <kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>N</kbd> next / previous block

@@ -66,7 +66,13 @@ export function TextDiffDialog({ req }: { req: NonNullable<HistoryUi['textDiff']
     changesOf(req.from, req.to)
       .then((c) => {
         setChanges(c);
-        setPath((p) => (p && c.some((x) => x.path === p) ? p : c.find((x) => x.path.endsWith('.yaml'))?.path ?? c[0]?.path));
+        // The requested file, else the open one when it changed, else the first strategy / sequence.
+        const active = store().getState().activeFile;
+        setPath((p) =>
+          p && c.some((x) => x.path === p)
+            ? p
+            : (active && c.find((x) => x.path === active)?.path) ?? c.find((x) => x.path.startsWith('strategies/') && x.path.endsWith('.yaml'))?.path ?? c.find((x) => x.path.endsWith('.yaml'))?.path ?? c[0]?.path,
+        );
       })
       .catch((e) => setError((e as Error).message));
   }, [req.from, req.to]);

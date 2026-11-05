@@ -403,6 +403,9 @@ export function StrategyPage({ route }: { route: Extract<Route, { page: 'strateg
       <header className="s-head">
         <Breadcrumb path={folder} />
         <div className="s-title">
+          <span className="kind-badge fbd-badge" title="Continuous strategy (function block diagram)">
+            FBD
+          </span>
           <h1 className="mono">{s.name}</h1>
           {s.title && <span className="s-sub">{s.title}</span>}
           <span className="spacer" />

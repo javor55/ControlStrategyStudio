@@ -18,7 +18,7 @@ interface SeqTabDef {
 export function sequenceTabs(d: ReturnType<typeof useData>, q: SequencePlan): SeqTabDef[] {
   const sec = d.plan.config.sections;
   const tabs: SeqTabDef[] = [{ id: 'doc', label: 'Description', tab: 'doc' }];
-  if (sec.diagrams) for (const sh of q.sheets) tabs.push({ id: `sheet-${sh.id}`, label: q.sheets.length > 1 || sh.title ? `Sheet ${sh.id}${sh.title ? ' · ' + sh.title : ''}` : 'Sheet', tab: 'sheet', sheet: sh.id });
+  if (sec.diagrams) for (const sh of q.sheets) tabs.push({ id: `sheet-${sh.id}`, label: q.sheets.length > 1 || sh.title ? `Sheet ${sh.id}${sh.title ? ' · ' + sh.title : ''}` : 'Diagram', tab: 'sheet', sheet: sh.id });
   tabs.push({ id: 'steps', label: 'Steps', tab: 'steps' }, { id: 'transitions', label: 'Transitions', tab: 'transitions' });
   return tabs;
 }
@@ -47,8 +47,8 @@ export function SequencePage({ route }: { route: Extract<Route, { page: 'sequenc
       <header className="s-head">
         <Breadcrumb path={folder} />
         <div className="s-title">
-          <span className="kind-badge seq-badge" title="Sequence (SFC / Grafcet)">
-            sequence
+          <span className="kind-badge seq-badge" title="Sequence strategy (SFC / Grafcet)">
+            SFC
           </span>
           <h1 className="mono">{q.name}</h1>
           {q.title && <span className="s-sub">{q.title}</span>}

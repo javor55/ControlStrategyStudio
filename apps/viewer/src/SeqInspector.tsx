@@ -73,6 +73,12 @@ function SeqHint() {
       <h4>Keys</h4>
       <ul className="keys">
         <li>
+          <kbd>Wheel</kbd> scroll, <kbd>Ctrl</kbd>+<kbd>Wheel</kbd> zoom
+        </li>
+        <li>
+          Drag the paper to pan · <kbd>F</kbd> or double-click fit · <kbd>0</kbd>&nbsp;100&nbsp;% · <kbd>+</kbd>&nbsp;/&nbsp;<kbd>−</kbd>&nbsp;zoom
+        </li>
+        <li>
           <kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>N</kbd> next / previous step
         </li>
         <li>

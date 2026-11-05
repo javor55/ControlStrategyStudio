@@ -28,3 +28,5 @@
   .xp-body { grid-template-columns: minmax(0, 1fr); }
 }
 .xp-ico { flex: none; color: var(--ink-3); }
+.xp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xp-sub { color: var(--ink-3); }

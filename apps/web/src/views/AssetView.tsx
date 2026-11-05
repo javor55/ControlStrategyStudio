@@ -1,5 +1,6 @@
 // Preview of a file in assets/ (images). Other binary files show their size.
 import { useEffect, useState } from 'react';
+import { copyAssetReference } from '../project/actions';
 import { useEditor } from '../state/store';
 
 const MIME: Record<string, string> = {
@@ -28,18 +29,17 @@ export function AssetView() {
 
   const size = content === undefined ? 0 : typeof content === 'string' ? new Blob([content]).size : content.byteLength;
   return (
-    <div className="scroll" style={{ flex: 1, padding: 24, display: 'grid', gap: 12, alignContent: 'start', justifyItems: 'center' }}>
-      <div style={{ fontFamily: 'var(--f-mono)', fontSize: 12, color: 'var(--ink-2)' }}>
+    <div className="scroll asset-view">
+      <div className="asset-meta mono">
         {file} · {(size / 1024).toFixed(1)} kB
       </div>
-      {url ? (
-        <img src={url} alt={file ?? ''} style={{ maxWidth: '100%', background: '#fff', border: '1px solid var(--rule)', boxShadow: 'var(--shadow)' }} />
-      ) : (
-        <div className="empty">No preview for this file type.</div>
-      )}
-      {url && (
-        <div style={{ color: 'var(--ink-3)', fontSize: 12 }}>
-          Use in Markdown: <code>![description]({file})</code>
+      {url ? <img className="asset-img" src={url} alt={file ?? ''} /> : <div className="empty">No preview for this file type.</div>}
+      {url && file && (
+        <div className="asset-use">
+          Use in Markdown: <code>![description]({file})</code>{' '}
+          <button type="button" className="btn small" onClick={() => copyAssetReference(file)}>
+            Copy
+          </button>
         </div>
       )}
     </div>

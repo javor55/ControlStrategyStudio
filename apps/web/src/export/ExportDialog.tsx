@@ -1,4 +1,5 @@
 // Export dialog: format, scope, content and drawing options; remembered per project.
+import { Icon } from '../project/icons';
 import { useEffect, useMemo, useState } from 'react';
 import type { FolderNode } from '@csd/core';
 import { defaultExportConfig, normalizeExportConfig, type ExportConfig, type ExportFormat, type ExportSections } from '@csd/export';
@@ -47,26 +48,22 @@ function save(projectId: string, c: ExportConfig) {
   }
 }
 
+// Same icons as the project tree.
 const SEQ_ICON = (
-  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence strategy" role="img">
-    <title>Sequence strategy (SFC)</title>
-    <rect x="3" y="0.5" width="6" height="3.5" fill="none" stroke="currentColor" />
-    <path d="M6 4 V8 M3.5 6 H8.5" stroke="currentColor" />
-    <rect x="3" y="8" width="6" height="3.5" fill="none" stroke="currentColor" />
-  </svg>
+  <span className="xp-ico" title="Sequence strategy (SFC)">
+    {Icon.sequence}
+  </span>
 );
 const STRATEGY_ICON = (
-  <svg className="xp-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Continuous strategy" role="img">
-    <title>Continuous strategy (FBD)</title>
-    <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-    <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-    <path d="M5 6 H7" stroke="currentColor" />
-  </svg>
+  <span className="xp-ico" title="Continuous strategy (FBD)">
+    {Icon.strategy}
+  </span>
 );
 
 const fileName = (f: string) => (f.split('/').pop() ?? f).replace(/(\.seq)?\.yaml$/, '');
-/** Strategies and sequences of a folder, by name. */
-const folderItems = (n: FolderNode) => [...n.strategies, ...(n.sequences ?? [])].sort((a, b) => fileName(a).localeCompare(fileName(b)) || a.localeCompare(b));
+/** Strategies, then sequences of a folder, each by name (as in the project tree). */
+const byName = (a: string, b: string) => fileName(a).localeCompare(fileName(b)) || a.localeCompare(b);
+const folderItems = (n: FolderNode) => [...[...n.strategies].sort(byName), ...[...(n.sequences ?? [])].sort(byName)];
 
 function collect(n: FolderNode, out: string[] = []): string[] {
   out.push(...folderItems(n));
@@ -89,7 +86,7 @@ function ScopeTree(props: { node: FolderNode; selected: Set<string>; toggle: (fi
             onChange={(e) => toggle(all, e.target.checked)}
           />
           <span className="xp-folder">{node.name}</span>
-          {node.level && <span className="xp-level">{node.level}</span>}
+          {node.level && <span className="level-badge">{node.level}</span>}
         </label>
       )}
       <ul>
@@ -101,7 +98,10 @@ function ScopeTree(props: { node: FolderNode; selected: Set<string>; toggle: (fi
             <label className="xp-row">
               <input type="checkbox" checked={selected.has(f)} onChange={(e) => toggle([f], e.target.checked)} />
               {f.endsWith('.seq.yaml') ? SEQ_ICON : STRATEGY_ICON}
-              <span className="mono">{props.names.get(f) ?? f}</span>
+              <span className="xp-name" title={props.names.get(f) ?? f}>
+                <span className="mono">{(props.names.get(f) ?? f).split(' — ')[0]}</span>
+                {(props.names.get(f) ?? '').includes(' — ') && <span className="xp-sub"> {(props.names.get(f) ?? '').split(' — ').slice(1).join(' — ')}</span>}
+              </span>
             </label>
           </li>
         ))}

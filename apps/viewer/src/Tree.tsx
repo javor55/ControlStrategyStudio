@@ -84,7 +84,9 @@ export function Tree({ route, onNavigate }: { route: Route; onNavigate?(): void 
         {open && hasKids && (
           <ul role="group">
             {n.children.map((c) => renderNode(c, depth + 1))}
-            {n.f.items.map((file) => {
+            {[...n.f.items]
+              .sort((x, y) => Number(x.endsWith('.seq.yaml')) - Number(y.endsWith('.seq.yaml')))
+              .map((file) => {
               const s = d.plan.strategies.find((x) => x.file === file);
               const q = s ? undefined : d.plan.sequences.find((x) => x.file === file);
               const it = s ?? q;
@@ -101,16 +103,17 @@ export function Tree({ route, onNavigate }: { route: Route; onNavigate?(): void 
                       title={s ? it.title : `Sequence${it.title ? ': ' + it.title : ''}`}
                     >
                       {s ? (
-                        <svg className="t-ico" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                          <rect x="1" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-                          <rect x="7" y="2" width="4" height="8" fill="none" stroke="currentColor" />
-                          <path d="M5 6 H7" stroke="currentColor" />
+                        <svg className="t-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-label="Continuous strategy" role="img">
+                          <rect x="1.5" y="3" width="5" height="4" />
+                          <rect x="9.5" y="9" width="5" height="4" />
+                          <path d="M6.5 5H8v6h1.5" />
                         </svg>
                       ) : (
-                        <svg className="t-ico" width="12" height="12" viewBox="0 0 12 12" aria-label="Sequence" role="img">
-                          <rect x="3" y="0.5" width="6" height="3.5" fill="none" stroke="currentColor" />
-                          <path d="M6 4 V8 M3.5 6 H8.5" stroke="currentColor" />
-                          <rect x="3" y="8" width="6" height="3.5" fill="none" stroke="currentColor" />
+                        <svg className="t-ico" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-label="Sequence strategy" role="img">
+                          <rect x="4.5" y="1" width="7" height="4.5" />
+                          <rect x="5.7" y="2.1" width="4.6" height="2.3" strokeWidth="0.9" />
+                          <path d="M8 5.5v5 M5.5 8h5" />
+                          <rect x="4.5" y="10.5" width="7" height="4.5" />
                         </svg>
                       )}
                       <span className="t-name mono">{it.name}</span>
