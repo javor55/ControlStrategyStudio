@@ -10,6 +10,8 @@ export interface Toast {
   id: number;
   kind: 'info' | 'error';
   text: string;
+  /** Optional button in the toast, e.g. Undo. */
+  action?: { label: string; run: () => void };
 }
 
 interface UndoEntry {
@@ -252,10 +254,25 @@ export class EditorStore {
     this.set({ fitRequest: this.state.fitRequest + 1 });
   }
 
-  toast(text: string, kind: Toast['kind'] = 'info') {
-    const t = { id: ++toastId, kind, text };
+  /**
+   * Short message at the bottom. `opts.action` adds a button (e.g. Undo);
+   * toasts with an action stay a little longer.
+   */
+  toast(text: string, kindOrOpts: Toast['kind'] | { kind?: Toast['kind']; action?: Toast['action'] } = 'info') {
+    const o = typeof kindOrOpts === 'string' ? { kind: kindOrOpts } : kindOrOpts;
+    const kind = o.kind ?? 'info';
+    const t: Toast = { id: ++toastId, kind, text, action: o.action };
     this.set({ toasts: [...this.state.toasts, t] });
-    setTimeout(() => this.set({ toasts: this.state.toasts.filter((x) => x.id !== t.id) }), kind === 'error' ? 6000 : 3000);
+    setTimeout(() => this.set({ toasts: this.state.toasts.filter((x) => x.id !== t.id) }), kind === 'error' ? 6000 : t.action ? 6000 : 3000);
+  }
+
+  dismissToast(id: number) {
+    this.set({ toasts: this.state.toasts.filter((x) => x.id !== id) });
+  }
+
+  /** Toast after an undoable change: "<text>" with an Undo button. */
+  toastUndo(text: string) {
+    this.toast(text, { action: { label: 'Undo', run: () => this.undo() } });
   }
 }
 

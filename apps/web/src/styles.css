@@ -123,9 +123,10 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 6px; }
 .dialog .error-text { color: var(--error); font-size: 12px; }
 
-.toasts { position: fixed; z-index: 70; right: 16px; bottom: 40px; display: grid; gap: 6px; }
-.toast { max-width: 420px; padding: 8px 12px; border-radius: var(--radius); background: var(--ink); color: var(--bg); box-shadow: var(--shadow); }
+.toasts { position: fixed; z-index: 70; left: 50%; transform: translateX(-50%); bottom: 40px; display: grid; gap: 6px; justify-items: center; }
+.toast { display: flex; align-items: center; gap: 12px; max-width: 520px; padding: 8px 12px; border-radius: var(--radius); background: var(--ink); color: var(--bg); box-shadow: var(--shadow); }
 .toast.error { background: var(--error); color: #fff; }
+.toast-action { background: none; border: 0; padding: 2px 4px; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .menu button.open { background: var(--hover); }
 .menu button.desc { align-items: flex-start; }
 .menu .menu-text { display: grid; gap: 1px; max-width: 340px; }
