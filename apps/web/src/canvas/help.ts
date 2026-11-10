@@ -63,6 +63,7 @@ export function canvasHelp(kind: CanvasKind): HelpGroup[] {
       title: 'Add',
       rows: [
         k(['/', mod('Space')], sfc ? 'Insert: search steps, branches, note, paste' : 'Insert: search block types, note, paste'),
+        k([mod('F')], sfc ? 'Find a step (all sheets and sequencers) and show it' : 'Find a block (all sheets) and show it'),
         g('Double-click empty paper', 'Insert at that point (same search)'),
         g('Right-click', 'Context menu of the element or the paper'),
         g('Drag from the palette', sfc ? 'Drop onto a step (top = before, bottom = after, middle = beside) or a transition' : 'Drop a block type onto the drawing'),

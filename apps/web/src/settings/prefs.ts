@@ -14,6 +14,8 @@ export interface CanvasPrefs {
   ports: PinsMode;
   comments: boolean;
   grid: boolean;
+  /** Overview of the sheet in the corner of the canvas. */
+  minimap: boolean;
 }
 
 /** View mode when the editor starts: the last one used, or a fixed one. */
@@ -22,7 +24,7 @@ export type StartView = 'last' | ViewMode;
 const DISPLAY_KEY = 'css:canvas-display';
 const START_VIEW_KEY = 'css:start-view';
 
-export const DEFAULT_CANVAS_PREFS: CanvasPrefs = { paramsMode: 'block', ports: 'auto', comments: true, grid: true };
+export const DEFAULT_CANVAS_PREFS: CanvasPrefs = { paramsMode: 'block', ports: 'auto', comments: true, grid: true, minimap: true };
 
 function readCanvas(): CanvasPrefs {
   const d: CanvasPrefs = { ...DEFAULT_CANVAS_PREFS };
@@ -33,6 +35,7 @@ function readCanvas(): CanvasPrefs {
     else if (v.params === false) d.paramsMode = 'none';
     if (typeof v.comments === 'boolean') d.comments = v.comments;
     if (typeof v.grid === 'boolean') d.grid = v.grid;
+    if (typeof v.minimap === 'boolean') d.minimap = v.minimap;
     if (v.ports === 'all' || v.ports === 'auto' || v.ports === 'used') d.ports = v.ports;
     // Older versions stored a "Show unused ports" checkbox.
     else if (v.unusedPorts === false) d.ports = 'used';

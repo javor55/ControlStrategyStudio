@@ -643,6 +643,10 @@ function EditorTab() {
         <label className="st-check">
           <input type="checkbox" checked={prefs.grid} onChange={(e) => setCanvasPrefs({ grid: e.target.checked })} /> Show the grid
         </label>
+        <span className="st-label">Minimap</span>
+        <label className="st-check">
+          <input type="checkbox" checked={prefs.minimap} onChange={(e) => setCanvasPrefs({ minimap: e.target.checked })} /> Overview of the sheet in the corner
+        </label>
         <span className="st-label">Parameters</span>
         <span className="st-radios" role="radiogroup" aria-label="Parameters">
           {PARAMS_LABELS.map(([v, l, t]) => (

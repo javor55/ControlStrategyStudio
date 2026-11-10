@@ -13,6 +13,8 @@ export interface CanvasKeyActions {
   zoomTo: (k: number) => void;
   /** `/`, Ctrl+Space: QuickInsert at the pointer. */
   quickInsert: () => void;
+  /** Ctrl+F: find a block / step (all sheets) and show it. */
+  find?: () => void;
   toggleHelp: () => void;
   /** F2: rename the selected element in place. */
   rename: () => void;
@@ -53,7 +55,10 @@ export function useCanvasKeys(actions: CanvasKeyActions) {
       }
       return;
     }
-    if (mod && lower === 'a') {
+    if (mod && lower === 'f' && act.find) {
+      done();
+      act.find();
+    } else if (mod && lower === 'a') {
       done();
       act.selectAll();
     } else if (mod && lower === 'd') {

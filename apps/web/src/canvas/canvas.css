@@ -121,3 +121,12 @@
 .sq-tab.sq-empty .mono { opacity: .6; }
 .sq-tab-sub { color: var(--ink-3); font-size: 11px; }
 .sq-tab.add { color: var(--ink-3); font-size: 14px; }
+
+/* Minimap */
+.cv-minimap { position: absolute; right: 10px; bottom: 10px; z-index: 4; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; opacity: .92; }
+.cv-minimap:hover { opacity: 1; }
+.cv-minimap .mm-paper { fill: #fff; stroke: var(--rule); stroke-width: .5; }
+.cv-minimap .mm-block, .cv-minimap .mm-step { fill: var(--ink-3); opacity: .55; }
+.cv-minimap .mm-note { fill: #f3d77a; }
+.cv-minimap .mm-selected { fill: var(--accent); }
+.cv-minimap .mm-frame { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1.2; }

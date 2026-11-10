@@ -68,6 +68,7 @@ starts an empty one.
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | `Ctrl+C` `Ctrl+X` `Ctrl+V` | Copy, cut, paste blocks or sequence steps (also between strategies and projects; the clipboard holds YAML) |
 | `Ctrl+D` / `Ctrl+A` | Duplicate / select all |
+| `Ctrl+F` | Find a block or step (all sheets) and show it |
 | `Delete` | Delete selection |
 | Arrows | Move selection (with `Shift` by 50 px) |
 | Wheel / `Ctrl`+wheel | Scroll / zoom |

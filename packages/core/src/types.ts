@@ -278,8 +278,11 @@ export interface FolderNode {
 
 export type Selection =
   | { kind: 'block'; id: string }
-  /** Several blocks (multi-selection). Always 2+ ids; a single block uses kind 'block'. */
-  | { kind: 'blocks'; ids: string[] }
+  /**
+   * Several elements (multi-selection): blocks, plus notes by index (rubber band).
+   * Always 2+ elements; a single block uses kind 'block', a single note kind 'note'.
+   */
+  | { kind: 'blocks'; ids: string[]; notes?: number[] }
   | { kind: 'link'; index: number }
   | { kind: 'note'; index: number }
   | null;

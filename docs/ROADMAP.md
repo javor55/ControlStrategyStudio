@@ -69,14 +69,14 @@ strategies. Sizes: **S** small (≤ 1 day), **M** medium, **L** large.
 
 ## Small improvements
 
-- [ ] Minimap and "find block" on the canvas. **S**
-- [ ] Align / distribute selected blocks. **S**
+- [x] Minimap and "find block" on the canvas. **S**
+- [x] Align / distribute selected blocks. **S**
 - [ ] Render ```mermaid blocks in documentation (editor, viewer, PDF). **M**
 - [ ] Expand / collapse block parameters in the HTML viewer (view only). **S**
-- [ ] The line drawn while dragging a new wire should use the project line style. **S**
+- [x] The line drawn while dragging a new wire should use the project line style. **S**
 - [ ] PDF: block header text (e.g. inherited scan "(500ms)") can overflow by a
       few pixels because PDF font metrics differ from the screen. **S**
-- [ ] Rubber-band selection should include notes. **S**
+- [x] Rubber-band selection should include notes. **S**
 - [ ] Reconnecting a link keeps label / category / comment but drops `x-…` keys. **S**
 - [ ] "Take strategy from this version" should also take its `.md` description. **S**
 - [ ] Visual diff: show ghosts of removed items that were on another sheet. **S**

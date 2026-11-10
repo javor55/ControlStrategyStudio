@@ -66,7 +66,7 @@ export const PRINT_THEME: Theme = {
 
 export type RenderSelection =
   | { kind: 'block'; id: string }
-  | { kind: 'blocks'; ids: string[] }
+  | { kind: 'blocks'; ids: string[]; notes?: number[] }
   | { kind: 'link'; index: number }
   | { kind: 'note'; index: number }
   | null;
@@ -148,6 +148,15 @@ function wireColor(w: WireGeom, t: Theme): string {
 }
 
 const DASH: Record<LineStyle, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5', dashdot: '8 3 2 3' };
+
+/**
+ * Stroke of a line of signal type `kind` in the project's line style (its
+ * built-in category BOOL / Numeric / Other) — e.g. for a wire being drawn.
+ */
+export function lineStrokeFor(kind: WireKind, meta: ProjectMeta, t: Theme = PRINT_THEME): { color: string; dash?: string; width: number } {
+  const cat = lineCategories(meta)[BUILTIN_BY_KIND[kind]];
+  return { color: cat?.color ?? (kind === 'bool' ? t.bool : kind === 'real' ? t.real : t.other), dash: cat?.style ? DASH[cat.style] : undefined, width: cat?.width ?? 1.5 };
+}
 
 function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const d = 'M' + w.points.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L');
@@ -312,7 +321,7 @@ function renderConnector(c: ConnectorGeom, t: Theme, o: RenderOptions): string {
 }
 
 function renderNote(nt: NoteGeom, t: Theme, o: RenderOptions): string {
-  const selected = o.selection?.kind === 'note' && o.selection.index === nt.index;
+  const selected = (o.selection?.kind === 'note' && o.selection.index === nt.index) || (o.selection?.kind === 'blocks' && !!o.selection.notes?.includes(nt.index));
   let s = `<g${attrs({ 'data-note': o.interactive ? nt.index : undefined, style: o.interactive ? 'cursor:move' : undefined })}>`;
   s += `<rect${attrs({ x: nt.x, y: nt.y, width: nt.w, height: nt.h, fill: t.noteFill, stroke: selected ? t.accent : t.noteStroke, 'stroke-width': selected ? 2 : 1 })}/>`;
   nt.lines.forEach((line, i) => (s += text(nt.x + 8, nt.y + 16 + i * M.NOTE_LINE, line, { 'font-family': t.fontSans, 'font-size': 11, fill: t.noteInk })));

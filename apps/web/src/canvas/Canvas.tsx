@@ -29,14 +29,16 @@ import {
   type Selection,
   type SheetLayout,
   type YamlPath,
+  wireKind,
 } from '@csd/core';
-import { lineStyleOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
+import { lineStrokeFor, lineStyleOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
 import { store, useEditor, type EditorState } from '../state/store';
 import { activeDiagramOf, diagsOf, layoutActiveSheet, useActiveDiagram, type ActiveDiagram } from '../state/selectors';
 import { useMenu, type MenuEntry } from '../ui/kit';
 import { setCanvasPrefs, useCanvasPrefs, type ParamsMode, type PinsMode } from '../settings/prefs';
 import { promptDialog } from '../ui/dialogs';
 import { readClipboard, rememberClipboard, writeClipboard } from './clipboard';
+import { Minimap } from './Minimap';
 import { QuickInsert, type QuickItem } from './QuickInsert';
 import { InlineEdit, parseParamValue } from './InlineEdit';
 import { ShortcutHelp } from './ShortcutHelp';
@@ -65,7 +67,7 @@ let lastStrategyFile: string | null = null;
 
 type Gesture =
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
-  | { kind: 'marquee'; sx: number; sy: number; base: string[]; additive: boolean; moved: boolean; key: string }
+  | { kind: 'marquee'; sx: number; sy: number; base: string[]; baseNotes?: number[]; additive: boolean; moved: boolean; key: string }
   | {
       kind: 'block';
       id: string;
@@ -80,6 +82,8 @@ type Gesture =
       collapse: boolean;
       /** Dragging an interface bar (`in` / `out`) of a composite drawing. */
       iface?: 'in' | 'out';
+      /** Notes of the multi-selection moving along (origins by note index). */
+      notes?: Record<number, [number, number]>;
     }
   | { kind: 'note'; index: number; sx: number; sy: number; ox: number; oy: number; moved: boolean }
   | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string; reconnect?: Reconnect }
@@ -153,9 +157,20 @@ export function selectedIds(sel: Selection): string[] {
 }
 
 /** Selection for a list of block ids: null, one block, or several. */
-export function selectionOf(ids: string[]): Selection {
+export function selectionOf(ids: string[], notes: number[] = []): Selection {
   const u = [...new Set(ids)];
-  return u.length === 0 ? null : u.length === 1 ? { kind: 'block', id: u[0] } : { kind: 'blocks', ids: u };
+  const n = [...new Set(notes)];
+  if (!n.length) return u.length === 0 ? null : u.length === 1 ? { kind: 'block', id: u[0] } : { kind: 'blocks', ids: u };
+  if (!u.length && n.length === 1) return { kind: 'note', index: n[0] };
+  return { kind: 'blocks', ids: u, notes: n };
+}
+
+/** Notes of a selection (a selected note, or the notes of a multi-selection). */
+export function selectedNotes(sel: Selection): number[] {
+  if (!sel) return [];
+  if (sel.kind === 'note') return [sel.index];
+  if (sel.kind === 'blocks') return sel.notes ?? [];
+  return [];
 }
 
 /** Shortest unambiguous reference to a type: `TYPE`, or `lib/TYPE` when the name exists in several libraries. */
@@ -311,6 +326,38 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     fit();
   }, [fitRequest, ad.file, fit]);
 
+  // Find (Ctrl+F): show a block of any sheet, centred once its sheet is laid out.
+  const [finder, setFinder] = useState(false);
+  const centerPending = useRef<string | null>(null);
+  useEffect(() => {
+    const id = centerPending.current;
+    if (!id) return;
+    const g = layout.blocks.find((b) => b.id === id);
+    if (!g) return;
+    centerPending.current = null;
+    const t = setTimeout(() => pz.centerOn(g.x + g.w / 2, g.y + g.h / 2), 0);
+    return () => clearTimeout(t);
+  }, [layout, pz]);
+  const showBlock = (id: string) => {
+    const b = ad.diagram.blocks.find((x) => x.id === id);
+    if (!b) return;
+    const s = store();
+    centerPending.current = id;
+    if (b.sheet !== activeSheet && ad.diagram.sheets.some((x) => x.id === b.sheet)) s.setSheet(b.sheet);
+    s.select({ kind: 'block', id });
+    focusHost();
+  };
+  const findItems = (): QuickItem[] =>
+    ad.diagram.blocks.map((b) => ({
+      key: b.id,
+      label: b.id,
+      mono: true,
+      category: `${b.def?.type ?? b.typeRef}${ad.diagram.sheets.length > 1 ? ` · sheet ${b.sheet}` : ''}`,
+      description: b.description,
+      keywords: `${b.typeRef} ${b.comment ?? ''}`,
+      run: () => showBlock(b.id),
+    }));
+
   // --- ops -------------------------------------------------------------------------
   const target = { file: ad.file, root: ad.root };
   const dispatch = (op: Op, opts?: Parameters<ReturnType<typeof store>['dispatch']>[1]) => store().dispatch(op, opts);
@@ -361,7 +408,12 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const removeSelection = () => {
     const sel = store().getState().selection;
     if (!sel) return;
-    if (sel.kind === 'block' || sel.kind === 'blocks') removeIds(selectedOnSheet());
+    if (sel.kind === 'blocks' && sel.notes?.length) {
+      // Blocks and notes together: one undo step.
+      const ids = selectedOnSheet();
+      const ops: Op[] = [...[...sel.notes].sort((a, b) => b - a).map((index): Op => ({ op: 'removeNote', index, ...target })), ...(ids.length ? [{ op: 'removeBlocks', ids, ...target } as Op] : [])];
+      if (dispatch({ op: 'batch', ops }, { label: 'Delete selection', select: null })) store().toastUndo(`Deleted ${[ids.length && plural(ids.length, 'block'), plural(sel.notes.length, 'note')].filter(Boolean).join(' and ')}`);
+    } else if (sel.kind === 'block' || sel.kind === 'blocks') removeIds(selectedOnSheet());
     else if (sel.kind === 'link') removeLink(sel.index);
     else if (sel.kind === 'note') removeNote(sel.index);
   };
@@ -382,7 +434,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const selectionFragment = (): { text: string; ids: string[] } | null => {
     const sel = store().getState().selection;
     const ids = selectedOnSheet();
-    const notes = sel?.kind === 'note' ? [sel.index] : [];
+    const notes = selectedNotes(sel);
     const text = fragmentOf(ids, notes);
     return text ? { text, ids } : null;
   };
@@ -448,16 +500,89 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       return;
     }
     const ids = selectedOnSheet();
-    if (!ids.length) return;
+    const notes = selectedNotes(sel);
+    if (!ids.length && !notes.length) return;
     const positions: Record<string, [number, number]> = {};
     for (const id of ids) {
       const g = geomOf(id);
       if (g) positions[id] = [g.x + dx, g.y + dy];
     }
-    dispatch({ op: 'pinAll', positions, ...target }, { label: ids.length > 1 ? `Move ${ids.length} blocks` : `Move ${ids[0]}`, mergeKey: 'nudge' });
+    const ops: Op[] = ids.length ? [{ op: 'pinAll', positions, ...target }] : [];
+    for (const index of notes) {
+      const n = layoutRef.current.notes.find((x) => x.index === index);
+      if (n) ops.push({ op: 'setNote', index, pos: [n.x + dx, n.y + dy], ...target });
+    }
+    dispatch(ops.length === 1 ? ops[0] : { op: 'batch', ops }, { label: 'Move selection', mergeKey: 'nudge' });
   };
 
   const geomOf = (id: string): BlockGeom | undefined => layoutRef.current.blocks.find((b) => b.id === id);
+
+  /** Align or distribute the selected blocks and notes (positions become pinned). */
+  type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom' | 'hspread' | 'vspread';
+  const alignSelection = (mode: AlignMode) => {
+    const sel = store().getState().selection;
+    const items: { key: string; note?: number; x: number; y: number; w: number; h: number }[] = [];
+    for (const id of selectedOnSheet()) {
+      const g = geomOf(id);
+      if (g) items.push({ key: id, x: g.x, y: g.y, w: g.w, h: g.h });
+    }
+    for (const i of selectedNotes(sel)) {
+      const n = layoutRef.current.notes.find((x) => x.index === i);
+      if (n) items.push({ key: `note:${i}`, note: i, x: n.x, y: n.y, w: n.w, h: n.h });
+    }
+    if (items.length < (mode.endsWith('spread') ? 3 : 2)) return;
+    const minX = Math.min(...items.map((i) => i.x));
+    const maxX = Math.max(...items.map((i) => i.x + i.w));
+    const minY = Math.min(...items.map((i) => i.y));
+    const maxY = Math.max(...items.map((i) => i.y + i.h));
+    const pos = new Map<string, [number, number]>();
+    if (mode === 'hspread' || mode === 'vspread') {
+      const h = mode === 'hspread';
+      const sorted = [...items].sort((a, b) => (h ? a.x - b.x : a.y - b.y));
+      const span = h ? maxX - minX : maxY - minY;
+      const gap = (span - sorted.reduce((n, i) => n + (h ? i.w : i.h), 0)) / (sorted.length - 1);
+      let at = h ? minX : minY;
+      for (const i of sorted) {
+        pos.set(i.key, h ? [at, i.y] : [i.x, at]);
+        at += (h ? i.w : i.h) + gap;
+      }
+    } else
+      for (const i of items) {
+        const x = mode === 'left' ? minX : mode === 'right' ? maxX - i.w : mode === 'center' ? (minX + maxX) / 2 - i.w / 2 : i.x;
+        const y = mode === 'top' ? minY : mode === 'bottom' ? maxY - i.h : mode === 'middle' ? (minY + maxY) / 2 - i.h / 2 : i.y;
+        pos.set(i.key, [x, y]);
+      }
+    const positions: Record<string, [number, number]> = {};
+    const ops: Op[] = [];
+    for (const i of items) {
+      const p = pos.get(i.key)!;
+      const q: [number, number] = [snap(p[0]), snap(p[1])];
+      if (i.note !== undefined) ops.push({ op: 'setNote', index: i.note, pos: q, ...target });
+      else positions[i.key] = q;
+    }
+    if (Object.keys(positions).length) ops.unshift({ op: 'pinAll', positions, ...target });
+    const names: Record<AlignMode, string> = { left: 'Align left', center: 'Align centres', right: 'Align right', top: 'Align top', middle: 'Align middles', bottom: 'Align bottom', hspread: 'Distribute horizontally', vspread: 'Distribute vertically' };
+    dispatch(ops.length === 1 ? ops[0] : { op: 'batch', ops }, { label: names[mode] });
+  };
+  /** Align / distribute commands for menus (enabled by the selection size). */
+  const alignItems = (): MenuEntry[] => {
+    const sel = store().getState().selection;
+    const n = selectedOnSheet().length + selectedNotes(sel).length;
+    const why2 = n < 2 ? 'Select two or more blocks or notes' : undefined;
+    const why3 = n < 3 ? 'Select three or more blocks or notes' : undefined;
+    return [
+      { label: 'Align left', disabled: !!why2, description: why2, onClick: () => alignSelection('left') },
+      { label: 'Align centres', disabled: !!why2, onClick: () => alignSelection('center') },
+      { label: 'Align right', disabled: !!why2, onClick: () => alignSelection('right') },
+      'separator',
+      { label: 'Align top', disabled: !!why2, onClick: () => alignSelection('top') },
+      { label: 'Align middles', disabled: !!why2, onClick: () => alignSelection('middle') },
+      { label: 'Align bottom', disabled: !!why2, onClick: () => alignSelection('bottom') },
+      'separator',
+      { label: 'Distribute horizontally', disabled: !!why3, description: why3, onClick: () => alignSelection('hspread') },
+      { label: 'Distribute vertically', disabled: !!why3, onClick: () => alignSelection('vspread') },
+    ];
+  };
 
   const moveToSheet = (ids: string[], to: number) => {
     const ops: Op[] = ids.map((id) => ({ op: 'setBlockField', id, field: 'sheet', value: to, ...target }));
@@ -876,13 +1001,35 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         const g = geomOf(x);
         if (g && !g.iface) origins[x] = [g.x, g.y];
       }
-      gesture.current = { kind: 'block', id, ids: Object.keys(origins), origins, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, moved: false, collapse };
+      const noteOrigins: Record<number, [number, number]> = {};
+      if (collapse) for (const i of selectedNotes(s.getState().selection)) {
+        const n = layoutRef.current.notes.find((x) => x.index === i);
+        if (n) noteOrigins[i] = [n.x, n.y];
+      }
+      gesture.current = { kind: 'block', id, ids: Object.keys(origins), origins, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, moved: false, collapse, notes: noteOrigins };
     } else if (el.closest('[data-note]')) {
       const index = Number(el.closest('[data-note]')!.getAttribute('data-note'));
       const n = layoutRef.current.notes.find((x) => x.index === index);
       if (!n) return;
-      s.select({ kind: 'note', index });
-      gesture.current = { kind: 'note', index, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y, moved: false };
+      const cur = s.getState().selection;
+      if (cur?.kind === 'blocks' && cur.notes?.includes(index)) {
+        // A note of a multi-selection: move the whole selection.
+        const origins: Record<string, [number, number]> = {};
+        for (const x of cur.ids) {
+          const g = geomOf(x);
+          if (g && !g.iface) origins[x] = [g.x, g.y];
+        }
+        const notes: Record<number, [number, number]> = {};
+        for (const i of cur.notes) {
+          const m = layoutRef.current.notes.find((x) => x.index === i);
+          if (m) notes[i] = [m.x, m.y];
+        }
+        const ids = Object.keys(origins);
+        gesture.current = { kind: 'block', id: ids[0] ?? '', ids, origins, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, moved: false, collapse: false, notes };
+      } else {
+        s.select({ kind: 'note', index });
+        gesture.current = { kind: 'note', index, sx: e.clientX, sy: e.clientY, ox: n.x, oy: n.y, moved: false };
+      }
     } else if (el.closest('[data-link]')) {
       const index = Number(el.closest('[data-link]')!.getAttribute('data-link'));
       s.select({ kind: 'link', index });
@@ -895,7 +1042,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       gesture.current = { kind: 'conn', target: t, sx: e.clientX, sy: e.clientY };
     } else {
       const base = additive ? selectedIds(s.getState().selection) : [];
-      gesture.current = { kind: 'marquee', sx: e.clientX, sy: e.clientY, base, additive, moved: false, key: base.join(',') };
+      gesture.current = { kind: 'marquee', sx: e.clientX, sy: e.clientY, base, baseNotes: additive ? selectedNotes(s.getState().selection) : [], additive, moved: false, key: base.join(',') };
     }
     host.setPointerCapture(e.pointerId);
   };
@@ -929,25 +1076,28 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         const [ax, ay] = toDrawing(x0, y0);
         const [bx, by] = toDrawing(x1, y1);
         const hits = layoutRef.current.blocks.filter((b) => !b.iface && b.x >= ax && b.y >= ay && b.x + b.w <= bx && b.y + b.h <= by).map((b) => b.id);
+        const noteHits = layoutRef.current.notes.filter((n) => n.x >= ax && n.y >= ay && n.x + n.w <= bx && n.y + n.h <= by).map((n) => n.index);
         const ids = g.additive ? [...new Set([...g.base, ...hits])] : hits;
-        const key = ids.join(',');
+        const notes = g.additive ? [...new Set([...(g.baseNotes ?? []), ...noteHits])] : noteHits;
+        const key = `${ids.join(',')}|${notes.join(',')}`;
         if (key !== g.key) {
           g.key = key;
-          store().select(selectionOf(ids));
+          store().select(selectionOf(ids, notes));
         }
         return;
       }
       case 'block': {
         if (!g.moved && !far()) return;
-        if (!g.ids.length) return;
+        if (!g.ids.length && !Object.keys(g.notes ?? {}).length) return;
         g.moved = true;
-        const [ox, oy] = g.origins[g.id] ?? g.origins[g.ids[0]];
+        const [ox, oy] = g.origins[g.id] ?? g.origins[g.ids[0]] ?? Object.values(g.notes!)[0];
         const dx = snap(ox + (e.clientX - g.sx) / k) - ox;
         const dy = snap(oy + (e.clientY - g.sy) / k) - oy;
         if (dx === g.dx && dy === g.dy) return;
         g.dx = dx;
         g.dy = dy;
         setOverrides(Object.fromEntries(g.ids.map((id) => [id, [g.origins[id][0] + dx, g.origins[id][1] + dy] as [number, number]])));
+        if (g.notes && Object.keys(g.notes).length) setNoteOverrides(Object.fromEntries(Object.entries(g.notes).map(([i, o]) => [Number(i), [o[0] + dx, o[1] + dy] as [number, number]])));
         return;
       }
       case 'note': {
@@ -997,9 +1147,12 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
           dispatch({ op: 'moveInterface', id: g.iface, pos: [o[0] + g.dx, o[1] + g.dy], ...target }, { label: `Move ${g.iface === 'in' ? 'inputs' : 'outputs'} bar` });
         } else if (g.moved && (g.dx || g.dy)) {
           const positions = Object.fromEntries(g.ids.map((id) => [id, [g.origins[id][0] + g.dx, g.origins[id][1] + g.dy] as [number, number]]));
-          dispatch({ op: 'pinAll', positions, ...target }, { label: g.ids.length > 1 ? `Move ${g.ids.length} blocks` : `Move ${g.ids[0]}` });
+          const noteOps: Op[] = Object.entries(g.notes ?? {}).map(([i, o]) => ({ op: 'setNote', index: Number(i), pos: [o[0] + g.dx, o[1] + g.dy], ...target }));
+          const move: Op = { op: 'pinAll', positions, ...target };
+          dispatch(noteOps.length ? { op: 'batch', ops: [move, ...noteOps] } : move, { label: g.ids.length > 1 || noteOps.length ? 'Move selection' : `Move ${g.ids[0]}` });
         } else if (!g.moved && g.collapse) store().select({ kind: 'block', id: g.id });
         setOverrides(undefined);
+        setNoteOverrides(undefined);
         break;
       }
       case 'note':
@@ -1093,6 +1246,10 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     return undefined;
   };
   const keys = useCanvasKeys({
+    find: () => {
+      closePopups();
+      setFinder(true);
+    },
     selectAll: () => store().select(selectionOf(allBlockIds())),
     duplicate,
     deleteSelection: removeSelection,
@@ -1214,7 +1371,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       if (!b) return;
       const cur = selectedIds(s.getState().selection);
       if (cur.length > 1 && cur.includes(id)) {
-        menu.open(e, [{ section: plural(cur.length, 'block') }, ...clipItems(), ...moveToItems(cur), deleteItem(() => removeIds(cur))]);
+        menu.open(e, [{ section: plural(cur.length, 'block') }, { label: 'Align / distribute', submenu: alignItems() }, 'separator', ...clipItems(), ...moveToItems(cur), deleteItem(() => removeIds(cur))]);
         return;
       }
       s.select({ kind: 'block', id });
@@ -1358,6 +1515,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   };
 
   // --- overlays (canvas-area px) ------------------------------------------------------------
+  // The wire being drawn already looks like the finished link (project line style of its signal type).
+  const wireStroke = wire ? lineStrokeFor(wireKind(wire.src.type), model.meta) : undefined;
   let wireLine: { x0: number; y0: number; x1: number; y1: number } | null = null;
   let ring: { x: number; y: number; ok: boolean; title?: string } | null = null;
   if (wire) {
@@ -1389,6 +1548,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       sep: true,
       items: [
         { label: 'Grid', checked: display.grid, onClick: () => setDisplayOpt({ grid: !display.grid }) },
+        { label: 'Minimap', checked: display.minimap, onClick: () => setDisplayOpt({ minimap: !display.minimap }) },
         { section: 'Parameters' },
         ...PARAMS_MODES.map(([m, label, title]): MenuEntry => ({ label, title, radio: true, checked: display.paramsMode === m, onClick: () => setDisplayOpt({ paramsMode: m }) })),
         { section: 'Pins' },
@@ -1406,6 +1566,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       items: [
         { label: 'Auto order', title: 'Set the execution order from the signal flow', onClick: doAutoOrder },
         { label: 'Align by order', title: 'Arrange the blocks by execution order (fills missing orders first)', onClick: alignByOrder },
+        'separator',
+        { label: 'Align / distribute selection', submenu: alignItems() },
         'separator',
         { label: 'Pin all', title: 'Store the current position of every block on this sheet', onClick: pinAll },
         { label: 'Reset layout', title: 'Remove the hand-placed positions on this sheet', onClick: resetLayout },
@@ -1472,6 +1634,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
               {wireLine && (
                 <line
                   className={`${wire?.reconnect ? 'reconnect' : ''}${ring ? (ring.ok ? ' ok' : ' bad') : ''}`}
+                  style={wireStroke && !(ring && !ring.ok) ? { stroke: wireStroke.color, strokeDasharray: wireStroke.dash ?? 'none', strokeWidth: Math.max(1.2, wireStroke.width * view.current.k) } : undefined}
                   x1={wireLine.x0}
                   y1={wireLine.y0}
                   x2={wireLine.x1}
@@ -1488,6 +1651,18 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             </svg>
           )}
         </div>
+        {display.minimap && !empty && (
+          <Minimap
+            bounds={layout.bounds}
+            rects={[
+              ...layout.blocks.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, kind: selectedIds(selection).includes(b.id) ? ('selected' as const) : ('block' as const) })),
+              ...layout.notes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, kind: 'note' as const })),
+            ]}
+            view={view}
+            host={hostRef}
+            centerOn={pz.centerOn}
+          />
+        )}
         {empty && !quick && (
           <div className="cv-empty" role="note">
             <strong>{ad.composite ? 'This composite block has no internal blocks yet' : 'This sheet is empty'}</strong>
@@ -1503,6 +1678,19 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             onCommit={(v) => commitInline(inline, v)}
             onCancel={() => {
               setInline(null);
+              focusHost();
+            }}
+          />
+        )}
+        {finder && (
+          <QuickInsert
+            x={Math.max(20, (hostRef.current?.clientWidth ?? 600) / 2 - 180)}
+            y={16}
+            title="Find a block"
+            placeholder="Name, type or description…"
+            items={findItems()}
+            onClose={() => {
+              setFinder(false);
               focusHost();
             }}
           />

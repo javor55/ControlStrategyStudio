@@ -12,6 +12,7 @@ import { useCompare } from '../history/compare';
 import { CompareBanner } from '../history/CompareBanner';
 import { InlineEdit } from './InlineEdit';
 import { ShortcutHelp } from './ShortcutHelp';
+import { Minimap } from './Minimap';
 import { QuickInsert, type QuickItem } from './QuickInsert';
 import { useCanvasKeys } from './useCanvasKeys';
 import { CanvasHeader, CanvasToolbar, folderPath, SheetTabs, sheetLabel, sheetTabMenu, type ToolItem } from './CanvasChrome';
@@ -210,6 +211,40 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   useLayoutEffect(() => {
     fit();
   }, [fitRequest, file, fit]);
+
+  // Find (Ctrl+F): show a step of any sheet or sequencer, centred once laid out.
+  const [finder, setFinder] = useState(false);
+  const centerPending = useRef<string | null>(null);
+  useEffect(() => {
+    const id = centerPending.current;
+    if (!id) return;
+    const g = layout.steps.find((x) => x.id === id);
+    if (!g) return;
+    centerPending.current = null;
+    const t = setTimeout(() => pz.centerOn(g.x + g.w / 2, g.y + g.h / 2), 0);
+    return () => clearTimeout(t);
+  }, [layout, pz]);
+  const showStep = (id: string) => {
+    const st = seq.steps.find((x) => x.id === id);
+    if (!st) return;
+    const s = store();
+    centerPending.current = id;
+    const sh = seq.sheets.some((x) => x.id === st.sheet) ? st.sheet : sheet;
+    if (seq.explicitSequencers && st.sequencer !== sqId) s.setSequencer(st.sequencer, sh);
+    else if (sh !== sheet) s.setSheet(sh);
+    s.select({ kind: 'block', id });
+    focusHost();
+  };
+  const findItems = (): QuickItem[] =>
+    seq.steps.map((st) => ({
+      key: st.id,
+      label: st.id,
+      mono: true,
+      category: [seq.explicitSequencers ? st.sequencer : '', seq.sheets.length > 1 ? `sheet ${st.sheet}` : ''].filter(Boolean).join(' · ') || 'step',
+      description: st.description,
+      keywords: st.actions.map((a) => `${a.set ? `${a.set.strategy}:${a.set.block}.${a.set.port}` : ''} ${a.text ?? ''}`).join(' '),
+      run: () => showStep(st.id),
+    }));
 
   // --- helpers ---------------------------------------------------------------------------
   const dispatch = (op: Op, opts?: Parameters<ReturnType<typeof store>['dispatch']>[1]) => store().dispatch(op, opts);
@@ -725,6 +760,10 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
 
   // --- keyboard (same keys on every canvas: useCanvasKeys) ---------------------------------
   const keys = useCanvasKeys({
+    find: () => {
+      setQuick(null);
+      setFinder(true);
+    },
     selectAll: () => store().select(stepSelection(onSheetIds())),
     duplicate,
     deleteSelection: removeSelection,
@@ -1137,7 +1176,10 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       label: 'View',
       title: 'What the drawing shows (also in Settings → Editor)',
       sep: true,
-      items: [{ label: 'Grid', checked: prefs.grid, onClick: () => setCanvasPrefs({ grid: !prefs.grid }) }],
+      items: [
+        { label: 'Grid', checked: prefs.grid, onClick: () => setCanvasPrefs({ grid: !prefs.grid }) },
+        { label: 'Minimap', checked: prefs.minimap, onClick: () => setCanvasPrefs({ minimap: !prefs.minimap }) },
+      ],
     },
     { kind: 'button', key: 'add', label: SFC_LABELS.step, icon: CIcon.step, title: 'Add a step in the centre of the view (double-click the paper to place it)', sep: true, onClick: () => addSfcElement(seq, 'step', { sheet, sequencer: sqId }) },
     {
@@ -1228,6 +1270,18 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
             {marquee && <rect className="cv-marquee" x={marquee.x + 0.5} y={marquee.y + 0.5} width={marquee.w} height={marquee.h} />}
           </svg>
         </div>
+        {prefs.minimap && layout.steps.length > 0 && (
+          <Minimap
+            bounds={layout.bounds}
+            rects={[
+              ...layout.steps.map((g) => ({ x: g.x, y: g.y, w: g.actionBox ? g.actionBox.x + g.actionBox.w - g.x : g.w, h: g.h, kind: selectedSteps(selection).includes(g.id) ? ('selected' as const) : ('step' as const) })),
+              ...layout.notes.map((n) => ({ x: n.x, y: n.y, w: n.w, h: n.h, kind: 'note' as const })),
+            ]}
+            view={view}
+            host={hostRef}
+            centerOn={pz.centerOn}
+          />
+        )}
         {!layout.steps.length && !layout.notes.length && !quick && (
           <div className="cv-empty" role="note">
             <strong>This sheet is empty</strong>
@@ -1237,6 +1291,19 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
           </div>
         )}
         {inlineEl}
+        {finder && (
+          <QuickInsert
+            x={Math.max(20, (hostRef.current?.clientWidth ?? 600) / 2 - 180)}
+            y={16}
+            title="Find a step"
+            placeholder="Step name, description or action…"
+            items={findItems()}
+            onClose={() => {
+              setFinder(false);
+              focusHost();
+            }}
+          />
+        )}
         {quick && (
           <QuickInsert
             x={quick.sx}
