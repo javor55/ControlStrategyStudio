@@ -225,3 +225,9 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .project-btn { max-width: 260px; }
 .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1440px) { .brand-text { display: none; } .brand { margin-right: 2px; } }
+
+/* Linked folder on disk (top bar) */
+.folder-state { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+.folder-state.ok, .folder-state.saving { color: var(--ink-2); }
+.folder-state.needs-permission { color: var(--accent); border-color: var(--accent); }
+.folder-state.changed-outside, .folder-state.error { color: var(--warning); border-color: var(--warning); }

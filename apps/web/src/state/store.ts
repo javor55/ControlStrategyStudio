@@ -59,6 +59,8 @@ export interface EditorState {
   toasts: Toast[];
   /** Files changed since the last save to browser storage. */
   unsaved: boolean;
+  /** Folder on disk linked to the project (File System Access). */
+  folder?: { name: string; status: 'ok' | 'saving' | 'needs-permission' | 'changed-outside' | 'error'; message?: string };
   viewMode: ViewMode;
   /** Version control status (branch, last commit, uncommitted changes). */
   vcs: VcsStatus;
@@ -135,6 +137,10 @@ export class EditorStore {
 
   setVcs(vcs: VcsStatus) {
     this.set({ vcs });
+  }
+
+  setFolder(folder: EditorState['folder']) {
+    this.set({ folder });
   }
 
   markSaved() {

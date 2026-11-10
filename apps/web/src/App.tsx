@@ -4,10 +4,12 @@ import { Document, parseDocument } from 'yaml';
 import { store, useEditor, type ViewMode } from './state/store';
 import { activeView } from './state/selectors';
 import { browserStore, download, newProjectId, safeFileName, type ProjectSummary } from './state/persist';
-import { openSession, openStoredProject, openZip, projectZip } from './state/session';
+import { checkFolder, disconnectFolder, openFolder, openSession, openStoredProject, openZip, projectZip, reconnectFolder, resolveFolder, saveToFolder, syncFolder } from './state/session';
+import { folderSupported } from './state/folder';
 import { LogoMark } from './ui/Logo';
 import { DialogHost, confirmDialog, promptDialog } from './ui/dialogs';
 import { useMenu, type MenuEntry } from './ui/kit';
+import type { EditorState } from './state/store';
 import { keys } from './ui/keys';
 import { Icon } from './project/icons';
 import { Canvas } from './canvas/Canvas';
@@ -240,6 +242,7 @@ function TopBar({ panels }: { panels: PanelsApi }) {
   const canUndo = useEditor((s) => s.undoStack.length > 0);
   const canRedo = useEditor((s) => s.redoStack.length > 0);
   const unsaved = useEditor((s) => s.unsaved);
+  const folder = useEditor((s) => s.folder);
   const menu = useMenu();
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -266,6 +269,20 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         hint: keys('Mod+S'),
         onClick: () => saveZip(),
       },
+      'separator',
+      {
+        label: 'Open folder…',
+        disabled: !folderSupported,
+        description: folderSupported ? 'A project folder on disk; changes are saved there' : 'Needs Chrome or Edge (File System Access)',
+        onClick: () => void openFolder(newProjectId()).catch((e) => store().toast(`Cannot open the folder: ${(e as Error).message}`, 'error')),
+      },
+      {
+        label: folder ? `Saved to folder ${folder.name}` : 'Save to folder…',
+        disabled: !folderSupported || !!folder,
+        description: folderSupported ? (folder ? 'Every change is written there' : 'Link this project to an empty folder; changes are saved there') : 'Needs Chrome or Edge (File System Access)',
+        onClick: () => void saveToFolder().catch((e) => store().toast(`Cannot save to the folder: ${(e as Error).message}`, 'error')),
+      },
+      ...(folder ? [{ label: 'Disconnect folder', description: 'Stop saving to the folder (its files stay)', onClick: () => void disconnectFolder() } as MenuEntry] : []),
       'separator',
       {
         label: 'Open example',
@@ -343,9 +360,13 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         <PanelIcon side="right" open={panels.rightOpen} />
       </button>
       <span className="spacer" />
-      <span className={`save-state${unsaved ? ' saving' : ''}`} role="status" title={unsaved ? 'Saving in this browser…' : 'All changes are saved in this browser'} aria-label={unsaved ? 'Saving' : 'Saved in browser'}>
-        {unsaved ? Icon.saving : Icon.saved}
-      </span>
+      {folder ? (
+        <FolderState folder={folder} />
+      ) : (
+        <span className={`save-state${unsaved ? ' saving' : ''}`} role="status" title={unsaved ? 'Saving in this browser…' : 'All changes are saved in this browser'} aria-label={unsaved ? 'Saving' : 'Saved in browser'}>
+          {unsaved ? Icon.saving : Icon.saved}
+        </span>
+      )}
       <button className="btn" title={`Download the project as a ZIP file (${keys('Mod+S')})`} onClick={() => saveZip()}>
         Save as ZIP
       </button>
@@ -490,6 +511,48 @@ function Workspace() {
   );
 }
 
+/** Folder link state in the top bar: saved / saving / needs a click / changed outside. */
+function FolderState({ folder }: { folder: NonNullable<EditorState['folder']> }) {
+  const menu = useMenu();
+  const label =
+    folder.status === 'ok'
+      ? `Saved to ${folder.name}`
+      : folder.status === 'saving'
+        ? `Saving to ${folder.name}…`
+        : folder.status === 'needs-permission'
+          ? `Reconnect ${folder.name}`
+          : folder.status === 'changed-outside'
+            ? `${folder.name} changed outside`
+            : `${folder.name}: error`;
+  const items = (): MenuEntry[] => [
+    { section: `Folder ${folder.name}` },
+    ...(folder.message ? [{ label: folder.message, disabled: true } as MenuEntry] : []),
+    ...(folder.status === 'needs-permission' ? [{ label: 'Allow access again', description: 'The browser asks once after a reload', onClick: () => void reconnectFolder() } as MenuEntry] : []),
+    ...(folder.status === 'changed-outside'
+      ? [
+          { label: 'Load from folder', description: 'Take the folder version (Ctrl+Z brings the app version back)', onClick: () => void resolveFolder('load') } as MenuEntry,
+          { label: 'Write app version to folder', description: 'Replace the outside changes', danger: true, onClick: () => void resolveFolder('overwrite') } as MenuEntry,
+        ]
+      : []),
+    ...(folder.status === 'ok' || folder.status === 'error' ? [{ label: 'Check the folder now', onClick: () => void checkFolder({ interactive: true }) } as MenuEntry, { label: 'Save now', onClick: () => void syncFolder() } as MenuEntry] : []),
+    'separator',
+    { label: 'Disconnect folder', description: 'Stop saving to the folder (its files stay)', onClick: () => void disconnectFolder() },
+  ];
+  return (
+    <>
+      <button
+        type="button"
+        className={`btn small folder-state ${folder.status}`}
+        title={folder.message ?? (folder.status === 'ok' ? 'All changes are saved to the folder on disk (and in this browser)' : label)}
+        onClick={(e) => (folder.status === 'needs-permission' ? void reconnectFolder() : menu.openBelow(e.currentTarget, items()))}
+      >
+        {folder.status === 'ok' ? Icon.saved : folder.status === 'saving' ? Icon.saving : '⚠'} {label}
+      </button>
+      {menu.element}
+    </>
+  );
+}
+
 function Toasts() {
   const toasts = useEditor((s) => s.toasts);
   return (
@@ -565,6 +628,12 @@ function useShortcuts(panels: PanelsApi) {
 export function App() {
   const panels = usePanels();
   useShortcuts(panels);
+  // Back in the window: pick up changes made in the linked folder (git pull, another editor).
+  useEffect(() => {
+    const onFocus = () => void checkFolder({ interactive: true });
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
   // Fit the drawing when the space for it changes.
   const first = useRef(true);
   useEffect(() => {

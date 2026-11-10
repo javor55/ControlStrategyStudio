@@ -47,7 +47,7 @@ strategies. Sizes: **S** small (≤ 1 day), **M** medium, **L** large.
       PDF title block. **S**
 - [ ] **Git server sync** — push / pull to GitHub / GitLab from the app
       (isomorphic-git; needs an access token and a CORS proxy). **M**
-- [ ] **Local folder** — open / save a project folder directly (File System
+- [x] **Local folder** — open / save a project folder directly (File System
       Access API, Chrome / Edge), so ordinary git tools can be used alongside. **M**
 
 ### Verification

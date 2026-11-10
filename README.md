@@ -47,6 +47,10 @@
 
 * **Online:** <https://javor55.github.io/ControlStrategyStudio/> — nothing to install.
   Projects are stored in your browser; use **Save ZIP** to keep or share them.
+* **A folder on disk** (Chrome / Edge): **Project ▾ → Open folder…** or **Save to
+  folder…** links the project to a folder; every change is written there, with the
+  git history in its `.git`, so ordinary git tools (and other editors) work alongside.
+  Changes made outside the app are picked up when you switch back to the window.
 * **Offline:** download
   [`control-strategy-studio.html`](https://javor55.github.io/ControlStrategyStudio/control-strategy-studio.html)
   and open it by double-click. The whole application is this one file.
