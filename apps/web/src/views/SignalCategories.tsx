@@ -1,6 +1,6 @@
 // Line categories (project.yaml `signal_categories`): shared helpers and the
 // short legend on the project page. The categories themselves are edited in
-// Settings → Drawing style (one table for the built-in BOOL / Numeric / Other
+// Settings → Drawing style (one table for the default line
 // categories and the project's own, e.g. interlock or tracking).
 import { useEffect, useMemo, useRef } from 'react';
 import { BUILTIN_CATEGORIES, lineCategories, type SignalCategory } from '@csd/core';
@@ -13,16 +13,16 @@ export const LINE_DASH: Record<string, string | undefined> = { solid: undefined,
 export const DEFAULT_LINE_WIDTH = 1.5;
 const FALLBACK_COLOR = '#5b6670';
 
-/** Default colour of a built-in category (renderer theme), else a neutral grey. */
+/** Default colour of the built-in default line (renderer theme), else a neutral grey. */
 export function builtinColor(name: string): string {
-  return name === 'bool' ? PRINT_THEME.bool : name === 'numeric' ? PRINT_THEME.real : name === 'other' ? PRINT_THEME.other : FALLBACK_COLOR;
+  return name === 'default' ? PRINT_THEME.real : FALLBACK_COLOR;
 }
 
 export const isBuiltinCategory = (name: string) => name in BUILTIN_CATEGORIES;
 
-/** Label of a category for people: BOOL / Numeric / Other for the built-ins. */
+/** Label of a category for people: "Default" for the built-in one. */
 export function categoryLabel(name: string): string {
-  return name === 'bool' ? 'BOOL' : name === 'numeric' ? 'Numeric' : name === 'other' ? 'Other' : name;
+  return name === 'default' ? 'Default' : name;
 }
 
 /** Colour input that commits once, when the picker is closed (native `change`), not on every move. */
@@ -77,7 +77,7 @@ export function LineCategoriesLegend() {
           </li>
         ))}
       </ul>
-      <p className="muted">Links get BOOL, Numeric or Other automatically by their signal type; give a link a project category (e.g. interlock) in its properties.</p>
+      <p className="muted">Links use the default line; give a link a project category (e.g. interlock) in its properties.</p>
     </section>
   );
 }

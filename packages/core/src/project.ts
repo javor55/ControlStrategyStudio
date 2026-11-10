@@ -6,7 +6,7 @@ import { validateSchema } from './schema';
 import { parseDiagram } from './diagram';
 import { validateDiagram } from './validate';
 import { parseSequence, sequenceRefs, validateSequence, type SequenceRef } from './sequence';
-import { BUILTIN_CATEGORIES, DEFAULT_DRAWING, IMPLICIT_SEQUENCER, type BuiltinCategory, type SignalCategory, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
+import { BUILTIN_CATEGORIES, DEFAULT_DRAWING, IMPLICIT_SEQUENCER, type SignalCategory, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
 import { isObj, lineAt, parseYaml, pickExt, str } from './yamlutil';
 
 export const DEFAULT_LEVELS = ['Enterprise', 'Site', 'Area', 'Unit', 'Equipment Module', 'Control Module'];
@@ -87,14 +87,10 @@ function parseMeta(files: Files, diags: Diag[]): ProjectMeta {
  * are used when the built-in category is not defined.
  */
 export function lineCategories(meta: ProjectMeta): Record<string, SignalCategory> {
-  const legacy = { bool: meta.drawing.signals.bool, numeric: meta.drawing.signals.real, other: meta.drawing.signals.other };
-  const out: Record<string, SignalCategory> = {};
-  for (const k of Object.keys(BUILTIN_CATEGORIES) as BuiltinCategory[]) {
-    const own = meta.signalCategories[k];
-    const l = legacy[k];
-    out[k] = own ?? { color: l.color, style: l.style, width: l.width, description: BUILTIN_CATEGORIES[k] };
-    if (!out[k].description) out[k] = { ...out[k], description: BUILTIN_CATEGORIES[k] };
-  }
+  // Older projects styled the numeric lines in `drawing.signals.real`: their default.
+  const l = meta.drawing.signals.real;
+  const own = meta.signalCategories.default;
+  const out: Record<string, SignalCategory> = { default: { ...(own ?? { color: l.color, style: l.style, width: l.width }), description: own?.description ?? BUILTIN_CATEGORIES.default } };
   for (const [k, v] of Object.entries(meta.signalCategories)) if (!(k in out)) out[k] = v;
   return out;
 }

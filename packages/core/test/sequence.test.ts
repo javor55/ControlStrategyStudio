@@ -197,14 +197,15 @@ describe('sequence clipboard, levels and line categories', () => {
     const g = run(demo, { op: 'setLevels', levels: ['Plant', 'Area'] });
     expect(loadProject(g).root.folders[0].folders[0].level).toBe('Area');
   });
-  it('styles links by built-in category of their signal type or by their own category', async () => {
+  it('styles links by the default line or by their own category', async () => {
     const { lineCategories } = await import('../src');
-    let f = run(demo, { op: 'setSignalCategory', name: 'bool', category: { color: '#00aa00', style: 'dashed' } });
+    expect(Object.keys(lineCategories(loadProject(demo).meta))[0]).toBe('default');
+    let f = run(demo, { op: 'setSignalCategory', name: 'default', category: { color: '#00aa00', style: 'dashed' } });
     const meta = loadProject(f).meta;
-    expect(lineCategories(meta).bool).toMatchObject({ color: '#00aa00', style: 'dashed' });
-    expect(lineCategories(meta).numeric.description).toMatch(/Numeric/);
+    expect(lineCategories(meta).default).toMatchObject({ color: '#00aa00', style: 'dashed' });
+    expect(lineCategories(meta).default.description).toMatch(/without a category/);
     expect(lineCategories(meta).interlock.color).toBe('#b3261e');
-    f = run(f, { op: 'setLinkField', file: `${U100}/P101.yaml`, index: 0, field: 'category', value: 'numeric' });
+    f = run(f, { op: 'setLinkField', file: `${U100}/P101.yaml`, index: 0, field: 'category', value: 'default' });
     expect(loadProject(f).diags.filter((d) => d.code === 'unknown-category')).toEqual([]);
   });
 });

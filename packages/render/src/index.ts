@@ -86,7 +86,6 @@ export function lineStyleOptions(meta: ProjectMeta): Pick<RenderOptions, 'catego
   return { categories: lineCategories(meta), feedbackStyle: meta.drawing.feedback };
 }
 
-const BUILTIN_BY_KIND: Record<WireKind, string> = { bool: 'bool', real: 'numeric', other: 'other' };
 
 export interface RenderDiff {
   blocks?: Readonly<Record<string, 'added' | 'changed'>>;
@@ -142,20 +141,17 @@ function text(x: number, y: number, s: string, a: Record<string, string | number
   return `<text${attrs({ x, y, ...a })}>${esc(s)}</text>`;
 }
 
+/** One colour for every link (categories give links a colour of their own); signals from other strategies stand out. */
 function wireColor(w: WireGeom, t: Theme): string {
-  if (w.external) return t.ext;
-  return w.kind === 'bool' ? t.bool : w.kind === 'real' ? t.real : t.other;
+  return w.external ? t.ext : t.real;
 }
 
 const DASH: Record<LineStyle, string | undefined> = { solid: undefined, dashed: '6 3', dotted: '1.5 2.5', dashdot: '8 3 2 3' };
 
-/**
- * Stroke of a line of signal type `kind` in the project's line style (its
- * built-in category BOOL / Numeric / Other) — e.g. for a wire being drawn.
- */
-export function lineStrokeFor(kind: WireKind, meta: ProjectMeta, t: Theme = PRINT_THEME): { color: string; dash?: string; width: number } {
-  const cat = lineCategories(meta)[BUILTIN_BY_KIND[kind]];
-  return { color: cat?.color ?? (kind === 'bool' ? t.bool : kind === 'real' ? t.real : t.other), dash: cat?.style ? DASH[cat.style] : undefined, width: cat?.width ?? 1.5 };
+/** Stroke of a link without a category (the project's default line style) — e.g. for a wire being drawn. */
+export function lineStrokeFor(_kind: WireKind, meta: ProjectMeta, t: Theme = PRINT_THEME): { color: string; dash?: string; width: number } {
+  const cat = lineCategories(meta).default;
+  return { color: cat?.color ?? t.real, dash: cat?.style ? DASH[cat.style] : undefined, width: cat?.width ?? 1.5 };
 }
 
 function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
@@ -163,7 +159,7 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
   const selected = o.selection?.kind === 'link' && w.link !== undefined && o.selection.index === w.link;
   const error = w.link !== undefined && o.errorLinks?.has(w.link);
   // Explicit category, else the built-in one of the signal type.
-  const cat = (w.category ? o.categories?.[w.category] : undefined) ?? (w.external ? undefined : o.categories?.[BUILTIN_BY_KIND[w.kind]]);
+  const cat = (w.category ? o.categories?.[w.category] : undefined) ?? (w.external ? undefined : o.categories?.default);
   const fb = o.showFeedback !== false ? w.feedback : undefined;
   const fbs = o.feedbackStyle;
   const fbDash = fb && fbs?.style !== 'same' ? DASH[(fbs?.style as LineStyle | undefined) ?? 'dashdot'] : undefined;

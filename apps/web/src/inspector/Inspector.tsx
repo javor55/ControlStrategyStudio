@@ -36,7 +36,7 @@ import { AddButton } from '../ui/parts';
 import { plural } from '../ui/text';
 import { Icon } from '../project/icons';
 import { askCategoryName, defaultCategoryColor, deleteStrategy, deleteTypeVersion, duplicateStrategy, moveStrategy, newTypeVersion, openFunctionDescription } from '../project/actions';
-import { builtinColor, categoryLabel } from '../views/SignalCategories';
+import { builtinColor } from '../views/SignalCategories';
 import { openSettings } from '../settings/open';
 import { parseParamText, refParts, sameValue, typeRefFor, valueText } from './values';
 import { StrategyChanges } from '../history/DiffDetails';
@@ -484,12 +484,11 @@ const NEW_CATEGORY = '\u0000new';
 
 function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: Pick<LinkInst, 'index' | 'category'>; model: ProjectModel }) {
   const all = lineCategories(model.meta);
-  const builtins = Object.keys(all).filter((n) => n in BUILTIN_CATEGORIES);
   const own = Object.keys(all).filter((n) => !(n in BUILTIN_CATEGORIES));
   const value = link.category ?? '';
   const unknown = value && !(value in all);
   const assign = (category: string | undefined) =>
-    run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'category', value: category }, category ? `Link category ${category}` : 'Automatic link category');
+    run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'category', value: category }, category ? `Link category ${category}` : 'Default line style');
   return (
     <span className="insp-cat">
       {value && <span className="insp-swatch" style={{ background: all[value]?.color ?? (value in BUILTIN_CATEGORIES ? builtinColor(value) : 'transparent') }} aria-hidden="true" />}
@@ -516,14 +515,7 @@ function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: Pick<LinkI
           );
         }}
       >
-        <option value="">Automatic (BOOL / Numeric / Other)</option>
-        <optgroup label="Built-in">
-          {builtins.map((n) => (
-            <option key={n} value={n}>
-              {categoryLabel(n)}
-            </option>
-          ))}
-        </optgroup>
+        <option value="">Default line</option>
         {own.length > 0 && (
           <optgroup label="Project">
             {own.map((n) => (
@@ -623,7 +615,7 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
           onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'label', value: orUndef(v) }, 'Edit link label')}
         />
       </Row>
-      <Row label="Line category" title="Line style: automatic by signal type, or a project category (Settings → Drawing style)">
+      <Row label="Line category" title="Line style: the default line, or a project category such as interlock (Settings → Drawing style)">
         <CategorySelect d={d} link={link} model={model} />
       </Row>
       <Row label="Comment">

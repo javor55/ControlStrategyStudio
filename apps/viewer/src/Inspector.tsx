@@ -65,9 +65,9 @@ export function Inspector({ ctx, sel, sheet, onSelect, onClose }: InspectorProps
 }
 
 /** Built-in line categories get the same names as in the editor. */
-const CATEGORY_NAMES: Record<string, string> = { bool: 'BOOL', numeric: 'Numeric (REAL, INT …)', other: 'Other signals' };
+const CATEGORY_NAMES: Record<string, string> = { default: 'Default line' };
 /** Colours the drawing uses for built-in categories without an own colour (the paper is printed). */
-const BUILTIN_COLOR: Record<string, string> = { bool: PRINT_THEME.bool, numeric: PRINT_THEME.real, other: PRINT_THEME.other };
+const BUILTIN_COLOR: Record<string, string> = { default: PRINT_THEME.real };
 
 function Hint({ ctx }: { ctx?: DiagramCtx }) {
   const d = useData();

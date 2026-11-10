@@ -233,13 +233,12 @@ export const DEFAULT_DRAWING: DrawingStyle = {
 };
 
 /**
- * Built-in line categories: every link without an explicit category gets one
- * of these by its signal type. They are stored and styled like user categories.
+ * Built-in line category: every link without an explicit category is drawn in
+ * the `default` style. It is stored and styled like the project's own
+ * categories (interlock, tracking …), which a link gets by `category:`.
  */
 export const BUILTIN_CATEGORIES = {
-  bool: 'BOOL signals',
-  numeric: 'Numeric signals (REAL, INT …)',
-  other: 'Other signals',
+  default: 'Every link without a category',
 } as const;
 export type BuiltinCategory = keyof typeof BUILTIN_CATEGORIES;
 

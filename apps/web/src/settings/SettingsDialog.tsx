@@ -43,8 +43,8 @@ const STYLES: [LineStyle, string][] = [
 ];
 const WIDTHS = [1, 1.5, 2, 2.5, 3, 4];
 
-/** Legacy `drawing.signals` kind of a built-in category. */
-const LEGACY_KIND: Record<string, 'bool' | 'real' | 'other'> = { bool: 'bool', numeric: 'real', other: 'other' };
+/** Legacy `drawing.signals` kind that older projects used for the default line. */
+const LEGACY_KIND: Record<string, 'bool' | 'real' | 'other'> = { default: 'real' };
 
 const DRAWING_PATHS: string[][] = [
   ...(['bool', 'real', 'other'] as const).flatMap((k) => (['color', 'style', 'width'] as const).map((f) => ['signals', k, f])),
@@ -438,7 +438,7 @@ function LineCategoriesTable({ meta }: { meta: ProjectMeta }) {
   return (
     <section aria-label="Line categories" data-testid="st-categories">
       <h4 className="st-h">Line categories</h4>
-      <p className="st-hint">Every link has a category: BOOL, Numeric or Other automatically by its signal type, or a project category set in the link&apos;s properties.</p>
+      <p className="st-hint">Links are drawn in the default line style; give a link a project category (interlock, tracking …) in its properties to style it differently.</p>
       <table className="st-table st-cats">
         <thead>
           <tr>

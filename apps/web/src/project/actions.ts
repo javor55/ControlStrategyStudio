@@ -11,7 +11,6 @@ import {
   sequenceFile,
   strategyDocFile,
   strategyFile,
-  wireKind,
   BUILTIN_CATEGORIES,
   type BlockInst,
   type BlockTypeDef,
@@ -389,20 +388,17 @@ export function defaultCategoryColor(): string {
 
 /**
  * Number of links (strategies and composite internals) per line category.
- * Links without a category count for their built-in one (bool / numeric / other).
+ * Links without a category count for the default line.
  */
 export function categoryUsage(): Map<string, number> {
   const m = st().model;
   const out = new Map<string, number>();
-  const BUILTIN = { bool: 'bool', real: 'numeric', other: 'other' } as const;
   const count = (d: { blocks: readonly BlockInst[]; links: readonly LinkInst[] }) => {
-    const byId = new Map(d.blocks.map((b) => [b.id, b]));
     for (const l of d.links) {
       let c = l.category;
       if (!c) {
         if (l.from.strategy) continue;
-        const t = byId.get(l.to.block)?.def?.inputs.find((p) => p.name === l.to.port)?.type ?? byId.get(l.from.block)?.def?.outputs.find((p) => p.name === l.from.port)?.type;
-        c = BUILTIN[wireKind(t)];
+        c = 'default';
       }
       out.set(c, (out.get(c) ?? 0) + 1);
     }

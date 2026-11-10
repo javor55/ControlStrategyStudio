@@ -40,8 +40,6 @@ title_block:
   checked: P. Svoboda
   approved: ""
 signal_categories:
-  bool: { color: "#2f7d4a", description: Binary signals }
-  numeric: { color: "#1f5f8b", description: "Analog values (REAL, INT …)" }
   interlock: { color: "#b3261e", style: dashed, width: 1.6, description: Safety and process interlocks (TRUE = healthy) }
   tracking: { color: "#6b7280", style: dotted, description: "Output tracking, readbacks and bumpless transfer" }
   alarm: { color: "#c2571a", style: dashdot, width: 1.4, description: Alarms to the operator (HMI / beacon) }

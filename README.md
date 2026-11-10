@@ -39,7 +39,7 @@
 | **Text** | YAML editor with syntax check, problem markers, context-aware completion and hover help · selection follows between text and drawing · Diagram / Split / Text modes |
 | **Blocks** | Standard library `std` (40 blocks: I/O, logic, timers, comparators, math, selectors, filters, PID, ratio, split range, motor, valve, interlock) · your own libraries as plain folders · versioned block types · composite blocks with an inner diagram · graphical block type editor |
 | **Two strategy types** | **Continuous strategies** (function block diagrams, `NAME.yaml`) and **sequence strategies** (SFC / Grafcet, `NAME.seq.yaml`) — both editable as drawing or text; sequences read and write signals of continuous strategies, and strategies can read sequence states (e.g. `FILL_T100:S20.X`, `FILL_T100:SEQ.RUNNING`); a sequence can hold several **sequencers** with start conditions and priorities (e.g. the ISA-88 states Running / Holding / Aborting) |
-| **Line categories** | BOOL / Numeric / Other plus your own (interlock, alarm, tracking …) with colour, line style and width — one table in Settings → Drawing style |
+| **Line categories** | one default line style plus your own categories (interlock, alarm, tracking …) with colour, line style and width — one table in Settings → Drawing style |
 | **Project** | free folder hierarchy; optional level names (none, ISA-95, ISA-88 or your own — only labels, never enforced) · Markdown documentation with images and charts · validation with clear messages (unknown ports, type mismatch, double drivers, wrong references …) |
 | **Files** | Runs in the browser, works offline · autosave in the browser · projects travel as ZIP · git-friendly text files |
 
