@@ -10,12 +10,13 @@
 <p align="center">
   <a href="https://javor55.github.io/ControlStrategyStudio/"><b>Open the app</b></a> ·
   <a href="https://javor55.github.io/ControlStrategyStudio/control-strategy-studio.html">Download for offline use</a> ·
-  <a href="#project-format">Project format</a> ·
+  <a href="docs/user-guide.md">User guide</a> ·
+  <a href="docs/file-format.md">File format</a> ·
   <a href="#development">Development</a>
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Control Strategy Studio editor with strategy FIC101" width="900">
+  <img src="docs/screenshot.png" alt="Control Strategy Studio: function block diagram of strategy FIC211 with the block inspector" width="900">
 </p>
 
 ---
@@ -35,31 +36,41 @@
 
 | | |
 |---|---|
-| **Canvas** | CFC-like blocks with ports, constants and parameters · drag blocks · draw links port to port · several sheets per strategy with off-sheet connectors · links to other strategies with “used by” tags · automatic layout, positions stored only for blocks you move · execution order (auto order) · notes |
+| **Canvas** | CFC-like blocks with ports, constants and parameters · draw and reconnect links port to port; lines are routed around blocks and never overlap · several sheets per strategy with off-sheet connectors · links to other strategies with “used by” tags · **planned links** for signals whose other side is not drawn yet · automatic layout, positions stored only for blocks you move · execution order (auto order) · find, minimap, align / distribute, notes · optional **scan time bands** (arrange blocks by scan and show 100 ms / 500 ms / 1 s columns) |
 | **Text** | YAML editor with syntax check, problem markers, context-aware completion and hover help · selection follows between text and drawing · Diagram / Split / Text modes |
 | **Blocks** | Standard library `std` (40 blocks: I/O, logic, timers, comparators, math, selectors, filters, PID, ratio, split range, motor, valve, interlock) · your own libraries as plain folders · versioned block types · composite blocks with an inner diagram · graphical block type editor |
 | **Two strategy types** | **Continuous strategies** (function block diagrams, `NAME.yaml`) and **sequence strategies** (SFC / Grafcet, `NAME.seq.yaml`) — both editable as drawing or text; sequences read and write signals of continuous strategies, and strategies can read sequence states (e.g. `FILL_T100:S20.X`, `FILL_T100:SEQ.RUNNING`); a sequence can hold several **sequencers** with start conditions and priorities (e.g. the ISA-88 states Running / Holding / Aborting) |
 | **Line categories** | one default line style plus your own categories (interlock, alarm, tracking …) with colour, line style and width — one table in Settings → Drawing style |
 | **Project** | free folder hierarchy; optional level names (none, ISA-95, ISA-88 or your own — only labels, never enforced) · Markdown documentation with images and charts · validation with clear messages (unknown ports, type mismatch, double drivers, wrong references …) |
-| **Files** | Runs in the browser, works offline · autosave in the browser · projects travel as ZIP · git-friendly text files |
+| **Versions** | git inside every project: commits with readable summaries, revisions (Rev A, Rev B …) in the title blocks, branches, text diff and **visual compare on the canvas**, restore |
+| **Hand-over** | configurable **PDF** (cover, contents, title blocks, function descriptions, drawings, parameter tables, cross references, library appendix, revision history) · **interactive HTML** (one read-only file) · JSON / TOML data |
+| **Files** | Runs in the browser, works offline · autosave in the browser · projects travel as ZIP or live in a **folder on disk** next to your git tools · git-friendly text files |
+
+<p align="center">
+  <img src="docs/screenshot-sequence.png" alt="Sequence BATCH_T210 with a parallel branch and step actions" width="900"><br>
+  <sub>A sequence (SFC) with a parallel branch; actions write inputs of continuous strategies.</sub>
+</p>
 
 ## Use it
 
 * **Online:** <https://javor55.github.io/ControlStrategyStudio/> — nothing to install.
-  Projects are stored in your browser; use **Save ZIP** to keep or share them.
-* **A folder on disk** (Chrome / Edge): **Project ▾ → Open folder…** or **Save to
-  folder…** links the project to a folder; every change is written there, with the
+  Projects are stored in your browser; **Save as ZIP** (`Ctrl+S`, in the project menu
+  under the project name) keeps or shares them.
+* **A folder on disk** (Chrome / Edge): **Open folder…** or **Save to folder…** in the
+  project menu links the project to a folder; every change is written there, with the
   git history in its `.git`, so ordinary git tools (and other editors) work alongside.
   Changes made outside the app are picked up when you switch back to the window.
 * **Offline:** download
   [`control-strategy-studio.html`](https://javor55.github.io/ControlStrategyStudio/control-strategy-studio.html)
   and open it by double-click. The whole application is this one file.
 
-The first start opens a small demo project. **Project ▾ → Open example** offers also
+The first start opens a small demo project. **Open example** in the project menu offers also
 *Dosing & CIP Plant Ostrava* — 13 continuous strategies, 3 sequences (CIP with parallel
 branches, batch, start-up), a company library with composite blocks, split range, ratio,
-feed-forward, interlocks and documentation with charts. **Project ▾ → New project**
-starts an empty one.
+feed-forward, interlocks and documentation with charts. **New project…** starts an
+empty one.
+
+The [user guide](docs/user-guide.md) walks through the whole editor.
 
 ### Keyboard
 
@@ -78,6 +89,8 @@ starts an empty one.
 | `Alt+1` `Alt+2` `Alt+3` | Diagram / Split / Text mode |
 | `Ctrl+B` / `Ctrl+Alt+B` | Hide the left / right panel |
 | `Ctrl+S` | Save project as ZIP |
+| `Ctrl+E` / `Ctrl+,` | Export / settings |
+| `Ctrl+Shift+C` / `Ctrl+Shift+H` | Commit / history |
 | `?` | All canvas shortcuts |
 
 ## Project format
@@ -150,6 +163,18 @@ Rules in short:
 * Every file carries `format: csd-<kind>/<version>`; older formats are migrated on load.
   JSON Schemas of all file kinds are in [`schema/`](schema).
 
+The full reference — project settings, libraries and block types, sequences,
+signals — is in [docs/file-format.md](docs/file-format.md).
+
+## Documentation
+
+* [User guide](docs/user-guide.md) — the editor step by step
+* [File format](docs/file-format.md) — every file kind with examples
+* [Diagnostic codes](docs/diagnostics.md) — all validation messages
+* [Sequences — design](docs/design/sequences.md) — SFC concepts, sequencers, ISA-88
+* [Architecture](docs/architecture.md) — packages, data flow and rules for contributors
+* [Roadmap](docs/ROADMAP.md) — ideas and known gaps
+
 ## Development
 
 ```bash
@@ -178,7 +203,7 @@ apps/
   web/      @csd/web    – the editor (React + CodeMirror)
   viewer/   @csd/viewer – read-only interactive HTML export (embedded in the editor)
 brand/      logo
-docs/       roadmap, design notes, diagnostic codes (docs/diagnostics.md)
+docs/       user guide, file format, architecture, diagnostic codes, design notes, roadmap
 schema/     JSON Schemas (generated)
 ```
 
@@ -192,6 +217,8 @@ schema/     JSON Schemas (generated)
 * **Stable identities.** Projects, strategies and block types carry a `uid`;
   diagnostics carry stable `code`s that integrations may rely on
   ([list](docs/diagnostics.md)); failed operations throw `OpError` with a `code`.
+
+More in [docs/architecture.md](docs/architecture.md).
 
 ## Roadmap
 
