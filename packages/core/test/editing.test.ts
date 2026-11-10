@@ -220,3 +220,45 @@ describe('drawing style and block display', () => {
     expect(all.paramsToggle).toBeUndefined();
   });
 });
+
+describe('planned connections', () => {
+  const FIC = 'strategies/ACME/Brno/WaterTreatment/U100/FIC101.yaml';
+  const base = demoProjectFiles();
+  const codesOf = (f: Files) => loadProject(f).diags.filter((d) => d.file === FIC).map((d) => d.code);
+
+  it('adds a planned source and destination, drawn as open arrows', () => {
+    let f = applyOp(base, { op: 'addPlannedLink', file: FIC, at: 'FIC101.TRK_ON', dir: 'in', text: 'Tracking from DCS faceplate' }).files;
+    f = applyOp(f, { op: 'addPlannedLink', file: FIC, at: 'FIC101.MV', dir: 'out', text: 'Dosing skid' }).files;
+    expect(f[FIC]).toContain('{ from: Tracking from DCS faceplate, to: FIC101.TRK_ON, planned: true }');
+    expect(f[FIC]).toContain('{ from: FIC101.MV, to: Dosing skid, planned: true }');
+    const s = loadProject(f).strategyByName.get('FIC101')!;
+    expect(s.planned!.map((p) => [p.dir, p.text])).toEqual([
+      ['in', 'Tracking from DCS faceplate'],
+      ['out', 'Dosing skid'],
+    ]);
+    expect(codesOf(f).filter((c) => c.startsWith('planned'))).toEqual(['planned-link', 'planned-link']);
+    const conns = layoutDiagram(s)[0].connectors.filter((c) => c.kind.startsWith('planned'));
+    expect(conns.map((c) => c.label)).toEqual(['? Tracking from DCS faceplate', '→ ? Dosing skid']);
+  });
+
+  it('follows block renames and turns into a real link once the source exists', () => {
+    let f = applyOp(base, { op: 'addPlannedLink', file: FIC, at: 'FIC101.TRK_ON', dir: 'in', text: 'LIC100:LIC100.NOPE' }).files;
+    // LIC100 has no output NOPE: still planned.
+    expect(codesOf(f)).toContain('planned-link');
+    const s = loadProject(f).strategyByName.get('FIC101')!;
+    const index = s.planned![0].index;
+    f = applyOp(f, { op: 'setPlannedLink', file: FIC, index, text: 'LIC100:LIC100.MV' }).files;
+    expect(codesOf(f)).toContain('planned-resolves');
+    f = applyOp(f, { op: 'renameBlock', file: FIC, from: 'FIC101', to: 'FIC102' }).files;
+    expect(f[FIC]).toContain('to: FIC102.TRK_ON');
+    f = applyOp(f, { op: 'setPlannedLink', file: FIC, index, planned: false }).files;
+    const real = loadProject(f).strategyByName.get('FIC101')!;
+    expect(real.planned).toEqual([]);
+    expect(real.links.some((l) => l.from.strategy === 'LIC100' && l.to.port === 'TRK_ON')).toBe(true);
+  });
+
+  it('counts a planned source as a driver of its input', () => {
+    const f = applyOp(base, { op: 'addPlannedLink', file: FIC, at: 'FIC101.PV', dir: 'in', text: 'Second transmitter' }).files;
+    expect(codesOf(f)).toContain('multiple-drivers');
+  });
+});

@@ -52,7 +52,7 @@ core can report is listed here.
 
 | Code | Severity | Meaning |
 |---|---|---|
-| `bad-link` | error | A link is not of the form `BLOCK.PORT -> BLOCK.PORT`. |
+| `bad-link` | error | A link is not of the form `BLOCK.PORT -> BLOCK.PORT` (a planned link needs one end `BLOCK.PORT` in this diagram). |
 | `unknown-strategy` | error | A link, condition or action names a strategy / sequence that does not exist. |
 | `unknown-block` | error | The block does not exist. |
 | `unknown-port` | error | The block type has no such port. |
@@ -68,6 +68,8 @@ core can report is listed here.
 | `duplicate-order` | warning | Two blocks share an execution order. |
 | `duplicate-sheet` | error | A sheet id is defined twice (strategies and sequences). |
 | `unknown-sheet` | warning | A block, step or note is placed on a sheet that is not defined. |
+| `planned-link` | info | A planned connection (`planned: true`): the other end is not drawn yet. |
+| `planned-resolves` | info | A planned source written as `STRATEGY:BLOCK.PORT` exists now — remove `planned: true` to make it a real link. |
 
 ## Sequence strategies (SFC)
 

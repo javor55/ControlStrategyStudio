@@ -102,7 +102,7 @@ export interface BlockGeom {
   iface?: 'in' | 'out';
 }
 
-export type ConnectorKind = 'ext-in' | 'sheet-in' | 'sheet-out' | 'used-by' | 'written-by' | 'iface-in' | 'iface-out';
+export type ConnectorKind = 'ext-in' | 'sheet-in' | 'sheet-out' | 'used-by' | 'written-by' | 'iface-in' | 'iface-out' | 'planned-in' | 'planned-out';
 
 export interface ConnectorGeom {
   kind: ConnectorKind;
@@ -265,6 +265,9 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     usedIn.add(`${l.to.block}.${l.to.port}`);
     if (!l.from.strategy) usedOut.add(`${l.from.block}.${l.from.port}`);
   }
+  for (const pl of diagram.planned ?? []) (pl.dir === 'in' ? usedIn : usedOut).add(`${pl.at.block}.${pl.at.port}`);
+  /** Label, comment and category of a link or planned link by its index in the YAML list. */
+  const linkMeta = (i?: number) => (i === undefined ? undefined : diagram.links.find((l) => l.index === i) ?? diagram.planned?.find((l) => l.index === i));
   const pre = new Map<string, Pre>();
   for (const b of onSheet) {
     let inputs = b.def?.inputs ?? [];
@@ -342,6 +345,15 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       }
     }
   }
+  // Planned connections: open arrows with free text ("? Level control T200").
+  for (const pl of diagram.planned ?? []) {
+    const bp = pre.get(pl.at.block);
+    if (!bp) continue;
+    const signal = wireKind(portType(byId.get(pl.at.block), pl.dir, pl.at.port));
+    const target = pl.ref?.strategy ? { strategy: pl.ref.strategy, block: pl.ref.block } : undefined;
+    if (pl.dir === 'in') bp.left.push({ kind: 'planned-in', label: `? ${pl.text}`, port: pl.at.port, link: pl.index, signal, target });
+    else bp.right.push({ kind: 'planned-out', label: `→ ? ${pl.text}`, port: pl.at.port, link: pl.index, signal, target });
+  }
   if (ctx.writtenBy) {
     for (const p of pre.values()) {
       for (const i of p.inputs) {
@@ -366,7 +378,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     p.leftNeed = Math.max(
       p.constNeed,
       ...p.left.map((c) => {
-        const lk = c.link === undefined ? undefined : diagram.links.find((l) => l.index === c.link);
+        const lk = linkMeta(c.link);
         const text = [lk?.label, lk?.comment].filter(Boolean).join(' · ');
         return connW(c.label) + M.CONN_GAP + (text ? text.length * M.CH_TEXT + 8 : 0);
       }),
@@ -488,8 +500,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   }
 
   // --- block geometry ------------------------------------------------------------
-  const linkedIn = new Set(diagram.links.map((l) => `${l.to.block}.${l.to.port}`));
-  const linkedOut = new Set(diagram.links.filter((l) => !l.from.strategy).map((l) => `${l.from.block}.${l.from.port}`));
+  const linkedIn = new Set([...diagram.links.map((l) => `${l.to.block}.${l.to.port}`), ...(diagram.planned ?? []).filter((l) => l.dir === 'in').map((l) => `${l.at.block}.${l.at.port}`)]);
+  const linkedOut = new Set([...diagram.links.filter((l) => !l.from.strategy).map((l) => `${l.from.block}.${l.from.port}`), ...(diagram.planned ?? []).filter((l) => l.dir === 'out').map((l) => `${l.at.block}.${l.at.port}`)]);
   const blocks: BlockGeom[] = [];
   const portAt = new Map<string, PortGeom>();
   for (const id of ids) {
@@ -550,7 +562,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   // --- connectors & wires ----------------------------------------------------------
   const connectors: ConnectorGeom[] = [];
   const wires: WireGeom[] = [];
-  const commentOf = (i?: number) => (i === undefined ? undefined : diagram.links.find((l) => l.index === i)?.comment);
+  const commentOf = (i?: number) => linkMeta(i)?.comment;
   for (const g of blocks) {
     const p = pre.get(g.id)!;
     for (const c of p.left) {
@@ -560,13 +572,13 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       const cx = port.x - M.CONN_GAP - w;
       connectors.push({ kind: c.kind, side: 'left', label: c.label, x: cx, y: port.y, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
       const comment = commentOf(c.link);
-      const lk = c.link === undefined ? undefined : diagram.links.find((l) => l.index === c.link);
+      const lk = linkMeta(c.link);
       const text = [lk?.label, comment].filter(Boolean).join(' · ');
       wires.push({
         link: c.link,
         kind: c.signal,
         external: c.kind === 'ext-in' || c.kind === 'written-by',
-        derived: c.kind === 'written-by',
+        derived: c.kind === 'written-by' || c.kind === 'planned-in',
         points: [[cx + w, port.y], [port.x, port.y]],
         source: `conn:${c.label}`,
         category: lk?.category,
@@ -598,7 +610,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       connectors.push({ kind: c.kind, side: 'right', label: c.label, x: cx, y: cy, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
       const bx = port.x + (branchX.get(c.port) ?? 10);
       const pts: [number, number][] = cy === port.y ? [[port.x, port.y], [cx, cy]] : [[port.x, port.y], [bx, port.y], [bx, cy], [cx, cy]];
-      wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by', points: pts, source: `${g.id}.${c.port}` });
+      wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by' || c.kind === 'planned-out', points: pts, source: `${g.id}.${c.port}` });
     }
   }
 

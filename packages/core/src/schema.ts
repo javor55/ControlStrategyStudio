@@ -59,7 +59,7 @@ const link = {
   if: { type: 'object' },
   then: {
     required: ['from', 'to'],
-    properties: { from: text, to: text, comment: text, label: text, category: { type: 'string', pattern: TAG } },
+    properties: { from: text, to: text, comment: text, label: text, category: { type: 'string', pattern: TAG }, planned: { type: 'boolean' } },
     ...ext,
     additionalProperties: false,
   },

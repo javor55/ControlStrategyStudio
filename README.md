@@ -135,6 +135,11 @@ Rules in short:
 
 * Links are `BLOCK.PORT -> BLOCK.PORT`; the source may live in another strategy
   (`STRATEGY:BLOCK.PORT`). The other strategy shows a “used by” tag automatically.
+* Not drawn yet? A **planned link** marks where a signal will come from or go to,
+  as free text or `STRATEGY:BLOCK.PORT`:
+  `{ from: Level control T200, to: FIC101.SP_EXT, planned: true }`. It is drawn as a
+  grey dashed arrow; once the named signal exists, one click makes it a real link
+  (right-click a port → *Add planned source / destination…*).
 * Unconnected inputs can hold constants (`SP_EXT_ON: true`), shown next to the port.
 * Any key starting with `x-` is kept untouched — room for data of other systems.
 * Every file carries `format: csd-<kind>/<version>`; older formats are migrated on load.

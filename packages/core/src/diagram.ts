@@ -1,5 +1,5 @@
 // Parsing of diagrams — the common body of strategies and composite block types.
-import type { BlockInst, BlockTypeDef, Diag, Diagram, Endpoint, LinkInst, NoteInst, SheetDef } from './types';
+import type { BlockInst, BlockTypeDef, Diag, Diagram, Endpoint, LinkInst, NoteInst, PlannedLink, SheetDef } from './types';
 import { isObj, lineAt, num, pickExt, pos2, str, type ParsedYaml, type YamlPath } from './yamlutil';
 
 /** Pseudo-blocks addressing a composite block's own interface. */
@@ -102,8 +102,23 @@ export function parseDiagram(
   }
 
   const links: LinkInst[] = [];
+  const planned: PlannedLink[] = [];
   if (Array.isArray(data.links)) {
     data.links.forEach((raw, index) => {
+      if (isObj(raw) && raw.planned === true) {
+        const p = parsePlanned(raw, index);
+        if (p) planned.push(p);
+        else
+          diags.push({
+            severity: 'error',
+            code: 'bad-link',
+            message: `Link ${index + 1}: a planned link needs one end in this diagram (BLOCK.PORT) and the other as text, e.g. { from: Level control T200, to: FIC101.SP_EXT, planned: true }`,
+            file: ctx.file,
+            line: at('links', index),
+            link: index,
+          });
+        return;
+      }
       let from: Endpoint | undefined;
       let to: Endpoint | undefined;
       let comment: string | undefined;
@@ -143,5 +158,32 @@ export function parseDiagram(
     });
   }
 
-  return { diagram: { sheets, blocks, links, notes }, diags };
+  return { diagram: { sheets, blocks, links, planned, notes }, diags };
+}
+
+/** A local end `BLOCK.PORT` (no strategy). */
+const localEnd = (v: unknown): Endpoint | undefined => {
+  const e = typeof v === 'string' ? parseEndpoint(v) : undefined;
+  return e && !e.strategy ? e : undefined;
+};
+
+function parsePlanned(raw: Record<string, unknown>, index: number): PlannedLink | undefined {
+  const toLocal = localEnd(raw.to);
+  const fromLocal = localEnd(raw.from);
+  const text = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '');
+  const common = { index, comment: str(raw.comment), label: str(raw.label), category: str(raw.category), ext: pickExt(raw) };
+  // The local end is the one that is a BLOCK.PORT of this diagram; prefer the target (a planned source).
+  if (toLocal && !fromLocal && text(raw.from)) {
+    const t = text(raw.from);
+    return { ...common, dir: 'in', at: toLocal, text: t, ref: parseEndpoint(t) };
+  }
+  if (fromLocal && !toLocal && text(raw.to)) {
+    const t = text(raw.to);
+    return { ...common, dir: 'out', at: fromLocal, text: t, ref: parseEndpoint(t) };
+  }
+  if (toLocal && fromLocal) {
+    // Both look local (e.g. "LIC200.MV" without strategy): the source is the planned end.
+    return { ...common, dir: 'in', at: toLocal, text: text(raw.from), ref: undefined };
+  }
+  return undefined;
 }

@@ -67,6 +67,14 @@ export type Op =
   | ({ op: 'moveToSheet'; ids: string[]; notes?: number[]; sheet: number } & DiagramTarget)
   | ({ op: 'connect'; from: string; to: string; comment?: string; replace?: boolean } & DiagramTarget)
   | ({ op: 'disconnect'; index: number } & DiagramTarget)
+  /**
+   * Planned connection: input `at` gets a source that is not drawn yet (`dir: 'in'`),
+   * or output `at` goes to a destination not drawn yet (`dir: 'out'`). `text` is
+   * free text or STRATEGY:BLOCK.PORT.
+   */
+  | ({ op: 'addPlannedLink'; at: string; dir: 'in' | 'out'; text: string; comment?: string } & DiagramTarget)
+  /** Changes the text of a planned link, or (`planned: false`) turns it into a real link. */
+  | ({ op: 'setPlannedLink'; index: number; text?: string; planned?: false } & DiagramTarget)
   /** @deprecated use `setLinkField` with `field: 'comment'` */
   /** @deprecated use setLinkField with field 'comment' */
   | ({ op: 'setLinkComment'; index: number; comment?: string } & DiagramTarget)
@@ -171,7 +179,7 @@ const DRAWING_PATHS = new Set([
   'params',
 ]);
 const STRATEGY_KEYS = ['format', 'uid', 'strategy', 'title', 'description', 'revision', 'author', 'scan', 'sheets', 'blocks', 'links', 'notes'];
-const LINK_KEYS = ['from', 'to', 'label', 'category', 'comment'];
+const LINK_KEYS = ['from', 'to', 'planned', 'label', 'category', 'comment'];
 const NOTE_KEYS = ['text', 'sheet', 'pos', 'width'];
 const TYPE_KEYS = ['format', 'uid', 'type', 'version', 'category', 'kind', 'description', 'color', 'inputs', 'outputs', 'params', 'implementation', 'diagram'];
 const PORT_KEYS = ['name', 'type', 'default', 'unit', 'values', 'visibility', 'description'];
@@ -694,7 +702,7 @@ function moveWithDoc(tx: Tx, from: string, to: string): void {
 /** Diagram ops that also apply to sequences (notes, sheets, layout). */
 const SHEET_OPS = new Set(['addNote', 'setNote', 'removeNote', 'addSheet', 'renameSheet', 'removeSheet', 'pinAll', 'unpinAll', 'moveToSheet']);
 /** Diagram ops that need a strategy or a composite block type. */
-const DIAGRAM_OPS = new Set(['insertFragment', 'removeBlocks', 'addBlock', 'removeBlock', 'renameBlock', 'setBlockField', 'setParam', 'moveBlock', 'setOrders', 'connect', 'disconnect', 'setLinkComment', 'setLinkField', 'setBlockDisplay']);
+const DIAGRAM_OPS = new Set(['insertFragment', 'removeBlocks', 'addBlock', 'removeBlock', 'renameBlock', 'setBlockField', 'setParam', 'moveBlock', 'setOrders', 'connect', 'disconnect', 'setLinkComment', 'setLinkField', 'setBlockDisplay', 'addPlannedLink', 'setPlannedLink']);
 
 function run(tx: Tx, op: Op): void {
   const root = 'root' in op && op.root ? op.root : [];
@@ -949,6 +957,45 @@ function run(tx: Tx, op: Op): void {
       });
       return;
     }
+    case 'addPlannedLink': {
+      const at = parseEndpoint(op.at);
+      if (!at || at.strategy) throw new OpError(`Invalid port "${op.at}" — expected BLOCK.PORT`, 'invalid');
+      const text = op.text.trim();
+      if (!text) throw new OpError('Write where the signal comes from or goes to', 'invalid');
+      tx.edit(op.file, (doc) => {
+        const m = new YAMLMap();
+        m.flow = true;
+        setOrdered(m, 'from', op.dir === 'in' ? text : formatEndpoint(at), LINK_KEYS, doc);
+        setOrdered(m, 'to', op.dir === 'in' ? formatEndpoint(at) : text, LINK_KEYS, doc);
+        setOrdered(m, 'planned', true, LINK_KEYS, doc);
+        if (op.comment) setOrdered(m, 'comment', op.comment, LINK_KEYS, doc);
+        ensureSeq(doc, [...root, 'links']).items.push(m);
+      });
+      return;
+    }
+    case 'setPlannedLink':
+      tx.edit(op.file, (doc) => {
+        const seq = getNode(doc, [...root, 'links']);
+        const item = isSeq(seq) ? seq.items[op.index] : undefined;
+        if (!isMap(item) || item.get('planned') !== true) throw new OpError(`Link ${op.index + 1} is not a planned link`, 'not-found');
+        const toLocal = (() => {
+          const e = parseEndpoint(String(item.get('to') ?? ''));
+          return !!e && !e.strategy;
+        })();
+        const key = toLocal ? 'from' : 'to';
+        if (op.text !== undefined) {
+          const t = op.text.trim();
+          if (!t) throw new OpError('Write where the signal comes from or goes to', 'invalid');
+          setOrdered(item, key, t, LINK_KEYS, doc);
+        }
+        if (op.planned === false) {
+          const e = parseEndpoint(String(item.get(key) ?? ''));
+          if (!e || (key === 'from' && !e.strategy)) throw new OpError(`"${item.get(key)}" is not a signal yet — write it as STRATEGY:BLOCK.PORT`, 'invalid');
+          if (key === 'to') throw new OpError('A link cannot write into another strategy — draw the link in the receiving strategy', 'invalid');
+          item.delete('planned');
+        }
+      });
+      return;
     case 'disconnect':
       tx.edit(op.file, (doc) => {
         const seq = getNode(doc, [...root, 'links']);
@@ -965,6 +1012,10 @@ function run(tx: Tx, op: Op): void {
         const seq = getNode(doc, [...root, 'links']);
         const item = isSeq(seq) ? seq.items[op.index] : undefined;
         if (!item) throw new OpError(`Link ${op.index + 1} does not exist`, 'not-found');
+        if (isMap(item) && item.get('planned') === true) {
+          setOrDelete(doc, item, field, value, LINK_KEYS);
+          return;
+        }
         const { from, to } = linkEndpoints(item);
         if (!from || !to) throw new OpError(`Link ${op.index + 1} is not valid — fix it in the text editor`, 'invalid');
         if (isMap(item)) {

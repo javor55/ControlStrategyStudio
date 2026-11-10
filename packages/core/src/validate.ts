@@ -165,6 +165,33 @@ export function validateDiagram(diagram: Diagram, ctx: ValidateContext): Diag[] 
       }
     }
   }
+  // --- planned connections ------------------------------------------------
+  for (const pl of diagram.planned ?? []) {
+    const line = at('links', pl.index);
+    const what = pl.dir === 'in' ? `Planned source "${pl.text}" → ${formatEndpoint(pl.at)}` : `${formatEndpoint(pl.at)} → planned destination "${pl.text}"`;
+    const b = blocks.get(pl.at.block);
+    if (!b) {
+      push({ severity: 'error', code: 'unknown-block', message: `${what}: block "${pl.at.block}" does not exist`, line, link: pl.index });
+      continue;
+    }
+    if (b.def && !findPort(b.def, pl.dir, pl.at.port)) {
+      const other = findPort(b.def, pl.dir === 'in' ? 'out' : 'in', pl.at.port);
+      const portWord = pl.dir === 'in' ? 'input' : 'output';
+      const msg = `${what}: ${b.def.type} has no ${portWord} "${pl.at.port}"`;
+      push({ severity: 'error', code: other ? 'wrong-direction' : 'unknown-port', message: msg, line, link: pl.index });
+      continue;
+    }
+    if (pl.dir === 'in') {
+      const key = `${pl.at.block}.${pl.at.port}`;
+      drivers.set(key, [...(drivers.get(key) ?? []), pl.index]);
+    }
+    // Written as STRATEGY:BLOCK.PORT and that signal exists now: offer to make it a real link.
+    const ref = pl.ref;
+    const resolves = pl.dir === 'in' && !!ref?.strategy && !!sourceType(ref, diagram, ctx);
+    if (resolves) push({ severity: 'info', code: 'planned-resolves', message: `${what}: ${pl.text} exists now — make it a real link (remove "planned: true")`, line, link: pl.index });
+    else push({ severity: 'info', code: 'planned-link', message: `${what} — not drawn yet`, line, link: pl.index });
+  }
+
   for (const [key, idx] of drivers) {
     if (idx.length > 1) {
       for (const i of idx) push({ severity: 'error', code: 'multiple-drivers', message: `Input ${key} is driven by ${idx.length} links`, line: at('links', i), link: i });

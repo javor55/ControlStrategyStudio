@@ -24,6 +24,7 @@ import {
   type PortDef,
   type ProjectModel,
   type Selection,
+  type PlannedLink,
 } from '@csd/core';
 import { store, useEditor } from '../state/store';
 import { activeView, diagsOf, useActiveDiagram, useActiveSequence, type ActiveDiagram } from '../state/selectors';
@@ -89,6 +90,8 @@ function InspectorBody() {
   if (selection?.kind === 'link') {
     const l = d.diagram.links.find((x) => x.index === selection.index);
     if (l) return <LinkPanel key={l.index} d={d} link={l} model={model} />;
+    const pl = d.diagram.planned?.find((x) => x.index === selection.index);
+    if (pl) return <PlannedPanel key={pl.index} d={d} pl={pl} model={model} />;
   }
   if (selection?.kind === 'note') {
     const n = d.diagram.notes.find((x) => x.index === selection.index);
@@ -479,7 +482,7 @@ function EndpointButton({ ep, d }: { ep: Endpoint; d: ActiveDiagram }) {
 
 const NEW_CATEGORY = '\u0000new';
 
-function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model: ProjectModel }) {
+function CategorySelect({ d, link, model }: { d: ActiveDiagram; link: Pick<LinkInst, 'index' | 'category'>; model: ProjectModel }) {
   const all = lineCategories(model.meta);
   const builtins = Object.keys(all).filter((n) => n in BUILTIN_CATEGORIES);
   const own = Object.keys(all).filter((n) => !(n in BUILTIN_CATEGORIES));
@@ -627,6 +630,55 @@ function LinkPanel({ d, link, model }: { d: ActiveDiagram; link: LinkInst; model
         <Field value={link.comment} placeholder="Engineering note, shown on the line" onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: link.index, field: 'comment', value: orUndef(v) }, 'Edit link comment')} />
       </Row>
       <FeedbackNote d={d} link={link} />
+    </div>
+  );
+}
+
+// --- planned connection ------------------------------------------------------------
+
+function PlannedPanel({ d, pl, model }: { d: ActiveDiagram; pl: PlannedLink; model: ProjectModel }) {
+  const diags = diagsOf(model, d.file).filter((x) => x.link === pl.index);
+  const resolves = diags.some((x) => x.code === 'planned-resolves');
+  const title = pl.dir === 'in' ? `${pl.text} → ${formatEndpoint(pl.at)}` : `${formatEndpoint(pl.at)} → ${pl.text}`;
+  return (
+    <div className="insp-scroll" data-testid="planned-panel">
+      <Head
+        kind="Planned link"
+        title={title}
+        diags={diags}
+        onDelete={() => deleteWithUndo(() => run(d, { op: 'disconnect', file: d.file, index: pl.index }, 'Delete planned connection', null), `Deleted planned connection ${title}`)}
+      />
+      <div className="insp-muted insp-pad">An open arrow for a signal that is not drawn yet. Write the other end as free text, or as STRATEGY:BLOCK.PORT — once that signal exists, it can become a real link.</div>
+      <DiagList diags={diags} />
+      <Changes d={d} />
+      <Row label={pl.dir === 'in' ? 'Comes from' : 'Goes to'}>
+        <Field value={pl.text} placeholder={pl.dir === 'in' ? 'e.g. Level control T200' : 'e.g. Dosing skid'} onCommit={(v) => v.trim() && v.trim() !== pl.text && run(d, { op: 'setPlannedLink', file: d.file, index: pl.index, text: v.trim() }, 'Edit planned connection')} />
+      </Row>
+      <Row label={pl.dir === 'in' ? 'To' : 'From'}>
+        <EndpointButton ep={pl.at} d={d} />
+      </Row>
+      <Row label="Label" title="Signal name drawn along the line">
+        <Field mono value={pl.label} placeholder="Signal name drawn on the line" onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: pl.index, field: 'label', value: orUndef(v) }, 'Edit link label')} />
+      </Row>
+      <Row label="Line category">
+        <CategorySelect d={d} link={pl} model={model} />
+      </Row>
+      <Row label="Comment">
+        <Field value={pl.comment} placeholder="Engineering note" onCommit={(v) => run(d, { op: 'setLinkField', file: d.file, index: pl.index, field: 'comment', value: orUndef(v) }, 'Edit link comment')} />
+      </Row>
+      {pl.dir === 'in' && (
+        <Row label="">
+          <button
+            type="button"
+            className="btn small"
+            disabled={!resolves}
+            title={resolves ? undefined : 'Write the source as STRATEGY:BLOCK.PORT of an existing signal'}
+            onClick={() => run(d, { op: 'setPlannedLink', file: d.file, index: pl.index, planned: false }, 'Make planned connection a link')}
+          >
+            Make it a real link
+          </button>
+        </Row>
+      )}
     </div>
   );
 }

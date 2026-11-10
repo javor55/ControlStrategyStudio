@@ -334,6 +334,24 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   const removeLink = (index: number) => {
     if (dispatch({ op: 'disconnect', index, ...target }, { label: 'Delete link', select: null })) store().toastUndo('Deleted link');
   };
+  /** Planned connection at port `at` (BLOCK.PORT): asks for the text. */
+  const addPlanned = async (at: string, dir: 'in' | 'out') => {
+    const text = await promptDialog({
+      title: dir === 'in' ? `Planned source for ${at}` : `Planned destination of ${at}`,
+      label: dir === 'in' ? 'Where will the signal come from? Free text, or STRATEGY:BLOCK.PORT' : 'Where will the signal go? Free text',
+      placeholder: dir === 'in' ? 'e.g. Level control T200, or LIC200:LIC200.MV' : 'e.g. Dosing skid',
+      okLabel: 'Add',
+    });
+    if (!text?.trim()) return;
+    const index = ad.diagram.links.length + (ad.diagram.planned?.length ?? 0);
+    dispatch({ op: 'addPlannedLink', at, dir, text: text.trim(), ...target }, { label: `Planned ${dir === 'in' ? 'source' : 'destination'} at ${at}`, select: { kind: 'link', index } });
+  };
+  const editPlanned = async (index: number) => {
+    const pl = ad.diagram.planned?.find((x) => x.index === index);
+    if (!pl) return;
+    const text = await promptDialog({ title: 'Planned connection', label: pl.dir === 'in' ? 'Comes from' : 'Goes to', value: pl.text, okLabel: 'Save' });
+    if (text?.trim() && text.trim() !== pl.text) dispatch({ op: 'setPlannedLink', index, text: text.trim(), ...target }, { label: 'Edit planned connection' });
+  };
   const removeNote = (index: number) => {
     if (dispatch({ op: 'removeNote', index, ...target }, { label: 'Delete note', select: null })) store().toastUndo('Deleted note');
   };
@@ -685,7 +703,21 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         run: () => pickQuick(q, def),
       }),
     );
-    if (q.wire) return types;
+    if (q.wire) {
+      const w = q.wire;
+      return [
+        {
+          key: 'planned',
+          label: w.dir === 'in' ? 'Planned source…' : 'Planned destination…',
+          category: 'Not drawn yet',
+          description: w.dir === 'in' ? 'Mark where the signal will come from (free text or STRATEGY:BLOCK.PORT)' : 'Mark where the signal will go (free text)',
+          keywords: 'planned placeholder later external reference arrow',
+          pinned: true,
+          run: () => void addPlanned(`${w.owner}.${w.port}`, w.dir),
+        },
+        ...types,
+      ];
+    }
     return [
       ...types,
       { key: 'note', label: 'Add note here', category: 'Note', keywords: 'comment text', pinned: true, run: () => addNote([q.dx, q.dy]) },
@@ -1146,6 +1178,18 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     const blockEl = el.closest('[data-block]');
     const noteEl = el.closest('[data-note]');
     const linkEl = el.closest('[data-link]');
+    if (el.closest('[data-port]')) {
+      const portEl = el.closest('[data-port]')!;
+      const owner = portEl.getAttribute('data-owner')!;
+      const port = portEl.getAttribute('data-port')!;
+      const dir = portEl.getAttribute('data-dir') as 'in' | 'out';
+      if (!ad.diagram.blocks.some((b) => b.id === owner)) return;
+      menu.open(e, [
+        { section: `${dir === 'in' ? 'Input' : 'Output'} ${owner}.${port}` },
+        { label: dir === 'in' ? 'Add planned source…' : 'Add planned destination…', description: 'An open arrow for a signal that is not drawn yet', onClick: () => void addPlanned(`${owner}.${port}`, dir) },
+      ]);
+      return;
+    }
     if (blockEl) {
       const id = blockEl.getAttribute('data-block')!;
       const b = ad.diagram.blocks.find((x) => x.id === id);
@@ -1176,12 +1220,24 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         'separator',
         deleteItem(() => removeNote(index)),
       ]);
+    } else if (linkEl && linkEl.hasAttribute('data-planned')) {
+      const index = Number(linkEl.getAttribute('data-link'));
+      const pl = ad.diagram.planned?.find((x) => x.index === index);
+      s.select({ kind: 'link', index });
+      const resolves = diagsOf(store().getState().model, ad.file).some((d) => d.link === index && d.code === 'planned-resolves');
+      menu.open(e, [
+        { section: pl ? `Planned: ${pl.dir === 'in' ? `${pl.text} → ${formatEndpoint(pl.at)}` : `${formatEndpoint(pl.at)} → ${pl.text}`}` : 'Planned connection' },
+        { label: 'Edit text…', onClick: () => void editPlanned(index) },
+        { label: 'Make it a real link', disabled: !resolves, description: resolves ? undefined : 'Write the source as STRATEGY:BLOCK.PORT of an existing signal', onClick: () => dispatch({ op: 'setPlannedLink', index, planned: false, ...target }, { label: 'Make planned connection a link' }) },
+        'separator',
+        deleteItem(() => removeLink(index)),
+      ]);
     } else if (linkEl) {
       const index = Number(linkEl.getAttribute('data-link'));
       const l = ad.diagram.links.find((x) => x.index === index);
       s.select({ kind: 'link', index });
       menu.open(e, [{ section: l ? `${formatEndpoint(l.from)} → ${formatEndpoint(l.to)}` : 'Link' }, deleteItem(() => removeLink(index))]);
-    } else if (!el.closest('[data-conn], [data-port]')) {
+    } else if (!el.closest('[data-conn]')) {
       const at = toDrawing(e.clientX, e.clientY);
       const cx = e.clientX;
       const cy = e.clientY;

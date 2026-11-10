@@ -294,6 +294,16 @@ function renderConnector(c: ConnectorGeom, t: Theme, o: RenderOptions): string {
   const tip = 8;
   // Flag shape pointing in the signal direction (left → right).
   const d = `M${n(x)} ${n(y - h / 2)} H${n(x + w - tip)} L${n(x + w)} ${n(y)} L${n(x + w - tip)} ${n(y + h / 2)} H${n(x)} Z`;
+  if (c.kind === 'planned-in' || c.kind === 'planned-out') {
+    // Planned connection: grey dashed flag, italic free text; selectable like a link.
+    const selected = o.selection?.kind === 'link' && c.link !== undefined && o.selection.index === c.link;
+    const pc = selected ? t.accent : t.ink3;
+    let s = `<g${attrs({ 'data-link': o.interactive ? c.link : undefined, 'data-planned': o.interactive ? c.link : undefined, style: o.interactive ? 'cursor:pointer' : undefined })}>`;
+    if (o.interactive) s += `<title>Planned connection — not drawn yet</title>`;
+    s += `<path${attrs({ d, fill: t.paper, stroke: pc, 'stroke-width': selected ? 1.8 : 1.2, 'stroke-dasharray': '4 3' })}/>`;
+    s += text(x + 6, y + 3.5, c.label, { 'font-family': t.fontSans, 'font-size': 10.5, 'font-style': 'italic', fill: pc });
+    return s + '</g>';
+  }
   const nav = c.target ? JSON.stringify(c.target) : undefined;
   let s = `<g${attrs({ 'data-conn': o.interactive ? nav ?? '' : undefined, style: o.interactive && nav ? 'cursor:pointer' : undefined })}>`;
   s += `<path${attrs({ d, fill: t.paper, stroke: color, 'stroke-width': 1.2, 'stroke-dasharray': c.kind === 'used-by' || c.kind === 'written-by' ? '3 2' : undefined })}/>`;

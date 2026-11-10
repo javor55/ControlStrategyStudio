@@ -134,6 +134,27 @@ export interface LinkInst {
   ext: Ext;
 }
 
+/**
+ * A planned connection: a signal that will come from (or go to) somewhere not
+ * drawn yet — written as a link with `planned: true` whose other end is free
+ * text ("Level control T200") or a STRATEGY:BLOCK.PORT that may not exist yet.
+ */
+export interface PlannedLink {
+  /** Index in the YAML `links` list. */
+  index: number;
+  /** `in`: a planned source feeds input `at`; `out`: output `at` goes to a planned destination. */
+  dir: 'in' | 'out';
+  at: Endpoint;
+  /** The other end as written. */
+  text: string;
+  /** The other end parsed, when it is written as STRATEGY:BLOCK.PORT. */
+  ref?: Endpoint;
+  comment?: string;
+  label?: string;
+  category?: string;
+  ext: Ext;
+}
+
 export interface NoteInst {
   index: number;
   text: string;
@@ -146,6 +167,8 @@ export interface Diagram {
   sheets: SheetDef[];
   blocks: BlockInst[];
   links: LinkInst[];
+  /** Planned connections (links with `planned: true`), drawn as open arrows. */
+  planned?: PlannedLink[];
   notes: NoteInst[];
 }
 
