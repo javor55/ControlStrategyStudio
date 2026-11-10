@@ -80,7 +80,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const activeSheet = useEditor((s) => s.activeSheet);
   const activeSequencer = useEditor((s) => s.activeSequencer);
   /** Sequencer shown (sequences that list sequencers); undefined = the whole sequence. */
-  const sqId = seq.explicitSequencers ? (seq.sequencers.some((x) => x.id === activeSequencer) ? activeSequencer! : seq.sequencers[0].id) : undefined;
+  const sqId = seq.explicitSequencers ? (seq.sequencers.some((x) => x.id === activeSequencer) ? activeSequencer! : seq.sequencers[0].id) : undefined; // same rule as currentSequencer()
   const selection = useEditor((s) => s.selection);
   const fitRequest = useEditor((s) => s.fitRequest);
   const model = useEditor((s) => s.model);

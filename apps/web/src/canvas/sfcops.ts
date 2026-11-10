@@ -114,6 +114,13 @@ export interface PlaceOptions {
   sequencer?: string;
 }
 
+/** Sequencer shown on the canvas for `seq` (undefined: the sequence has no sequencers). */
+export function currentSequencer(seq: Sequence): string | undefined {
+  if (!seq.explicitSequencers) return undefined;
+  const active = store().getState().activeSequencer;
+  return seq.sequencers.some((x) => x.id === active) ? active : seq.sequencers[0].id;
+}
+
 /**
  * Adds an SFC element. Returns false (with a message) when it needs a source
  * step and none is given.
@@ -124,7 +131,7 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
   const sheetOf = (id: string) => seq.steps.find((x) => x.id === id)?.sheet ?? o.sheet;
   if (kind === 'step') {
     const [id] = freshNames(seq, 1);
-    const sq = o.sequencer ?? seq.sequencers[0].id;
+    const sq = o.sequencer ?? currentSequencer(seq) ?? seq.sequencers[0].id;
     const first = !seq.steps.some((x) => x.sequencer === sq);
     return s.dispatch(
       { op: 'addStep', file, id, sheet: o.sheet, sequencer: seq.explicitSequencers ? sq : undefined, pos: o.pos?.map((v) => Math.round(v / 10) * 10) as [number, number] | undefined, initial: first || undefined },
