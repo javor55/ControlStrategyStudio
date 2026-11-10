@@ -67,6 +67,8 @@ export type Op =
   | ({ op: 'moveToSheet'; ids: string[]; notes?: number[]; sheet: number } & DiagramTarget)
   | ({ op: 'connect'; from: string; to: string; comment?: string; replace?: boolean } & DiagramTarget)
   | ({ op: 'disconnect'; index: number } & DiagramTarget)
+  /** Composite type drawing: places the interface bar `in` / `out` (null = automatic). */
+  | ({ op: 'moveInterface'; id: 'in' | 'out'; pos: [number, number] | null } & DiagramTarget)
   /**
    * Planned connection: input `at` gets a source that is not drawn yet (`dir: 'in'`),
    * or output `at` goes to a destination not drawn yet (`dir: 'out'`). `text` is
@@ -702,7 +704,7 @@ function moveWithDoc(tx: Tx, from: string, to: string): void {
 /** Diagram ops that also apply to sequences (notes, sheets, layout). */
 const SHEET_OPS = new Set(['addNote', 'setNote', 'removeNote', 'addSheet', 'renameSheet', 'removeSheet', 'pinAll', 'unpinAll', 'moveToSheet']);
 /** Diagram ops that need a strategy or a composite block type. */
-const DIAGRAM_OPS = new Set(['insertFragment', 'removeBlocks', 'addBlock', 'removeBlock', 'renameBlock', 'setBlockField', 'setParam', 'moveBlock', 'setOrders', 'connect', 'disconnect', 'setLinkComment', 'setLinkField', 'setBlockDisplay', 'addPlannedLink', 'setPlannedLink']);
+const DIAGRAM_OPS = new Set(['insertFragment', 'removeBlocks', 'addBlock', 'removeBlock', 'renameBlock', 'setBlockField', 'setParam', 'moveBlock', 'setOrders', 'connect', 'disconnect', 'setLinkComment', 'setLinkField', 'setBlockDisplay', 'addPlannedLink', 'setPlannedLink', 'moveInterface']);
 
 function run(tx: Tx, op: Op): void {
   const root = 'root' in op && op.root ? op.root : [];
@@ -927,6 +929,21 @@ function run(tx: Tx, op: Op): void {
       return;
     case 'moveBlock':
       tx.edit(op.file, (doc) => setOrDelete(doc, blockMap(doc, root, op.id), 'pos', op.pos?.map(Math.round), BLOCK_KEYS));
+      return;
+    case 'moveInterface':
+      tx.edit(op.file, (doc) => {
+        if (!root.length) throw new OpError('Interface bars exist only in the drawing of a composite block type', 'wrong-file');
+        if (op.pos) {
+          const m = ensureMap(doc, [...root, 'interface', op.id], ['pos']);
+          setOrdered(m, 'pos', doc.createNode(op.pos.map(Math.round), { flow: true }), ['pos'], doc);
+        } else {
+          const iface = getNode(doc, [...root, 'interface']);
+          if (isMap(iface)) {
+            iface.delete(op.id);
+            if (!iface.items.length) (getNode(doc, root) as YAMLMap).delete('interface');
+          }
+        }
+      });
       return;
     case 'setOrders':
       tx.edit(op.file, (doc) => {

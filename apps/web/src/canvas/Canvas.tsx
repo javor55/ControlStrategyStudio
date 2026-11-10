@@ -78,6 +78,8 @@ type Gesture =
       moved: boolean;
       /** Click (no drag) on a member of a multi-selection selects just that block. */
       collapse: boolean;
+      /** Dragging an interface bar (`in` / `out`) of a composite drawing. */
+      iface?: 'in' | 'out';
     }
   | { kind: 'note'; index: number; sx: number; sy: number; ox: number; oy: number; moved: boolean }
   | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string; reconnect?: Reconnect }
@@ -847,7 +849,11 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       gesture.current = { kind: 'wire', ...src };
       setWire({ src, x1, y1 });
     } else if (el.closest('[data-iface]')) {
-      return; // interface bars are not selectable or movable
+      // Interface bars of a composite drawing: movable, not selectable.
+      const id = el.closest('[data-iface]')!.getAttribute('data-iface') as 'in' | 'out';
+      const g = layoutRef.current.blocks.find((b) => b.iface === id);
+      if (!g) return;
+      gesture.current = { kind: 'block', id, ids: [id], origins: { [id]: [g.x, g.y] }, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, moved: false, collapse: false, iface: id };
     } else if (el.closest('[data-block]')) {
       const id = el.closest('[data-block]')!.getAttribute('data-block')!;
       if (!geomOf(id)) return;
@@ -986,7 +992,10 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
         if (!g.moved && !g.additive) store().select(null);
         break;
       case 'block': {
-        if (g.moved && (g.dx || g.dy)) {
+        if (g.moved && (g.dx || g.dy) && g.iface) {
+          const o = g.origins[g.iface];
+          dispatch({ op: 'moveInterface', id: g.iface, pos: [o[0] + g.dx, o[1] + g.dy], ...target }, { label: `Move ${g.iface === 'in' ? 'inputs' : 'outputs'} bar` });
+        } else if (g.moved && (g.dx || g.dy)) {
           const positions = Object.fromEntries(g.ids.map((id) => [id, [g.origins[id][0] + g.dx, g.origins[id][1] + g.dy] as [number, number]]));
           dispatch({ op: 'pinAll', positions, ...target }, { label: g.ids.length > 1 ? `Move ${g.ids.length} blocks` : `Move ${g.ids[0]}` });
         } else if (!g.moved && g.collapse) store().select({ kind: 'block', id: g.id });
@@ -1174,7 +1183,16 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     closePopups();
     const el = e.target as Element;
     const s = store();
-    if (el.closest('[data-iface]')) return;
+    const ifaceEl = el.closest('[data-iface]');
+    if (ifaceEl) {
+      const id = ifaceEl.getAttribute('data-iface') as 'in' | 'out';
+      const pinned = !!ad.diagram.ifacePos?.[id];
+      menu.open(e, [
+        { section: id === 'in' ? 'Inputs of the block type' : 'Outputs of the block type' },
+        { label: 'Automatic position', disabled: !pinned, description: pinned ? undefined : 'Drag the bar to place it by hand', onClick: () => dispatch({ op: 'moveInterface', id, pos: null, ...target }, { label: 'Interface bar: automatic position' }) },
+      ]);
+      return;
+    }
     const blockEl = el.closest('[data-block]');
     const noteEl = el.closest('[data-note]');
     const linkEl = el.closest('[data-link]');

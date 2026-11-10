@@ -179,7 +179,19 @@ export const SCHEMAS: Record<DocKind, object> = {
         ...ext,
         additionalProperties: false,
       },
-      diagram: { type: 'object', properties: diagramProps, additionalProperties: false },
+      diagram: {
+        type: 'object',
+        properties: {
+          ...diagramProps,
+          // Positions of the interface bars (`in` / `out`) of a composite type's drawing.
+          interface: {
+            type: ['object', 'null'],
+            properties: { in: { type: 'object', properties: { pos }, additionalProperties: false }, out: { type: 'object', properties: { pos }, additionalProperties: false } },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
     },
     ...ext,
     additionalProperties: false,

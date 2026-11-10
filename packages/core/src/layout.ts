@@ -216,11 +216,12 @@ interface Pre {
 const connW = (label: string) => Math.max(56, Math.ceil(label.length * M.CH_PORT + 20));
 
 /** Pseudo-blocks drawing a composite type's interface as `in` / `out` bars. */
-function ifaceBlocks(t: BlockTypeDef): BlockInst[] {
+function ifaceBlocks(t: BlockTypeDef, pos?: Diagram['ifacePos']): BlockInst[] {
   const mk = (id: 'in' | 'out', inputs: PortDef[], outputs: PortDef[]): BlockInst => ({
     id,
     typeRef: '',
     sheet: 1,
+    pos: pos?.[id],
     params: {},
     ext: {},
     def: { ...t, type: id === 'in' ? 'INPUTS' : 'OUTPUTS', kind: 'basic', inputs, outputs, params: [], diagram: undefined },
@@ -247,9 +248,9 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
     return !l.from.strategy && s !== undefined && t !== undefined && s >= t;
   };
   const firstSheet = diagram.sheets[0]?.id ?? 1;
-  const iface = ctx.composite && sheet === firstSheet ? ifaceBlocks(ctx.composite) : [];
+  const iface = ctx.composite && sheet === firstSheet ? ifaceBlocks(ctx.composite, diagram.ifacePos) : [];
   const onSheet = [...iface, ...diagram.blocks.filter((b) => sheetOf(diagram, b) === sheet)];
-  const byId = new Map([...diagram.blocks, ...(ctx.composite ? ifaceBlocks(ctx.composite) : [])].map((b) => [b.id, b]));
+  const byId = new Map([...diagram.blocks, ...(ctx.composite ? ifaceBlocks(ctx.composite, diagram.ifacePos) : [])].map((b) => [b.id, b]));
   const isIface = (b: BlockInst) => !!ctx.composite && (b.id === IFACE_IN || b.id === IFACE_OUT) && b.typeRef === '';
   const here = new Set(onSheet.map((b) => b.id));
   const portType = (b: BlockInst | undefined, dir: 'in' | 'out', port: string): string | undefined =>

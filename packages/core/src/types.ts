@@ -169,6 +169,8 @@ export interface Diagram {
   links: LinkInst[];
   /** Planned connections (links with `planned: true`), drawn as open arrows. */
   planned?: PlannedLink[];
+  /** Composite types: hand-placed positions of the interface bars `in` / `out`. */
+  ifacePos?: { in?: [number, number]; out?: [number, number] };
   notes: NoteInst[];
 }
 

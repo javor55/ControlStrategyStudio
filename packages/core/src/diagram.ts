@@ -158,7 +158,12 @@ export function parseDiagram(
     });
   }
 
-  return { diagram: { sheets, blocks, links, planned, notes }, diags };
+  const iface = isObj(data.interface) ? data.interface : {};
+  const ifacePos = {
+    in: isObj(iface.in) ? pos2(iface.in.pos) : undefined,
+    out: isObj(iface.out) ? pos2(iface.out.pos) : undefined,
+  };
+  return { diagram: { sheets, blocks, links, planned, notes, ...(ifacePos.in || ifacePos.out ? { ifacePos } : {}) }, diags };
 }
 
 /** A local end `BLOCK.PORT` (no strategy). */

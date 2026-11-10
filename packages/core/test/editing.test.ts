@@ -262,3 +262,21 @@ describe('planned connections', () => {
     expect(codesOf(f)).toContain('multiple-drivers');
   });
 });
+
+describe('composite interface bars', () => {
+  it('can be placed by hand and back to automatic', () => {
+    const files = demoProjectFiles();
+    const file = Object.keys(files).find((f) => f.includes('/acme/') && f.endsWith('.yaml') && !f.endsWith('library.yaml'))!;
+    const t = loadProject(files).types.all.find((x) => x.file === file)!;
+    let f = applyOp(files, { op: 'moveInterface', file, root: ['diagram'], id: 'out', pos: [1200.4, 300] }).files;
+    expect(f[file]).toMatch(/interface:\n\s+out:\n\s+pos: \[ 1200, 300 \]/);
+    const t2 = loadProject(f).types.all.find((x) => x.file === file)!;
+    expect(loadProject(f).diags.filter((d) => d.file === file && d.severity !== 'info')).toEqual([]);
+    const bar = layoutDiagram(t2.diagram!, { composite: t2 })[0].blocks.find((b) => b.iface === 'out')!;
+    expect([bar.x, bar.y]).toEqual([1200, 300]);
+    expect(bar.pinned).toBe(true);
+    f = applyOp(f, { op: 'moveInterface', file, root: ['diagram'], id: 'out', pos: null }).files;
+    expect(f[file]).not.toContain('interface:');
+    expect(t.diagram).toBeDefined();
+  });
+});

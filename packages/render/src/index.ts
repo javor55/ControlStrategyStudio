@@ -195,7 +195,7 @@ function renderWire(w: WireGeom, t: Theme, o: RenderOptions): string {
 
 function renderIface(b: BlockGeom, t: Theme, o: RenderOptions): string {
   const isIn = b.iface === 'in';
-  let s = `<g${attrs({ 'data-iface': o.interactive ? b.iface : undefined })}>`;
+  let s = `<g${attrs({ 'data-iface': o.interactive ? b.iface : undefined, style: o.interactive ? 'cursor:move' : undefined })}>`;
   s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: b.h, fill: t.paper, stroke: t.iface, 'stroke-width': 1.4, 'stroke-dasharray': '4 2' })}/>`;
   s += `<rect${attrs({ x: b.x, y: b.y, width: b.w, height: M.HEADER - 4, fill: t.iface, 'fill-opacity': 0.12, stroke: t.iface, 'stroke-width': 1.4 })}/>`;
   s += text(b.x + 6, b.y + 13, isIn ? 'IN' : 'OUT', { 'font-family': t.fontSans, 'font-size': 12, 'font-weight': 'bold', fill: t.iface });
