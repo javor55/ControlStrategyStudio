@@ -88,6 +88,8 @@ export function canvasHelp(kind: CanvasKind): HelpGroup[] {
           g('Drag from a pin to a pin', 'Connect'),
           g('Drag from a pin to empty paper', 'Add a matching block and connect it'),
           g('Drag the end of a link to another pin', 'Reconnect (label, category and comment are kept)'),
+          g('Drag a connected input to another input', 'Move its link there (Alt + drag: a new wire from the input)'),
+          g('Shift + drag a connected output to another output', 'Move its link to the other output'),
           g('Green / red ring while wiring', 'Valid target / types or directions do not match'),
           g('Double-click a block name', 'Rename in place'),
           g('Double-click a parameter or constant', 'Edit the value in place'),

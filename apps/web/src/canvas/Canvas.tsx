@@ -86,7 +86,7 @@ type Gesture =
       notes?: Record<number, [number, number]>;
     }
   | { kind: 'note'; index: number; sx: number; sy: number; ox: number; oy: number; moved: boolean }
-  | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string; reconnect?: Reconnect }
+  | { kind: 'wire'; owner: string; port: string; dir: 'in' | 'out'; type: string; reconnect?: Reconnect; sx?: number; sy?: number }
   /** Press on a link near one of its ends: becomes a reconnect once the pointer moves. */
   | { kind: 'linkEnd'; index: number; end: 'from' | 'to'; sx: number; sy: number }
   | { kind: 'conn'; target: { sheet?: number; strategy?: string; block?: string }; sx: number; sy: number };
@@ -672,7 +672,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     const fixedSide = end === 'to' ? 'from' : 'to';
     const src: WireSource = { owner: fixedEp.strategy ? `${fixedEp.strategy}:${fixedEp.block}` : fixedEp.block, port: fixedEp.port, dir: end === 'to' ? 'out' : 'in', type: endpointType(fixedEp, fixedSide) };
     const reconnect: Reconnect = { index, end, link, fixed: formatEndpoint(fixedEp) };
-    gesture.current = { kind: 'wire', ...src, reconnect };
+    gesture.current = { kind: 'wire', ...src, reconnect, sx: clientX, sy: clientY };
     const [x1, y1] = toDrawing(clientX, clientY);
     setWire({ src, x1, y1, reconnect });
   };
@@ -968,11 +968,24 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       const owner = p.getAttribute('data-owner')!;
       const port = p.getAttribute('data-port')!;
       const dir = p.getAttribute('data-dir') as 'in' | 'out';
-      const g = geomOf(owner)?.ports.find((q) => q.name === port && q.dir === dir);
-      const [x1, y1] = g ? [g.x, g.y] : toDrawing(e.clientX, e.clientY);
-      const src = { owner, port, dir, type: g?.type ?? 'ANY' };
-      gesture.current = { kind: 'wire', ...src };
-      setWire({ src, x1, y1 });
+      // A connected input: pick up the end of its link and move it (Alt: start a new wire instead).
+      const driver = dir === 'in' && !e.altKey ? ad.diagram.links.find((l) => l.to.block === owner && l.to.port === port) : undefined;
+      // Shift + an output with links: move the (last drawn) link to another output.
+      const outLinks = dir === 'out' && e.shiftKey ? ad.diagram.links.filter((l) => !l.from.strategy && l.from.block === owner && l.from.port === port) : [];
+      if (driver) {
+        s.select({ kind: 'link', index: driver.index });
+        startReconnect(driver.index, 'to', e.clientX, e.clientY);
+      } else if (outLinks.length) {
+        const l = outLinks[outLinks.length - 1];
+        s.select({ kind: 'link', index: l.index });
+        startReconnect(l.index, 'from', e.clientX, e.clientY);
+      } else {
+        const g = geomOf(owner)?.ports.find((q) => q.name === port && q.dir === dir);
+        const [x1, y1] = g ? [g.x, g.y] : toDrawing(e.clientX, e.clientY);
+        const src = { owner, port, dir, type: g?.type ?? 'ANY' };
+        gesture.current = { kind: 'wire', ...src };
+        setWire({ src, x1, y1 });
+      }
     } else if (el.closest('[data-iface]')) {
       // Interface bars of a composite drawing: movable, not selectable.
       const id = el.closest('[data-iface]')!.getAttribute('data-iface') as 'in' | 'out';
@@ -1055,7 +1068,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       return;
     }
     const k = view.current.k;
-    const far = () => 'sx' in g && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) >= CLICK_SLOP;
+    const far = () => 'sx' in g && g.sx !== undefined && g.sy !== undefined && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) >= CLICK_SLOP;
     switch (g.kind) {
       case 'pan': {
         if (!g.moved && !far()) return;
@@ -1171,8 +1184,12 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
           break;
         }
         if (g.reconnect) {
-          // Dropped on a pin: move the link end. Anywhere else: cancel (the link is unchanged).
+          // Dropped on a pin: move the link end. Anywhere else: the link stays (the toast offers deleting it).
           if (snapTo) reconnect(g.reconnect, snapTo);
+          else if (Math.hypot(e.clientX - (g.sx ?? e.clientX), e.clientY - (g.sy ?? e.clientY)) > CLICK_SLOP) {
+            const index = g.reconnect.index;
+            store().toast('Link unchanged — drop the end on a pin to reconnect it', { action: { label: 'Delete link', run: () => removeLink(index) } });
+          }
           break;
         }
         if (snapTo) {
