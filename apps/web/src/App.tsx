@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { formatTag, newUid, PROJECT_FILE, stdLibraryFiles, stringifyDoc, type Files } from '@csd/core';
 import { Document, parseDocument } from 'yaml';
 import { store, useEditor, type ViewMode } from './state/store';
@@ -26,6 +26,7 @@ import { AssetView } from './views/AssetView';
 import './editor/workspace.css';
 import { ExportDialog } from './export/ExportDialog';
 import { SettingsDialog } from './settings/SettingsDialog';
+import type { ExportFormat } from '@csd/export';
 import { onOpenSettings, type SettingsTab } from './settings/open';
 import { availableExamples, defaultProjectFiles } from './project/examples';
 import { HistoryDialogs, HistoryDrawer, VcsStatus } from './history/VcsStatus';
@@ -223,14 +224,14 @@ function GearIcon() {
 
 function TopBar({ panels }: { panels: PanelsApi }) {
   const name = useEditor((s) => s.model.meta.name);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<false | { format?: ExportFormat }>(false);
   const [settings, setSettings] = useState<false | { tab?: SettingsTab }>(false);
   useEffect(() => onOpenSettings((tab) => setSettings({ tab })), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
         e.preventDefault();
-        setExporting(true);
+        setExporting({});
       } else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === ',') {
         e.preventDefault();
         setSettings({});
@@ -255,6 +256,9 @@ function TopBar({ panels }: { panels: PanelsApi }) {
     }
     const s = store();
     const items: MenuEntry[] = [
+      { section: name },
+      ...(folder ? folderItems(folder) : [{ label: unsaved ? 'Saving in this browser…' : 'Saved in this browser', description: 'Every change is kept in this browser; save as ZIP or to a folder for a copy elsewhere', disabled: true } as MenuEntry]),
+      'separator',
       {
         label: 'New project…',
         onClick: async () => {
@@ -263,27 +267,13 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           await openSession(newProjectId(), emptyProjectFiles(n), undefined, { save: true });
         },
       },
-      { label: 'Open ZIP…', onClick: () => fileInput.current?.click() },
-      {
-        label: 'Save as ZIP',
-        hint: keys('Mod+S'),
-        onClick: () => saveZip(),
-      },
-      'separator',
       {
         label: 'Open folder…',
         disabled: !folderSupported,
         description: folderSupported ? 'A project folder on disk; changes are saved there' : 'Needs Chrome or Edge (File System Access)',
         onClick: () => void openFolder(newProjectId()).catch((e) => store().toast(`Cannot open the folder: ${(e as Error).message}`, 'error')),
       },
-      {
-        label: folder ? `Saved to folder ${folder.name}` : 'Save to folder…',
-        disabled: !folderSupported || !!folder,
-        description: folderSupported ? (folder ? 'Every change is written there' : 'Link this project to an empty folder; changes are saved there') : 'Needs Chrome or Edge (File System Access)',
-        onClick: () => void saveToFolder().catch((e) => store().toast(`Cannot save to the folder: ${(e as Error).message}`, 'error')),
-      },
-      ...(folder ? [{ label: 'Disconnect folder', description: 'Stop saving to the folder (its files stay)', onClick: () => void disconnectFolder() } as MenuEntry] : []),
-      'separator',
+      { label: 'Open ZIP…', onClick: () => fileInput.current?.click() },
       {
         label: 'Open example',
         submenu: availableExamples().map(
@@ -294,19 +284,34 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           }),
         ),
       },
-      { section: 'In this browser' },
-      ...recent.slice(0, 12).map(
-        (r): MenuEntry => ({
-          label: r.name,
-          checked: r.id === s.getState().projectId,
-          radio: true,
-          keepOpen: false,
-          hint: savedWhen(r.updated),
-          title: `Last saved ${new Date(r.updated).toLocaleString()}`,
-          onClick: () => openProject(r.id),
-        }),
-      ),
+      {
+        label: 'Recent projects',
+        description: 'Projects kept in this browser',
+        disabled: !recent.length,
+        submenu: recent.slice(0, 15).map(
+          (r): MenuEntry => ({
+            label: r.name,
+            checked: r.id === s.getState().projectId,
+            radio: true,
+            keepOpen: false,
+            hint: savedWhen(r.updated),
+            title: `Last saved ${new Date(r.updated).toLocaleString()}`,
+            onClick: () => openProject(r.id),
+          }),
+        ),
+      },
       'separator',
+      { label: 'Save as ZIP', hint: keys('Mod+S'), onClick: () => saveZip() },
+      folder
+        ? { label: 'Disconnect folder', description: `Stop saving to ${folder.name} (its files stay)`, onClick: () => void disconnectFolder() }
+        : {
+            label: 'Save to folder…',
+            disabled: !folderSupported,
+            description: folderSupported ? 'Link this project to an empty folder; changes are saved there' : 'Needs Chrome or Edge (File System Access)',
+            onClick: () => void saveToFolder().catch((e) => store().toast(`Cannot save to the folder: ${(e as Error).message}`, 'error')),
+          },
+      'separator',
+      { label: 'Project settings…', description: 'Name, levels, title block', onClick: () => setSettings({ tab: 'project' }) },
       {
         label: 'Delete project from this browser…',
         danger: true,
@@ -320,6 +325,14 @@ function TopBar({ panels }: { panels: PanelsApi }) {
     menu.openBelow(el, items);
   };
 
+  const exportMenu = (el: HTMLElement) =>
+    menu.openBelow(el, [
+      { label: 'PDF…', hint: keys('Mod+E'), description: 'Drawings, documentation and lists for print', onClick: () => setExporting({ format: 'pdf' }) },
+      { label: 'Interactive HTML…', description: 'One file to view in any browser', onClick: () => setExporting({ format: 'html' }) },
+      { label: 'JSON / TOML data…', description: 'Machine-readable project data', onClick: () => setExporting({ format: 'json' }) },
+    ]);
+  const status = projectStatus(folder, unsaved);
+
   return (
     <header className="topbar">
       <span className="brand" title="Control Strategy Studio">
@@ -328,17 +341,23 @@ function TopBar({ panels }: { panels: PanelsApi }) {
           Control Strategy <b>Studio</b>
         </span>
       </span>
-      <button className="btn project-btn" aria-haspopup="menu" title="Project: new, open, save, examples" onClick={(e) => projectMenu(e.currentTarget)}>
-        <span className="project-name">{name}</span>
-        {Icon.caret}
+      <span className="tb-sep" />
+      <button className={`btn ghost project-btn ${status.kind}`} aria-haspopup="menu" title={`Project: ${status.title}`} onClick={(e) => projectMenu(e.currentTarget)} data-testid="project-btn">
+        <span className="project-name">
+          {name}
+          {Icon.caret}
+        </span>
+        <span className="project-status" role="status">
+          {status.icon} {status.text}
+        </span>
       </button>
+      <span className="tb-sep" />
       <button className="btn ghost icon" title={`Undo (${keys('Mod+Z')})`} aria-label="Undo" disabled={!canUndo} onClick={() => store().undo()}>
         {Icon.undo}
       </button>
       <button className="btn ghost icon" title={`Redo (${keys('Mod+Y')})`} aria-label="Redo" disabled={!canRedo} onClick={() => store().redo()}>
         {Icon.redo}
       </button>
-      <VcsStatus />
       <span className="spacer" />
       <button
         className={`btn ghost icon${panels.leftOpen ? '' : ' off'}`}
@@ -360,23 +379,15 @@ function TopBar({ panels }: { panels: PanelsApi }) {
         <PanelIcon side="right" open={panels.rightOpen} />
       </button>
       <span className="spacer" />
-      {folder ? (
-        <FolderState folder={folder} />
-      ) : (
-        <span className={`save-state${unsaved ? ' saving' : ''}`} role="status" title={unsaved ? 'Saving in this browser…' : 'All changes are saved in this browser'} aria-label={unsaved ? 'Saving' : 'Saved in browser'}>
-          {unsaved ? Icon.saving : Icon.saved}
-        </span>
-      )}
-      <button className="btn" title={`Download the project as a ZIP file (${keys('Mod+S')})`} onClick={() => saveZip()}>
-        Save as ZIP
+      <VcsStatus />
+      <span className="tb-sep" />
+      <button className="btn primary" aria-haspopup="menu" title={`Export PDF, interactive HTML or data (${keys('Mod+E')})`} onClick={(e) => exportMenu(e.currentTarget)}>
+        Export {Icon.caret}
       </button>
-      <button className="btn primary" title={`Export PDF, interactive HTML, JSON or TOML (${keys('Mod+E')})`} onClick={() => setExporting(true)}>
-        Export…
-      </button>
-      <button className="btn ghost icon" title={`Settings: project, drawing style and editor (${keys('Mod+,')})`} aria-label="Settings" onClick={() => setSettings({})}>
+      <button className="btn ghost icon settings-btn" title={`Settings: project, drawing style and editor (${keys('Mod+,')})`} aria-label="Settings" onClick={() => setSettings({})}>
         <GearIcon />
       </button>
-      {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+      {exporting && <ExportDialog initialFormat={exporting.format} onClose={() => setExporting(false)} />}
       {settings && <SettingsDialog initialTab={settings.tab} onClose={() => setSettings(false)} />}
       <input
         ref={fileInput}
@@ -511,22 +522,10 @@ function Workspace() {
   );
 }
 
-/** Folder link state in the top bar: saved / saving / needs a click / changed outside. */
-function FolderState({ folder }: { folder: NonNullable<EditorState['folder']> }) {
-  const menu = useMenu();
-  const label =
-    folder.status === 'ok'
-      ? `Saved to ${folder.name}`
-      : folder.status === 'saving'
-        ? `Saving to ${folder.name}…`
-        : folder.status === 'needs-permission'
-          ? `Reconnect ${folder.name}`
-          : folder.status === 'changed-outside'
-            ? `${folder.name} changed outside`
-            : `${folder.name}: error`;
-  const items = (): MenuEntry[] => [
-    { section: `Folder ${folder.name}` },
-    ...(folder.message ? [{ label: folder.message, disabled: true } as MenuEntry] : []),
+/** Actions on the linked folder (top of the project menu). */
+function folderItems(folder: NonNullable<EditorState['folder']>): MenuEntry[] {
+  return [
+    { label: projectStatus(folder, false).text, description: folder.message ?? (folder.status === 'ok' ? 'Every change is written to the folder (and kept in this browser)' : undefined), disabled: true },
     ...(folder.status === 'needs-permission' ? [{ label: 'Allow access again', description: 'The browser asks once after a reload', onClick: () => void reconnectFolder() } as MenuEntry] : []),
     ...(folder.status === 'changed-outside'
       ? [
@@ -535,22 +534,27 @@ function FolderState({ folder }: { folder: NonNullable<EditorState['folder']> })
         ]
       : []),
     ...(folder.status === 'ok' || folder.status === 'error' ? [{ label: 'Check the folder now', onClick: () => void checkFolder({ interactive: true }) } as MenuEntry, { label: 'Save now', onClick: () => void syncFolder() } as MenuEntry] : []),
-    'separator',
-    { label: 'Disconnect folder', description: 'Stop saving to the folder (its files stay)', onClick: () => void disconnectFolder() },
   ];
-  return (
-    <>
-      <button
-        type="button"
-        className={`btn small folder-state ${folder.status}`}
-        title={folder.message ?? (folder.status === 'ok' ? 'All changes are saved to the folder on disk (and in this browser)' : label)}
-        onClick={(e) => (folder.status === 'needs-permission' ? void reconnectFolder() : menu.openBelow(e.currentTarget, items()))}
-      >
-        {folder.status === 'ok' ? Icon.saved : folder.status === 'saving' ? Icon.saving : '⚠'} {label}
-      </button>
-      {menu.element}
-    </>
-  );
+}
+
+/** Save state shown under the project name. */
+function projectStatus(folder: EditorState['folder'], unsaved: boolean): { kind: string; icon: ReactNode; text: string; title: string } {
+  if (!folder)
+    return unsaved
+      ? { kind: 'saving', icon: Icon.saving, text: 'Saving in browser…', title: 'saving in this browser…' }
+      : { kind: 'ok', icon: Icon.saved, text: 'Saved in browser', title: 'all changes are saved in this browser' };
+  switch (folder.status) {
+    case 'ok':
+      return { kind: 'ok', icon: Icon.saved, text: `Saved to folder ${folder.name}`, title: 'all changes are saved to the folder on disk (and in this browser)' };
+    case 'saving':
+      return { kind: 'saving', icon: Icon.saving, text: `Saving to ${folder.name}…`, title: 'saving to the folder…' };
+    case 'needs-permission':
+      return { kind: 'attention', icon: '⚠', text: `Reconnect folder ${folder.name}`, title: 'the browser needs permission for the folder again' };
+    case 'changed-outside':
+      return { kind: 'warning', icon: '⚠', text: `${folder.name} changed outside`, title: folder.message ?? 'the folder changed outside the app' };
+    default:
+      return { kind: 'warning', icon: '⚠', text: `${folder.name}: error`, title: folder.message ?? 'cannot write to the folder' };
+  }
 }
 
 function Toasts() {

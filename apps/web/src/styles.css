@@ -181,8 +181,6 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .menu .menu-desc { color: var(--ink-3); font-size: 11.5px; white-space: normal; line-height: 1.35; }
 
 /* ---- shared bits used by several panels ----------------------------------------- */
-.save-state { display: inline-flex; align-items: center; color: var(--ink-3); flex: none; }
-.save-state.saving { color: var(--accent); }
 .add-btn { color: var(--accent) !important; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .add-btn .ico { margin-right: -1px; }
 .diag-badges { display: inline-flex; gap: 3px; flex: none; }
@@ -221,13 +219,17 @@ code, .mono { font-family: var(--f-mono); font-size: 12px; }
 .folder-item-name.mono { font-size: 12px; }
 .folder-item-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: var(--fs-sm); }
 
-/* top bar */
-.project-btn { max-width: 260px; }
-.project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* top bar: project · edit | view | version · export · settings */
+.tb-sep { flex: none; width: 1px; height: 22px; background: var(--rule); margin: 0 2px; }
+.project-btn { max-width: 300px; height: 36px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; padding: 0 8px; line-height: 1.15; }
+.project-btn .project-name { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; font-weight: 600; }
+.project-btn .project-name > :first-child { min-width: 0; }
+.project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-status { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink-3); }
+.project-status svg { width: 12px; height: 12px; flex: none; }
+.project-btn.saving .project-status { color: var(--accent); }
+.project-btn.attention .project-status { color: var(--accent); font-weight: 600; }
+.project-btn.warning .project-status { color: var(--warning); font-weight: 600; }
+.settings-btn { flex: none; }
 @media (max-width: 1440px) { .brand-text { display: none; } .brand { margin-right: 2px; } }
-
-/* Linked folder on disk (top bar) */
-.folder-state { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
-.folder-state.ok, .folder-state.saving { color: var(--ink-2); }
-.folder-state.needs-permission { color: var(--accent); border-color: var(--accent); }
-.folder-state.changed-outside, .folder-state.error { color: var(--warning); border-color: var(--warning); }
+@media (max-width: 1100px) { .project-btn { max-width: 200px; } .hx-status-btn .hx-sep, .hx-status-btn .hx-rev, .hx-status-btn .hx-muted { display: none; } }

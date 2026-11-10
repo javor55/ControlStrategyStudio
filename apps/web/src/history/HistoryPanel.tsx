@@ -67,7 +67,7 @@ function keepActive(file: string | null) {
   if (file && file in st.files && st.activeFile !== file) store().open(file);
 }
 
-async function doSwitch(name: string) {
+export async function doSwitch(name: string) {
   const st = store().getState();
   if (name === st.vcs.branch) return;
   const active = st.activeFile;
@@ -102,7 +102,7 @@ async function askBranchName(branches: BranchInfo[], title: string): Promise<str
   });
 }
 
-async function newBranch(branches: BranchInfo[], from?: { oid: string; label: string }) {
+export async function newBranch(branches: BranchInfo[], from?: { oid: string; label: string }) {
   const st = store().getState();
   const dirty = st.vcs.changes.length > 0;
   const name = await askBranchName(branches, from ? `New branch from ${from.label}` : `New branch from ⎇ ${st.vcs.branch}`);
