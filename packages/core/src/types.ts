@@ -316,9 +316,37 @@ export interface SeqStep {
   /** Expected time in the step (monitoring). */
   time?: { min?: string; max?: string };
   sheet: number;
+  /** Sequencer the step belongs to (always set; the first sequencer when not written). */
+  sequencer: string;
   pos?: [number, number];
   ext: Ext;
 }
+
+/**
+ * One of several step chains of a sequence (as in PCS 7 SFC or the per-state
+ * logic of ISA-88 phases): it runs while its start condition holds; when
+ * several hold, the one with the highest priority runs.
+ */
+export interface Sequencer {
+  id: string;
+  title?: string;
+  /** Start condition (same language as transition conditions). */
+  start?: string;
+  /** Higher number = higher priority. */
+  priority?: number;
+  ext: Ext;
+}
+
+/** ISA-88 (IEC 61512-1) procedural states: `SEQ.<STATE>` signals with the state model. */
+export const ISA88_STATES = ['IDLE', 'RUNNING', 'COMPLETE', 'PAUSING', 'PAUSED', 'HOLDING', 'HELD', 'RESTARTING', 'STOPPING', 'STOPPED', 'ABORTING', 'ABORTED'] as const;
+/** Acting ("-ing") states that run logic of their own, with suggested priorities. */
+export const ISA88_SEQUENCERS: { id: string; title: string; state: (typeof ISA88_STATES)[number]; priority: number }[] = [
+  { id: 'RUN', title: 'Running', state: 'RUNNING', priority: 1 },
+  { id: 'HOLD', title: 'Holding', state: 'HOLDING', priority: 2 },
+  { id: 'RESTART', title: 'Restarting', state: 'RESTARTING', priority: 3 },
+  { id: 'STOP', title: 'Stopping', state: 'STOPPING', priority: 4 },
+  { id: 'ABORT', title: 'Aborting', state: 'ABORTING', priority: 5 },
+];
 
 export interface SeqTransition {
   /** Index in the YAML `transitions` list (address for operations). */
@@ -348,9 +376,20 @@ export interface Sequence {
   transitions: SeqTransition[];
   /** Named external signals of the sequence (operator commands …). */
   inputs: PortDef[];
+  /**
+   * Step chains with start conditions. Always at least one: a sequence that
+   * does not list `sequencers` has one implicit sequencer `MAIN`.
+   */
+  sequencers: Sequencer[];
+  /** True when the file lists `sequencers` (false: the implicit `MAIN`). */
+  explicitSequencers: boolean;
+  /** `isa88`: the sequence follows the ISA-88 state model (SEQ.HOLDING, SEQ.ABORTING …). */
+  stateModel?: 'isa88';
   notes: NoteInst[];
   ext: Ext;
 }
+
+export const IMPLICIT_SEQUENCER = 'MAIN';
 
 /** Signals every sequence provides as `SEQ.<name>` (besides `<step>.X` and `<step>.T`). */
 export const SEQUENCE_SIGNALS: PortDef[] = [

@@ -120,6 +120,23 @@ export function renderSequenceSvg(layout: SfcLayout, opts: SequenceRenderOptions
     for (let y = Math.ceil(vb.y / 20) * 20; y < vb.y + vb.h; y += 20) d += `M${n(vb.x)} ${y}H${n(vb.x + vb.w)}`;
     s += `<path${attrs({ d, stroke: t.grid, 'stroke-width': 0.6, fill: 'none' })}/>`;
   }
+  if (layout.sequencer) {
+    // Sequencer header: name — title, start condition, priority (data-sequencer for editors).
+    const h = layout.sequencer;
+    const x = SFC.MARGIN;
+    s += `<g${attrs({ 'data-sequencer': opts.interactive ? h.id : undefined, style: opts.interactive ? 'cursor:pointer' : undefined })}>`;
+    s += text(x, h.y + 12, `Sequencer ${h.id}`, { 'font-family': t.fontSans, 'font-size': 13, 'font-weight': 'bold', fill: t.ink });
+    let cx = x + (10 + h.id.length) * 7.6 + 10;
+    if (h.title) {
+      s += text(cx, h.y + 12, h.title, { 'font-family': t.fontSans, 'font-size': 12, fill: t.ink2 });
+      cx += h.title.length * 6.4 + 16;
+    }
+    s += text(x, h.y + 27, 'start:', { 'font-family': t.fontSans, 'font-size': 10.5, fill: t.ink3 });
+    s += text(x + 34, h.y + 27, h.start ?? '(no start condition)', { 'font-family': t.fontMono, 'font-size': 10, fill: h.start ? t.ink : t.ink3, 'font-style': h.start ? undefined : 'italic' });
+    if (h.priority !== undefined) s += text(x + 34 + Math.max(14, (h.start ?? '(no start condition)').length) * 6.0 + 16, h.y + 27, `priority ${h.priority}`, { 'font-family': t.fontSans, 'font-size': 10.5, fill: t.ink3 });
+    s += `<line${attrs({ x1: x, y1: h.y + 34, x2: x + Math.max(260, cx - x), y2: h.y + 34, stroke: t.rule, 'stroke-width': 1 })}/>`;
+    s += '</g>';
+  }
   for (const l of layout.lines) s += `<path${attrs({ d: 'M' + l.map(([x, y]) => `${n(x)} ${n(y)}`).join(' L'), fill: 'none', stroke: t.ink, 'stroke-width': 1.5, 'stroke-linejoin': 'round' })}/>`;
   for (const b of layout.bars) {
     if (b.double) {

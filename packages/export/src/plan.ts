@@ -9,6 +9,7 @@ import {
   formatValue,
   layoutDiagram,
   layoutSequence,
+  sequencerSheets,
   parseCondition,
   sequenceSignalType,
   typeLabel,
@@ -419,7 +420,14 @@ function sequencePlan(model: ProjectModel, q: Sequence, config: ExportConfig, hi
     scan: q.scan,
     hierarchy,
     doc: config.sections.functionDescription ? text(model.files, q.docFile) : undefined,
-    sheets: layoutSequence(q).map((layout) => ({ id: layout.sheet, title: q.sheets.find((x) => x.id === layout.sheet)?.title, layout })),
+    // With several sequencers every page is one sequencer on one sheet: number the pages.
+    sheets: layoutSequence(q).map((layout, i) => {
+      const sheetTitle = q.sheets.find((x) => x.id === layout.sheet)?.title;
+      if (!layout.sequencer) return { id: layout.sheet, title: sheetTitle, layout };
+      const sq = layout.sequencer;
+      const several = sequencerSheets(q, sq.id).length > 1;
+      return { id: i + 1, title: `${sq.id}${sq.title ? ' — ' + sq.title : ''}${several ? ` · sheet ${layout.sheet}${sheetTitle ? ' ' + sheetTitle : ''}` : ''}`, layout };
+    }),
     steps,
     transitions,
     inputs: q.inputs,
@@ -492,7 +500,7 @@ export function planExport(
         sequenceFile: r.sequenceFile,
         step: r.step,
         transition: r.transition,
-        where: r.step ?? (t ? transitionLabel(t) : `transition ${(r.transition ?? 0) + 1}`),
+        where: r.step ?? (r.sequencer ? `start of sequencer ${r.sequencer}` : t ? transitionLabel(t) : `transition ${(r.transition ?? 0) + 1}`),
         strategy: r.strategy,
         block: r.block,
         port: r.port,

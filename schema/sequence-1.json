@@ -138,6 +138,45 @@
         "additionalProperties": false
       }
     },
+    "state_model": {
+      "enum": [
+        "isa88"
+      ]
+    },
+    "sequencers": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "start": {
+            "type": [
+              "string",
+              "boolean"
+            ]
+          },
+          "priority": {
+            "type": "integer"
+          }
+        },
+        "patternProperties": {
+          "^x-": {}
+        },
+        "additionalProperties": false
+      }
+    },
     "steps": {
       "type": [
         "object",
@@ -167,6 +206,10 @@
           "sheet": {
             "type": "integer",
             "minimum": 1
+          },
+          "sequencer": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
           },
           "pos": {
             "type": "array",

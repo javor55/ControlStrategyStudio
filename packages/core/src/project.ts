@@ -6,7 +6,7 @@ import { validateSchema } from './schema';
 import { parseDiagram } from './diagram';
 import { validateDiagram } from './validate';
 import { parseSequence, sequenceRefs, validateSequence, type SequenceRef } from './sequence';
-import { BUILTIN_CATEGORIES, DEFAULT_DRAWING, type BuiltinCategory, type SignalCategory, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
+import { BUILTIN_CATEGORIES, DEFAULT_DRAWING, IMPLICIT_SEQUENCER, type BuiltinCategory, type SignalCategory, type Diag, type DrawingStyle, type Files, type FolderNode, type LibraryDef, type LineStyle, type LinkInst, type ProjectMeta, type Sequence, type Strategy, type WireStyle } from './types';
 import { isObj, lineAt, parseYaml, pickExt, str } from './yamlutil';
 
 export const DEFAULT_LEVELS = ['Enterprise', 'Site', 'Area', 'Unit', 'Equipment Module', 'Control Module'];
@@ -194,7 +194,7 @@ export function loadProject(files: Files): ProjectModel {
       const doc = typeof files[strategyDocFile(file)] === 'string' ? strategyDocFile(file) : undefined;
       if (p.error) {
         diags.push({ severity: 'error', code: 'yaml-syntax', message: p.error.message, file, line: p.error.line });
-        sequences.push({ file, name: role.name, folder: role.folder, sheets: [{ id: 1 }], steps: [], transitions: [], inputs: [], notes: [], ext: {}, docFile: doc });
+        sequences.push({ file, name: role.name, folder: role.folder, sheets: [{ id: 1 }], steps: [], transitions: [], inputs: [], sequencers: [{ id: IMPLICIT_SEQUENCER, ext: {} }], explicitSequencers: false, notes: [], ext: {}, docFile: doc });
         continue;
       }
       diags.push(...mig.diags, ...validateSchema('sequence', p, file));

@@ -18,7 +18,7 @@ interface SeqTabDef {
 export function sequenceTabs(d: ReturnType<typeof useData>, q: SequencePlan): SeqTabDef[] {
   const sec = d.plan.config.sections;
   const tabs: SeqTabDef[] = [{ id: 'doc', label: 'Description', tab: 'doc' }];
-  if (sec.diagrams) for (const sh of q.sheets) tabs.push({ id: `sheet-${sh.id}`, label: q.sheets.length > 1 || sh.title ? `Sheet ${sh.id}${sh.title ? ' · ' + sh.title : ''}` : 'Diagram', tab: 'sheet', sheet: sh.id });
+  if (sec.diagrams) for (const sh of q.sheets) tabs.push({ id: `sheet-${sh.id}`, label: sh.layout.sequencer ? sh.title ?? sh.layout.sequencer.id : q.sheets.length > 1 || sh.title ? `Sheet ${sh.id}${sh.title ? ' · ' + sh.title : ''}` : 'Diagram', tab: 'sheet', sheet: sh.id });
   tabs.push({ id: 'steps', label: 'Steps', tab: 'steps' }, { id: 'transitions', label: 'Transitions', tab: 'transitions' });
   return tabs;
 }
@@ -169,9 +169,13 @@ function SeqDescription({ q }: { q: SequencePlan }) {
               const sig = `${r.strategy}:${r.block}.${r.port}`;
               return (
                 <li key={i}>
-                  <a className="mono" href={transitionHref(q, r.transition!)}>
-                    {r.where}
-                  </a>{' '}
+                  {r.transition !== undefined ? (
+                    <a className="mono" href={transitionHref(q, r.transition)}>
+                      {r.where}
+                    </a>
+                  ) : (
+                    <span className="mono">{r.where}</span>
+                  )}{' '}
                   reads{' '}
                   {h ? (
                     <a className="mono ext" href={h}>

@@ -324,3 +324,63 @@ describe('sequence layout with hand-placed steps', () => {
     for (const a of boxes) for (const b of boxes) if (a !== b) expect(a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1, `${a.id} / ${b.id}`).toBe(false);
   });
 });
+
+describe('sequencers (several step chains with start conditions)', () => {
+  const files0 = demoProjectFiles();
+  const q0 = loadProject(files0).sequences[0];
+  const file = q0.file;
+  const codesOf = (f: Files) => loadProject(f).diags.filter((d) => d.file === file && d.severity !== 'info').map((d) => d.code);
+  const step = (f: Files, ...ops: Op[]) => ops.reduce((acc, op) => applyOp(acc, op).files, f);
+
+  it('keeps existing steps in the first sequencer when the first explicit one is added', () => {
+    const f = step(files0, { op: 'addSequencer', file, id: 'HOLD', title: 'Holding', start: 'START_CMD', priority: 2 });
+    expect(f[file]).toContain('sequencers:\n  - { id: MAIN }\n  - { id: HOLD, title: Holding, start: START_CMD, priority: 2 }');
+    const q = loadProject(f).sequences[0];
+    expect(q.sequencers.map((x) => x.id)).toEqual(['MAIN', 'HOLD']);
+    expect(new Set(q.steps.map((s) => s.sequencer))).toEqual(new Set(['MAIN']));
+    // HOLD has no steps yet; MAIN has no start condition.
+    expect(codesOf(f)).toEqual(expect.arrayContaining(['no-steps', 'missing-start-condition']));
+  });
+
+  it('validates each sequencer as its own chain and draws one page per sequencer', () => {
+    let f = step(
+      files0,
+      { op: 'addSequencer', file, id: 'HOLD', start: 'START_CMD', priority: 2 },
+      { op: 'renameSequencer', file, from: 'MAIN', to: 'RUN' },
+      { op: 'setSequencer', file, id: 'RUN', field: 'start', value: 'not START_CMD' },
+      { op: 'setSequencer', file, id: 'RUN', field: 'priority', value: 1 },
+      { op: 'addStep', file, id: 'H0', sequencer: 'HOLD', initial: true },
+      { op: 'addStep', file, id: 'H10', sequencer: 'HOLD' },
+      { op: 'addTransition', file, from: 'H0', to: 'H10', condition: 'H0.T > 5s' },
+    );
+    expect(codesOf(f)).toEqual([]);
+    const q = loadProject(f).sequences[0];
+    expect(q.steps.find((s) => s.id === 'S0')!.sequencer).toBe('RUN');
+    expect(q.steps.find((s) => s.id === 'H10')!.sequencer).toBe('HOLD');
+    const pages = layoutSequence(q);
+    expect(pages.map((p) => p.sequencer?.id)).toEqual(['RUN', 'HOLD']);
+    expect(pages[1].steps.map((g) => g.id).sort()).toEqual(['H0', 'H10']);
+    // A transition across sequencers and a shared priority are reported.
+    f = step(f, { op: 'addTransition', file, from: 'H10', to: 'S10', condition: 'TRUE' }, { op: 'setSequencer', file, id: 'HOLD', field: 'priority', value: 1 });
+    expect(codesOf(f)).toEqual(expect.arrayContaining(['cross-sequencer-transition', 'duplicate-priority']));
+    expect(() => applyOp(f, { op: 'removeSequencer', file, id: 'HOLD' })).toThrow(/still has steps/);
+  });
+
+  it('applies the ISA-88 state model: per-state sequencers and SEQ.<STATE> signals', () => {
+    const f = step(files0, { op: 'setStateModel', file, model: 'isa88' });
+    const q = loadProject(f).sequences[0];
+    expect(q.stateModel).toBe('isa88');
+    expect(q.sequencers.map((x) => [x.id, x.start, x.priority])).toEqual([
+      ['RUN', 'SEQ.RUNNING', 1],
+      ['HOLD', 'SEQ.HOLDING', 2],
+      ['RESTART', 'SEQ.RESTARTING', 3],
+      ['STOP', 'SEQ.STOPPING', 4],
+      ['ABORT', 'SEQ.ABORTING', 5],
+    ]);
+    // Today's steps became the Running logic; the start conditions type-check.
+    expect(new Set(q.steps.map((s) => s.sequencer))).toEqual(new Set(['RUN']));
+    expect(codesOf(f).filter((c) => c === 'bad-condition')).toEqual([]);
+    const g = step(f, { op: 'setSequencer', file, id: 'HOLD', field: 'start', value: 'SEQ.HOLDING and not SEQ.ABORTING' });
+    expect(codesOf(g).filter((c) => c === 'bad-condition')).toEqual([]);
+  });
+});

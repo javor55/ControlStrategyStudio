@@ -5,6 +5,7 @@
 // order, formatting and `#` comments survive graphical edits. Every result
 // carries the previous content of changed files, which gives undo/redo, an audit
 // trail and a unit for future multi-user synchronisation.
+import { IMPLICIT_SEQUENCER, ISA88_SEQUENCERS } from './types';
 import { Document, Pair, Scalar, YAMLMap, YAMLSeq, isMap, isNode, isScalar, isSeq } from 'yaml';
 import { formatEndpoint, formatLink, parseEndpoint, parseLinkString, RESERVED_IDS, TAG_RE } from './diagram';
 import { OpError } from './errors';
@@ -86,12 +87,19 @@ export type Op =
   | { op: 'setDrawing'; path: string[]; value?: string | number | boolean }
   // sequences (file = <NAME>.seq.yaml)
   | { op: 'createSequence'; folder: string; name: string; title?: string; uid?: string }
-  | { op: 'addStep'; file: string; id: string; description?: string; sheet?: number; pos?: [number, number]; initial?: boolean }
+  | { op: 'addStep'; file: string; id: string; description?: string; sheet?: number; pos?: [number, number]; initial?: boolean; sequencer?: string }
   /** Splits transition `transition` with a new step; `sheet` defaults to the sheet of the source step. */
   | { op: 'insertStep'; file: string; transition: number; id: string; description?: string; sheet?: number; pos?: [number, number] }
   | { op: 'removeStep'; file: string; id: string }
   | { op: 'renameStep'; file: string; from: string; to: string }
-  | { op: 'setStepField'; file: string; id: string; field: 'description' | 'doc' | 'comment' | 'sheet' | 'initial'; value?: string | number | boolean }
+  | { op: 'setStepField'; file: string; id: string; field: 'description' | 'doc' | 'comment' | 'sheet' | 'initial' | 'sequencer'; value?: string | number | boolean }
+  /** Sequencers: step chains with a start condition and a priority (PCS 7 style / ISA-88 per-state logic). */
+  | { op: 'addSequencer'; file: string; id: string; title?: string; start?: string; priority?: number }
+  | { op: 'setSequencer'; file: string; id: string; field: 'title' | 'start' | 'priority'; value?: string | number }
+  | { op: 'renameSequencer'; file: string; from: string; to: string }
+  | { op: 'removeSequencer'; file: string; id: string }
+  /** `isa88`: adds the ISA-88 state model (SEQ.HOLDING …) and its per-state sequencers; null removes the model flag. */
+  | { op: 'setStateModel'; file: string; model: 'isa88' | null }
   /**
    * Monitoring times. A bound that is not given (key absent) is kept; a given
    * empty / undefined / null value removes it.
@@ -108,7 +116,7 @@ export type Op =
   | { op: 'addSeqInput'; file: string; name: string; type: string; description?: string }
   /** Changes a sequence input; a new `name` is also written into the conditions that use it. */
   | { op: 'updateSeqInput'; file: string; name: string; patch: { name?: string; type?: string; description?: string } }
-  | { op: 'insertSequenceFragment'; file: string; fragment: string; offset?: [number, number]; sheet?: number }
+  | { op: 'insertSequenceFragment'; file: string; fragment: string; offset?: [number, number]; sheet?: number; sequencer?: string }
   | { op: 'removeSteps'; file: string; ids: string[] }
   | { op: 'setLevels'; levels: string[] }
   | { op: 'removeSeqInput'; file: string; name: string }
@@ -1492,8 +1500,9 @@ function runTypeOp(tx: Tx, op: Op): boolean {
   }
 }
 
-const SEQ_KEYS = ['format', 'uid', 'sequence', 'title', 'description', 'revision', 'author', 'scan', 'inputs', 'sheets', 'steps', 'transitions', 'notes'];
-const STEP_KEYS = ['initial', 'description', 'doc', 'sheet', 'time', 'actions', 'comment', 'pos'];
+const SEQ_KEYS = ['format', 'uid', 'sequence', 'title', 'description', 'revision', 'author', 'scan', 'inputs', 'state_model', 'sequencers', 'sheets', 'steps', 'transitions', 'notes'];
+const SEQUENCER_KEYS = ['id', 'title', 'start', 'priority'];
+const STEP_KEYS = ['initial', 'description', 'doc', 'sequencer', 'sheet', 'time', 'actions', 'comment', 'pos'];
 const ACTION_KEYS = ['q', 'set', 'value', 'time', 'text'];
 const TRANSITION_KEYS = ['from', 'to', 'condition', 'comment'];
 
@@ -1567,6 +1576,43 @@ function checkSteps(doc: Document, ids: string[]) {
 }
 
 /** Sheet of a step as written (1 when absent). */
+/** Ids of the listed sequencers (empty: only the implicit MAIN). */
+function sequencerIds(doc: Document): string[] {
+  const l = getNode(doc, ['sequencers']);
+  return isSeq(l) ? l.items.map((it) => (isMap(it) ? String(it.get('id') ?? '') : '')).filter(Boolean) : [];
+}
+/** Sequencer of a step: its `sequencer` key, else the first listed one. */
+function stepSequencer(doc: Document, id: string): string {
+  const v = getNode(doc, ['steps', id, 'sequencer']);
+  return isScalar(v) ? String(v.value) : (sequencerIds(doc)[0] ?? IMPLICIT_SEQUENCER);
+}
+function sequencerNode(doc: Document, id: string): YAMLMap {
+  const l = getNode(doc, ['sequencers']);
+  const m = isSeq(l) ? l.items.find((it) => isMap(it) && String(it.get('id')) === id) : undefined;
+  if (!isMap(m)) throw new OpError(`Sequencer "${id}" does not exist`, 'not-found');
+  return m;
+}
+function addSequencerNode(doc: Document, id: string, fields: { title?: string; start?: string; priority?: number }): void {
+  checkTag(id, 'sequencer name');
+  const ids = sequencerIds(doc);
+  if (ids.includes(id)) throw new OpError(`Sequencer "${id}" already exists`, 'exists');
+  const list = ensureSeq(doc, ['sequencers'], SEQ_KEYS);
+  // The first explicit sequencer keeps today's steps: list the implicit one first.
+  if (!ids.length && id !== IMPLICIT_SEQUENCER) {
+    const main = new YAMLMap();
+    main.flow = true;
+    main.items.push(new Pair(new Scalar('id'), new Scalar(IMPLICIT_SEQUENCER)));
+    list.items.push(main);
+  }
+  const m = new YAMLMap();
+  m.flow = true;
+  setOrdered(m, 'id', id, SEQUENCER_KEYS, doc);
+  if (fields.title) setOrdered(m, 'title', fields.title, SEQUENCER_KEYS, doc);
+  if (fields.start) setOrdered(m, 'start', fields.start, SEQUENCER_KEYS, doc);
+  if (fields.priority !== undefined) setOrdered(m, 'priority', fields.priority, SEQUENCER_KEYS, doc);
+  list.items.push(m);
+}
+
 function stepSheet(doc: Document, id: string): number {
   const v = getNode(doc, ['steps', id, 'sheet']);
   const n = Number(isScalar(v) ? v.value : 1);
@@ -1606,6 +1652,10 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
         const m = new YAMLMap();
         if (op.initial) setOrdered(m, 'initial', true, STEP_KEYS, doc);
         if (op.description) setOrdered(m, 'description', op.description, STEP_KEYS, doc);
+        if (op.sequencer && op.sequencer !== (sequencerIds(doc)[0] ?? IMPLICIT_SEQUENCER)) {
+          if (!sequencerIds(doc).includes(op.sequencer)) throw new OpError(`Sequencer "${op.sequencer}" does not exist`, 'not-found');
+          setOrdered(m, 'sequencer', op.sequencer, STEP_KEYS, doc);
+        }
         if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, STEP_KEYS, doc);
         if (op.pos) setOrdered(m, 'pos', op.pos.map(Math.round), STEP_KEYS, doc);
         steps.items.push(new Pair(new Scalar(op.id), m));
@@ -1622,6 +1672,8 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
         const sheet = op.sheet ?? (first !== undefined && steps.has(first) ? stepSheet(doc, first) : 1);
         const m = new YAMLMap();
         if (op.description) setOrdered(m, 'description', op.description, STEP_KEYS, doc);
+        const sq = first !== undefined && steps.has(first) ? getNode(doc, ['steps', first, 'sequencer']) : undefined;
+        if (isScalar(sq)) setOrdered(m, 'sequencer', String(sq.value), STEP_KEYS, doc);
         if (sheet !== 1) setOrdered(m, 'sheet', sheet, STEP_KEYS, doc);
         if (op.pos) setOrdered(m, 'pos', op.pos.map(Math.round), STEP_KEYS, doc);
         // Insert the new step right after the first source step for a readable file.
@@ -1695,14 +1747,98 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
         const m = stepMap(doc, op.id);
         if (op.field === 'initial') {
           if (op.value) {
+            // One initial step per sequencer.
             const steps = getNode(doc, ['steps']) as YAMLMap;
-            for (const p of steps.items) if (isMap(p.value)) p.value.delete('initial');
+            const sq = stepSequencer(doc, op.id);
+            for (const p of steps.items) if (isMap(p.value) && stepSequencer(doc, String(keyOf(p))) === sq) p.value.delete('initial');
             setOrdered(m, 'initial', true, STEP_KEYS, doc);
           } else m.delete('initial');
           return;
         }
-        const value = op.field === 'sheet' && op.value === 1 ? undefined : op.value;
+        if (op.field === 'sequencer' && op.value !== undefined && !sequencerIds(doc).includes(String(op.value))) throw new OpError(`Sequencer "${op.value}" does not exist`, 'not-found');
+        const value = (op.field === 'sheet' && op.value === 1) || (op.field === 'sequencer' && op.value === sequencerIds(doc)[0]) ? undefined : op.value;
         setOrDelete(doc, m, op.field, value, STEP_KEYS);
+      });
+      return true;
+    case 'addSequencer':
+      seqFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => addSequencerNode(doc, op.id, op));
+      return true;
+    case 'setSequencer':
+      seqFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        if (op.field === 'priority' && op.value !== undefined && !Number.isInteger(op.value)) throw new OpError('Priority must be a whole number', 'invalid');
+        setOrDelete(doc, sequencerNode(doc, op.id), op.field, op.value === '' ? undefined : op.value, SEQUENCER_KEYS);
+      });
+      return true;
+    case 'renameSequencer':
+      seqFileOf(tx, op.file);
+      if (op.from === op.to) return false;
+      checkTag(op.to, 'sequencer name');
+      tx.edit(op.file, (doc) => {
+        if (sequencerIds(doc).includes(op.to)) throw new OpError(`Sequencer "${op.to}" already exists`, 'exists');
+        if (!sequencerIds(doc).length && op.from === IMPLICIT_SEQUENCER) {
+          // Naming the implicit sequencer lists it.
+          const list = ensureSeq(doc, ['sequencers'], SEQ_KEYS);
+          const n = new YAMLMap();
+          n.flow = true;
+          n.items.push(new Pair(new Scalar('id'), new Scalar(op.to)));
+          list.items.push(n);
+          return;
+        }
+        const m = sequencerNode(doc, op.from);
+        const idNode = m.get('id', true);
+        if (isScalar(idNode)) idNode.value = op.to;
+        else m.set('id', op.to);
+        const steps = getNode(doc, ['steps']);
+        if (isMap(steps))
+          for (const p of steps.items) {
+            const v = isMap(p.value) ? p.value.get('sequencer', true) : undefined;
+            if (isScalar(v) && String(v.value) === op.from) v.value = op.to;
+          }
+      });
+      return true;
+    case 'removeSequencer':
+      seqFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const ids = sequencerIds(doc);
+        if (!ids.includes(op.id)) throw new OpError(`Sequencer "${op.id}" does not exist`, 'not-found');
+        const steps = getNode(doc, ['steps']);
+        const used = isMap(steps) ? steps.items.filter((p) => stepSequencer(doc, String(keyOf(p))) === op.id).map((p) => String(keyOf(p))) : [];
+        if (used.length) throw new OpError(`Sequencer "${op.id}" still has steps (${used.slice(0, 5).join(', ')}${used.length > 5 ? ' …' : ''}) — delete or move them first`, 'not-empty');
+        if (ids[0] === op.id && isMap(steps)) {
+          // Steps without a sequencer key belong to the first one: pin them to it before it changes.
+          for (const p of steps.items) if (isMap(p.value) && !p.value.has('sequencer')) setOrdered(p.value, 'sequencer', op.id, STEP_KEYS, doc);
+        }
+        const l = getNode(doc, ['sequencers']) as YAMLSeq;
+        l.items = l.items.filter((it) => !(isMap(it) && String(it.get('id')) === op.id));
+        if (!l.items.length) doc.delete('sequencers');
+      });
+      return true;
+    case 'setStateModel':
+      seqFileOf(tx, op.file);
+      tx.edit(op.file, (doc) => {
+        const root = doc.contents as YAMLMap;
+        if (!op.model) {
+          root.delete('state_model');
+          return;
+        }
+        setOrdered(root, 'state_model', op.model, SEQ_KEYS, doc);
+        const ids = sequencerIds(doc);
+        for (const q of ISA88_SEQUENCERS) {
+          if (ids.includes(q.id)) continue;
+          // Without listed sequencers, today's steps become the Running logic.
+          if (!sequencerIds(doc).length) {
+            const list = ensureSeq(doc, ['sequencers'], SEQ_KEYS);
+            const m = new YAMLMap();
+            m.flow = true;
+            setOrdered(m, 'id', q.id, SEQUENCER_KEYS, doc);
+            setOrdered(m, 'title', q.title, SEQUENCER_KEYS, doc);
+            setOrdered(m, 'start', `SEQ.${q.state}`, SEQUENCER_KEYS, doc);
+            setOrdered(m, 'priority', q.priority, SEQUENCER_KEYS, doc);
+            list.items.push(m);
+          } else addSequencerNode(doc, q.id, { title: q.title, start: `SEQ.${q.state}`, priority: q.priority });
+        }
       });
       return true;
     case 'setStepTime':
@@ -1819,6 +1955,10 @@ function runSequenceOp(tx: Tx, op: Op): boolean {
               t.flow = true;
               m.items.push(new Pair(new Scalar('time'), t));
             } else m.items.push(new Pair(new Scalar(k), doc.createNode(data[k])));
+          }
+          if (op.sequencer !== undefined) {
+            m.delete('sequencer');
+            if (op.sequencer !== (sequencerIds(doc)[0] ?? IMPLICIT_SEQUENCER)) setOrdered(m, 'sequencer', op.sequencer, STEP_KEYS, doc);
           }
           if (op.sheet && op.sheet !== 1) setOrdered(m, 'sheet', op.sheet, STEP_KEYS, doc);
           if (pos) setOrdered(m, 'pos', pos, STEP_KEYS, doc);

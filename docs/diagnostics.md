@@ -93,5 +93,10 @@ core can report is listed here.
 | `multiple-writers` | warning | Several sequences write the same input — make sure they never run at the same time. |
 | `unreachable-step` | warning | The step cannot be reached from the initial step. |
 | `dead-end-step` | info | The step has no outgoing transition (end of the sequence). |
+| `duplicate-sequencer` | error | Two sequencers share an id. |
+| `unknown-sequencer` | error | A step names a sequencer that is not listed in `sequencers`. |
+| `cross-sequencer-transition` | error | A transition connects steps of different sequencers; each sequencer is its own chain. |
+| `missing-start-condition` | warning | A sequence has several sequencers and one of them has no start condition. |
+| `duplicate-priority` | warning | Several sequencers share a priority, so it is unclear which runs when both may start. |
 | `unclosed-parallel` | warning | A parallel branch is not closed by one join of exactly its branches. |
 | `unmatched-join` | error | A join waits for steps that are not started together by one parallel branch (e.g. two alternative branches) — it would wait for ever. |

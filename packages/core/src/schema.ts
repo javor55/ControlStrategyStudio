@@ -212,6 +212,17 @@ export const SCHEMAS: Record<DocKind, object> = {
       sheets: diagramProps.sheets,
       notes: diagramProps.notes,
       inputs: { type: ['array', 'null'], items: portDef },
+      state_model: { enum: ['isa88'] },
+      sequencers: {
+        type: ['array', 'null'],
+        items: {
+          type: 'object',
+          required: ['id'],
+          properties: { id: { type: 'string', pattern: TAG }, title: text, start: { type: ['string', 'boolean'] }, priority: { type: 'integer' } },
+          ...ext,
+          additionalProperties: false,
+        },
+      },
       steps: {
         type: ['object', 'null'],
         propertyNames: { pattern: TAG },
@@ -223,6 +234,7 @@ export const SCHEMAS: Record<DocKind, object> = {
             doc: text,
             comment: text,
             sheet: { type: 'integer', minimum: 1 },
+            sequencer: { type: 'string', pattern: TAG },
             pos,
             time: { type: 'object', properties: { min: text, max: text }, additionalProperties: false },
             actions: {

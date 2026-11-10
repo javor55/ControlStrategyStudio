@@ -73,6 +73,8 @@ export interface SfcBar {
 
 export interface SfcLayout {
   sheet: number;
+  /** Sequencer drawn on this page (sequences that list several sequencers). */
+  sequencer?: { id: string; title?: string; start?: string; priority?: number; y: number };
   steps: SfcStepGeom[];
   transitions: SfcTransitionGeom[];
   /** Connecting lines (polylines). */
@@ -86,6 +88,8 @@ export interface SfcLayoutContext {
   /** Temporary step positions while dragging. */
   overrides?: Readonly<Record<string, [number, number]>>;
   noteOverrides?: Readonly<Record<number, [number, number]>>;
+  /** Lay out only the steps of this sequencer (with a header showing its start condition). */
+  sequencer?: string;
 }
 
 const snap = (v: number) => Math.round(v / 10) * 10;
@@ -108,7 +112,8 @@ function actionLines(seq: Sequence, a: SeqStep['actions'][number]): { lines: str
 }
 
 export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayoutContext = {}): SfcLayout {
-  const onSheet = seq.steps.filter((s) => sheetOfStep(seq, s) === sheet);
+  const sq = ctx.sequencer !== undefined ? seq.sequencers.find((x) => x.id === ctx.sequencer) : undefined;
+  const onSheet = seq.steps.filter((s) => sheetOfStep(seq, s) === sheet && (!sq || s.sequencer === sq.id));
   const here = new Set(onSheet.map((s) => s.id));
   const byId = new Map(seq.steps.map((s) => [s.id, s]));
   const transitions = seq.transitions.filter((t) => t.from.some((f) => here.has(f)));
@@ -216,7 +221,9 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   const contentBottomOf = (g: SfcStepGeom) => Math.max(g.y + g.h + (g.time ? 14 : 0), g.actionBox ? g.actionBox.y + g.actionBox.h : 0);
 
   // y per layer: step row, then the transitions leaving it
-  let y = SFC.MARGIN + 30;
+  // A sequencer page starts with a header: name, start condition, priority.
+  const headerH = sq ? 40 : 0;
+  let y = SFC.MARGIN + 30 + headerH;
   const barY = new Map<number, number>();
   // Hand-placed steps (with their action boxes) are obstacles: a row of
   // automatically placed steps that would overlap one moves down below it.
@@ -372,7 +379,9 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   const contentBottom = Math.max(SFC.MARGIN, ...steps.map((g) => g.y + Math.max(g.h, g.actionBox?.h ?? 0)), ...tgeo.map((t) => t.y + 40));
   const notes: SfcLayout['notes'] = [];
   let nx = SFC.MARGIN;
-  for (const n of seq.notes.filter((n) => sheetOfStep(seq, n) === sheet)) {
+  // Notes belong to sheets; with several sequencers they appear on the first sequencer's pages.
+  const showNotes = !sq || sq.id === seq.sequencers[0]?.id;
+  for (const n of seq.notes.filter((n) => showNotes && sheetOfStep(seq, n) === sheet)) {
     const w = n.width ?? M.NOTE_W;
     const nl = wrapText(n.text, Math.floor((w - 16) / M.CH_NOTE), 30);
     const h = nl.length * M.NOTE_LINE + 14;
@@ -395,14 +404,34 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   }
   for (const l of lines) for (const [x, yy] of l) xs.push(x), ys.push(yy);
   for (const n of notes) xs.push(n.x, n.x + n.w), ys.push(n.y, n.y + n.h);
+  const header = sq ? { id: sq.id, title: sq.title, start: sq.start, priority: sq.priority, y: SFC.MARGIN - 6 } : undefined;
+  if (header) {
+    const text = `${sq!.id}${sq!.title ? ' — ' + sq!.title : ''}  start: ${sq!.start ?? '—'}${sq!.priority !== undefined ? '  priority ' + sq!.priority : ''}`;
+    xs.push(SFC.MARGIN, SFC.MARGIN + 24 + text.length * M.CH_TEXT);
+    ys.push(header.y, header.y + 26);
+  }
   const pad = 24;
   const x0 = xs.length ? Math.min(...xs) - pad : 0;
   const y0 = ys.length ? Math.min(...ys) - pad : 0;
   const x1 = xs.length ? Math.max(...xs) + pad : 400;
   const y1 = ys.length ? Math.max(...ys) + pad : 300;
-  return { sheet, steps, transitions: tgeo, lines, bars, notes, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  return { sheet, sequencer: header, steps, transitions: tgeo, lines, bars, notes, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
 }
 
+/**
+ * Lays out every sheet. Sequences with several sequencers get one page per
+ * sequencer and sheet that holds its steps (at least one page per sequencer).
+ */
 export function layoutSequence(seq: Sequence, ctx: SfcLayoutContext = {}): SfcLayout[] {
-  return seq.sheets.map((s) => layoutSequenceSheet(seq, s.id, ctx));
+  if (!seq.explicitSequencers) return seq.sheets.map((s) => layoutSequenceSheet(seq, s.id, ctx));
+  const out: SfcLayout[] = [];
+  for (const sq of seq.sequencers) out.push(...sequencerSheets(seq, sq.id).map((sh) => layoutSequenceSheet(seq, sh, { ...ctx, sequencer: sq.id })));
+  return out;
+}
+
+/** Sheets that hold steps of a sequencer (the first sheet when it has none yet). */
+export function sequencerSheets(seq: Sequence, sequencer: string): number[] {
+  const used = new Set(seq.steps.filter((s) => s.sequencer === sequencer).map((s) => s.sheet));
+  const list = seq.sheets.map((s) => s.id).filter((id) => used.has(id));
+  return list.length ? list : [seq.sheets[0]?.id ?? 1];
 }

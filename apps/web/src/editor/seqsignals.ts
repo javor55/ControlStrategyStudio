@@ -5,7 +5,7 @@ import {
   exprTypeOf,
   parseCondition,
   SEQ_BLOCK,
-  SEQUENCE_SIGNALS,
+  sequenceSignals,
   sequenceOutputs,
   typeOf,
   type PortDef,
@@ -41,7 +41,7 @@ export function conditionSignals(model: ProjectModel, seq: Sequence | undefined,
       out.push({ text: `${id}.X`, type: 'BOOL', detail: 'step active', description: desc, group: 'step' });
       out.push({ text: `${id}.T`, type: 'TIME', detail: 'time in step', description: desc, group: 'step' });
     }
-    for (const s of SEQUENCE_SIGNALS) out.push({ text: `${SEQ_BLOCK}.${s.name}`, type: s.type, detail: 'this sequence', description: s.description, group: 'seq' });
+    for (const s of sequenceSignals(seq)) out.push({ text: `${SEQ_BLOCK}.${s.name}`, type: s.type, detail: 'this sequence', description: s.description, group: 'seq' });
   }
   for (const st of model.strategies) {
     for (const b of st.blocks) {

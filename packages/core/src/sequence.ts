@@ -2,7 +2,7 @@
 import { parseEndpoint, formatEndpoint, TAG_RE } from './diagram';
 import { ExprError, exprRefs, exprTypeOf, parseExpr, typeOf, type Expr, type ExprType } from './expr';
 import { checkValue, parseDuration } from './signals';
-import { ACTION_QUALIFIERS, SEQUENCE_SIGNALS, type ActionQualifier, type Diag, type Endpoint, type NoteInst, type PortDef, type SeqAction, type SeqStep, type SeqTransition, type Sequence, type SheetDef, type Strategy } from './types';
+import { ACTION_QUALIFIERS, SEQUENCE_SIGNALS, type ActionQualifier, type Diag, type Endpoint, type NoteInst, type PortDef, type SeqAction, type SeqStep, type SeqTransition, type Sequence, type Sequencer, IMPLICIT_SEQUENCER, ISA88_STATES, type SheetDef, type Strategy } from './types';
 import { isObj, lineAt, num, pickExt, pos2, str, type ParsedYaml } from './yamlutil';
 
 /** Pseudo block addressing sequence-wide signals: `FILL_T100:SEQ.RUNNING`. */
@@ -32,6 +32,26 @@ export function parseSequence(file: string, name: string, folder: string, parsed
   if (!sheets.length) sheets.push({ id: 1 });
   sheets.sort((a, b) => a.id - b.id);
 
+  // --- sequencers -------------------------------------------------------------
+  const sequencers: Sequencer[] = [];
+  const explicitSequencers = Array.isArray(d.sequencers) && d.sequencers.length > 0;
+  if (Array.isArray(d.sequencers))
+    d.sequencers.forEach((raw, i) => {
+      if (!isObj(raw)) return;
+      const id = str(raw.id) ?? '';
+      if (!TAG_RE.test(id)) {
+        diags.push({ severity: 'error', code: 'bad-name', message: `Sequencer ${i + 1}: invalid or missing id "${id}"`, file, line: at('sequencers', i) });
+        return;
+      }
+      if (sequencers.some((x) => x.id === id)) {
+        diags.push({ severity: 'error', code: 'duplicate-sequencer', message: `Sequencer ${id} is defined twice`, file, line: at('sequencers', i) });
+        return;
+      }
+      const start = typeof raw.start === 'boolean' ? String(raw.start).toUpperCase() : str(raw.start);
+      sequencers.push({ id, title: str(raw.title), start, priority: num(raw.priority), ext: pickExt(raw) });
+    });
+  if (!sequencers.length) sequencers.push({ id: IMPLICIT_SEQUENCER, ext: {} });
+
   const steps: SeqStep[] = [];
   if (isObj(d.steps)) {
     for (const [id, raw] of Object.entries(d.steps)) {
@@ -56,6 +76,7 @@ export function parseSequence(file: string, name: string, folder: string, parsed
         actions,
         time: t ? { min: str(t.min), max: str(t.max) } : undefined,
         sheet: num(s.sheet) ?? 1,
+        sequencer: str(s.sequencer) ?? sequencers[0].id,
         pos: pos2(s.pos),
         ext: pickExt(s),
       });
@@ -89,6 +110,9 @@ export function parseSequence(file: string, name: string, folder: string, parsed
       steps,
       transitions,
       inputs: parsePorts(d.inputs),
+      sequencers,
+      explicitSequencers,
+      stateModel: d.state_model === 'isa88' ? 'isa88' : undefined,
       notes,
       ext: pickExt(d),
     },
@@ -105,16 +129,31 @@ export interface SequenceContext {
   sequences: ReadonlyMap<string, Sequence>;
 }
 
+/**
+ * `SEQ.<name>` signals of a sequence: RUNNING, DONE, ALARM, STEP; with the ISA-88
+ * state model also one BOOL per procedural state (SEQ.HOLDING, SEQ.ABORTED …) and
+ * the state number SEQ.STATE.
+ */
+export function sequenceSignals(seq: Sequence): PortDef[] {
+  if (seq.stateModel !== 'isa88') return SEQUENCE_SIGNALS;
+  const states: PortDef[] = ISA88_STATES.filter((st) => st !== 'RUNNING').map((st) => ({ name: st, type: 'BOOL', description: `ISA-88 state ${st[0]}${st.slice(1).toLowerCase()}`, ext: {} }));
+  return [
+    ...SEQUENCE_SIGNALS.map((x) => (x.name === 'RUNNING' ? { ...x, description: 'ISA-88 state Running' } : x)),
+    ...states,
+    { name: 'STATE', type: 'INT', description: `ISA-88 state number (${ISA88_STATES.map((st, i) => `${i} ${st}`).join(', ')})`, ext: {} },
+  ];
+}
+
 /** Type of a signal a sequence provides: `S10.X`, `S10.T`, `SEQ.RUNNING`. */
 export function sequenceSignalType(seq: Sequence, block: string, port: string): string | undefined {
-  if (block === SEQ_BLOCK) return SEQUENCE_SIGNALS.find((s) => s.name === port)?.type;
+  if (block === SEQ_BLOCK) return sequenceSignals(seq).find((s) => s.name === port)?.type;
   if (!seq.steps.some((s) => s.id === block)) return undefined;
   return port === 'X' ? 'BOOL' : port === 'T' ? 'TIME' : undefined;
 }
 
 /** Output ports a sequence offers to strategies, for completion and pickers. */
 export function sequenceOutputs(seq: Sequence): { block: string; port: string; type: string; description: string }[] {
-  const out = SEQUENCE_SIGNALS.map((s) => ({ block: SEQ_BLOCK, port: s.name, type: s.type, description: s.description ?? '' }));
+  const out = sequenceSignals(seq).map((s) => ({ block: SEQ_BLOCK, port: s.name, type: s.type, description: s.description ?? '' }));
   for (const s of seq.steps) {
     out.push({ block: s.id, port: 'X', type: 'BOOL', description: `Step ${s.id} active` });
     out.push({ block: s.id, port: 'T', type: 'TIME', description: `Time in step ${s.id}` });
@@ -155,10 +194,27 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
   const sheetIds = new Set(seq.sheets.map((s) => s.id));
 
   // --- steps -------------------------------------------------------------------
-  const initial = seq.steps.filter((s) => s.initial);
+  // Every sequencer is its own step chain with one initial step.
+  const multi = seq.sequencers.length > 1;
+  const inSeq = (sq: string) => seq.steps.filter((s) => s.sequencer === sq);
+  const initialOf = new Map<string, SeqStep>();
   if (!seq.steps.length) push('warning', 'no-steps', 'The sequence has no steps yet', at('steps'));
-  else if (!initial.length) push('error', 'no-initial-step', 'Mark one step as initial (initial: true)', at('steps'));
-  else if (initial.length > 1) for (const s of initial.slice(1)) push('error', 'multiple-initial-steps', `${s.id}: only one step can be initial (${initial[0].id} is)`, at('steps', s.id, 'initial'), { block: s.id });
+  for (const sq of seq.sequencers) {
+    const steps = inSeq(sq.id);
+    const where = multi ? ` in sequencer ${sq.id}` : '';
+    const init = steps.filter((s) => s.initial);
+    if (!steps.length) {
+      if (multi) push('warning', 'no-steps', `Sequencer ${sq.id} has no steps yet`, at('sequencers', seq.sequencers.indexOf(sq)));
+      continue;
+    }
+    if (!init.length) push('error', 'no-initial-step', `Mark one step${where} as initial (initial: true)`, at('steps', steps[0].id), { block: steps[0].id });
+    else {
+      initialOf.set(sq.id, init[0]);
+      for (const s of init.slice(1)) push('error', 'multiple-initial-steps', `${s.id}: only one step${where} can be initial (${init[0].id} is)`, at('steps', s.id, 'initial'), { block: s.id });
+    }
+  }
+  const sqIds = new Set(seq.sequencers.map((x) => x.id));
+  for (const s of seq.steps) if (!sqIds.has(s.sequencer)) push('error', 'unknown-sequencer', `${s.id}: sequencer "${s.sequencer}" is not defined in "sequencers"`, at('steps', s.id, 'sequencer'), { block: s.id });
 
   for (const s of seq.steps) {
     if (!TAG_RE.test(s.id)) push('error', 'bad-name', `Invalid step name "${s.id}"`, at('steps', s.id), { block: s.id });
@@ -237,10 +293,39 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
     }
   }
 
+  // --- sequencers ------------------------------------------------------------------------
+  const sqOf = new Map(seq.steps.map((x) => [x.id, x.sequencer]));
+  for (const t of seq.transitions) {
+    const sqs = new Set([...t.from, ...t.to].map((x) => sqOf.get(x)).filter(Boolean));
+    if (sqs.size > 1) push('error', 'cross-sequencer-transition', `Transition ${t.from.join('+')} → ${t.to.join('+')} connects steps of different sequencers (${[...sqs].join(', ')}) — each sequencer is its own chain`, at('transitions', t.index), { link: t.index });
+  }
+  if (seq.explicitSequencers) {
+    const prio = new Map<number, string[]>();
+    seq.sequencers.forEach((sq, i) => {
+      const line = at('sequencers', i, 'start');
+      const label = `Sequencer ${sq.id}`;
+      if (sq.priority !== undefined) prio.set(sq.priority, [...(prio.get(sq.priority) ?? []), sq.id]);
+      if (!sq.start?.trim()) {
+        if (multi) push('warning', 'missing-start-condition', `${label}: no start condition — when does it run?`, at('sequencers', i));
+        return;
+      }
+      const c = parseCondition(sq.start);
+      if (c.descriptive) push('info', 'condition-not-linked', `${label}: start condition described in words, not linked to signals`, line);
+      else if (c.error) push('error', 'bad-condition', `${label}: ${c.error.message} (at character ${c.error.at + 1})`, line);
+      else if (c.expr) {
+        const errs: string[] = [];
+        const ty = typeOf(c.expr, refType, (m) => errs.push(m));
+        for (const m of [...new Set(errs)]) push('error', 'bad-condition', `${label}: ${m}`, line);
+        if (ty !== 'BOOL' && ty !== 'ANY') push('error', 'bad-condition', `${label}: the start condition must be TRUE / FALSE, not ${ty}`, line);
+      }
+    });
+    for (const [p, ids] of prio) if (ids.length > 1) push('warning', 'duplicate-priority', `Sequencers ${ids.join(', ')} share priority ${p} — which one runs when both may start?`, at('sequencers'));
+  }
+
   // --- structure ------------------------------------------------------------------------
-  if (initial.length === 1) {
-    const reached = new Set<string>([initial[0].id]);
-    const queue = [initial[0].id];
+  for (const [sq, init] of initialOf) {
+    const reached = new Set<string>([init.id]);
+    const queue = [init.id];
     while (queue.length) {
       const s = queue.shift()!;
       for (const t of seq.transitions) {
@@ -248,7 +333,7 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
         for (const n of t.to) if (!reached.has(n) && stepIds.has(n)) (reached.add(n), queue.push(n));
       }
     }
-    for (const s of seq.steps) if (!reached.has(s.id)) push('warning', 'unreachable-step', `${s.id} cannot be reached from the initial step ${initial[0].id}`, at('steps', s.id), { block: s.id });
+    for (const s of inSeq(sq)) if (!reached.has(s.id)) push('warning', 'unreachable-step', `${s.id} cannot be reached from the initial step ${init.id}`, at('steps', s.id), { block: s.id });
   }
   for (const s of seq.steps) {
     if (!seq.transitions.some((t) => t.from.includes(s.id))) push('info', 'dead-end-step', `${s.id} has no outgoing transition (end of the sequence)`, at('steps', s.id), { block: s.id });
@@ -337,6 +422,8 @@ export interface SequenceRef {
   step?: string;
   /** Index of the writing action within its step. */
   action?: number;
+  /** Sequencer whose start condition reads the signal. */
+  sequencer?: string;
   transition?: number;
   kind: 'reads' | 'writes';
   strategy: string;
@@ -357,6 +444,13 @@ export function sequenceRefs(seq: Sequence): SequenceRef[] {
     if (!c.expr) continue;
     for (const r of exprRefs(c.expr)) {
       if (r.scope && r.port) out.push({ sequence: seq.name, sequenceFile: seq.file, transition: t.index, kind: 'reads', strategy: r.scope, block: r.name, port: r.port });
+    }
+  }
+  for (const sq of seq.sequencers) {
+    const c = parseCondition(sq.start);
+    if (!c.expr) continue;
+    for (const r of exprRefs(c.expr)) {
+      if (r.scope && r.port) out.push({ sequence: seq.name, sequenceFile: seq.file, sequencer: sq.id, kind: 'reads', strategy: r.scope, block: r.name, port: r.port });
     }
   }
   return out;

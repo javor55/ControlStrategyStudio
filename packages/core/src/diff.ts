@@ -272,6 +272,9 @@ export function diffSequence(before: Sequence | undefined, after: Sequence | und
     for (const k of ['name', 'title', 'description', 'revision', 'author', 'scan'] as const) field(out.header, k, before[k], after[k]);
     if (before.file !== after.file) out.header.push({ field: 'location', before: before.file, after: after.file });
     field(out.inputs, 'inputs', before.inputs.map((i) => `${i.name}:${i.type}`).join(', '), after.inputs.map((i) => `${i.name}:${i.type}`).join(', '));
+    const sqText = (q: Sequence) => (q.explicitSequencers ? q.sequencers.map((x) => `${x.id}${x.start ? ` [${x.start}]` : ''}${x.priority !== undefined ? ` p${x.priority}` : ''}`).join(', ') : undefined);
+    field(out.header, 'sequencers', sqText(before), sqText(after));
+    field(out.header, 'state model', before.stateModel, after.stateModel);
   }
   const sa = new Map((before?.steps ?? []).map((s) => [s.id, s]));
   const sb = new Map((after?.steps ?? []).map((s) => [s.id, s]));
@@ -283,7 +286,7 @@ export function diffSequence(before: Sequence | undefined, after: Sequence | und
     }
     const ch: FieldChange[] = [];
     field(ch, 'initial', p.initial || undefined, s.initial || undefined);
-    for (const k of ['description', 'doc', 'comment', 'sheet'] as const) field(ch, k, p[k], s[k]);
+    for (const k of ['description', 'doc', 'comment', 'sheet', 'sequencer'] as const) field(ch, k, p[k], s[k]);
     field(ch, 'time', [p.time?.min, p.time?.max].filter(Boolean).join('…') || undefined, [s.time?.min, s.time?.max].filter(Boolean).join('…') || undefined);
     const n = Math.max(p.actions.length, s.actions.length);
     for (let i = 0; i < n; i++) field(ch, `actions[${i + 1}]`, p.actions[i] && actionText(p.actions[i]), s.actions[i] && actionText(s.actions[i]));
