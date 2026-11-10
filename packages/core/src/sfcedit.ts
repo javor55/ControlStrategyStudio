@@ -34,7 +34,7 @@ export function sfcInsertOps(seq: Sequence, kind: SfcInsertKind, stepId: string,
   const incoming = seq.transitions.filter((t) => t.to.includes(stepId));
   const outgoing = seq.transitions.filter((t) => t.from.includes(stepId));
   const ops: Op[] = [];
-  const add: Op = { op: 'addStep', file, id: newId, sheet: step.sheet };
+  const add: Op = { op: 'addStep', file, id: newId, sheet: step.sheet, sequencer: step.sequencer };
   const replace = (list: string[], a: string, b: string) => list.map((v) => (v === a ? b : v));
   const one = (l: string[]) => (l.length === 1 ? l[0] : l);
 
@@ -118,7 +118,8 @@ export function sfcInsertIntoTransitionOps(seq: Sequence, kind: SfcBlockKind, in
     ops.push({ op: 'insertStep', file, transition: index, id: a, sheet });
   } else {
     if (!b) return { error: 'A branch needs two new step names' };
-    ops.push({ op: 'addStep', file, id: a, sheet }, { op: 'addStep', file, id: b, sheet });
+    const sequencer = fromStep?.sequencer;
+    ops.push({ op: 'addStep', file, id: a, sheet, sequencer }, { op: 'addStep', file, id: b, sheet, sequencer });
     if (kind === 'parallel') {
       ops.push({ op: 'setTransition', file, index, to: [a, b] });
       ops.push({ op: 'addTransition', file, from: [a, b], to: one(t.to) });

@@ -338,8 +338,9 @@ describe('sequencers (several step chains with start conditions)', () => {
     const q = loadProject(f).sequences[0];
     expect(q.sequencers.map((x) => x.id)).toEqual(['MAIN', 'HOLD']);
     expect(new Set(q.steps.map((s) => s.sequencer))).toEqual(new Set(['MAIN']));
-    // HOLD has no steps yet; MAIN has no start condition.
-    expect(codesOf(f)).toEqual(expect.arrayContaining(['no-steps', 'missing-start-condition']));
+    // HOLD has no steps yet (info); MAIN has no start condition.
+    expect(codesOf(f)).toContain('missing-start-condition');
+    expect(loadProject(f).diags.some((d) => d.file === file && d.code === 'no-steps' && d.severity === 'info')).toBe(true);
   });
 
   it('validates each sequencer as its own chain and draws one page per sequencer', () => {

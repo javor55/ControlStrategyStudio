@@ -2,7 +2,7 @@
 // turns gestures into core sequence ops. Same feel as the FBD canvas: crisp
 // zoom, wheel scroll, pan, rubber band, sheet tabs, undo — see panzoom.ts.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { diffSequence, extractFragment, extractSequenceFragment, layoutSequenceSheet, parseFragment, parseSequenceFragment, stepRenameMap, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
+import { diffSequence, extractFragment, extractSequenceFragment, layoutSequenceSheet, sequencerSheets, parseFragment, parseSequenceFragment, stepRenameMap, strategyDocFile, type Op, type Sequence, type SfcLayout, type SfcStepGeom } from '@csd/core';
 import { renderSequenceDiffFor, renderSequenceSvg } from '@csd/render';
 import { store, useEditor } from '../state/store';
 import { diagsOf, useActiveSequence } from '../state/selectors';
@@ -41,6 +41,7 @@ import {
   SFC_MIME,
   stepSelection,
   type SfcElement,
+  addSequencerDialog,
 } from './sfcops';
 import './canvas.css';
 
@@ -77,6 +78,9 @@ export function SequenceCanvas() {
 
 function SeqCanvas({ seq }: { seq: Sequence }) {
   const activeSheet = useEditor((s) => s.activeSheet);
+  const activeSequencer = useEditor((s) => s.activeSequencer);
+  /** Sequencer shown (sequences that list sequencers); undefined = the whole sequence. */
+  const sqId = seq.explicitSequencers ? (seq.sequencers.some((x) => x.id === activeSequencer) ? activeSequencer! : seq.sequencers[0].id) : undefined;
   const selection = useEditor((s) => s.selection);
   const fitRequest = useEditor((s) => s.fitRequest);
   const model = useEditor((s) => s.model);
@@ -104,10 +108,17 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   seqRef.current = seq;
 
   const sheet = seq.sheets.some((x) => x.id === activeSheet) ? activeSheet : seq.sheets[0]?.id ?? 1;
+
+  // A step selected elsewhere (problems, inspector links) that belongs to another sequencer: show it.
+  useEffect(() => {
+    if (!sqId || selection?.kind !== 'block') return;
+    const st = seq.steps.find((x) => x.id === selection.id);
+    if (st && st.sequencer !== sqId) store().setSequencer(st.sequencer, st.sheet, true);
+  }, [selection, sqId, seq]);
   const file = seq.file;
 
   // --- layout & render --------------------------------------------------------------
-  const baseLayout = useMemo<SfcLayout>(() => layoutSequenceSheet(seq, sheet, { overrides, noteOverrides }), [seq, sheet, overrides, noteOverrides]);
+  const baseLayout = useMemo<SfcLayout>(() => layoutSequenceSheet(seq, sheet, { overrides, noteOverrides, sequencer: sqId }), [seq, sheet, overrides, noteOverrides, sqId]);
 
   const errors = useMemo(() => {
     const steps = new Set<string>();
@@ -130,8 +141,8 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   }, [compare.before, compare.target, seq.uid, seq.name]);
   const seqDiff = useMemo(() => (compare.before && compare.target ? diffSequence(prevSeq, seq) : undefined), [compare.before, compare.target, prevSeq, seq]);
   const beforeLayout = useMemo(
-    () => (prevSeq && prevSeq.sheets.some((x) => x.id === sheet) ? layoutSequenceSheet(prevSeq, sheet) : undefined),
-    [prevSeq, sheet],
+    () => (prevSeq && prevSeq.sheets.some((x) => x.id === sheet) ? layoutSequenceSheet(prevSeq, sheet, { sequencer: prevSeq.explicitSequencers && prevSeq.sequencers.some((x) => x.id === sqId) ? sqId : undefined }) : undefined),
+    [prevSeq, sheet, sqId],
   );
   const renderDiff = useMemo(() => {
     if (!seqDiff) return undefined;
@@ -274,7 +285,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
     );
     const ids = Object.values(map);
     const n = ids.length;
-    return dispatch({ op: 'insertSequenceFragment', file, fragment: text, offset, sheet }, { label: n === 1 ? `${label} step ${ids[0]}` : `${label} ${n} steps`, select: stepSelection(ids) });
+    return dispatch({ op: 'insertSequenceFragment', file, fragment: text, offset, sheet, sequencer: sqId }, { label: n === 1 ? `${label} step ${ids[0]}` : `${label} ${n} steps`, select: stepSelection(ids) });
   };
 
   /** Notes copied from a canvas (diagram fragment): added at `at`, or shifted by `offset`. */
@@ -453,7 +464,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   const addStepAt = (x: number, y: number) => {
     const id = nextStepName(seq.steps.map((s) => s.id));
     dispatch(
-      { op: 'addStep', file, id, sheet, pos: [snap(x - 66), snap(y - 23)], initial: seq.steps.length === 0 || undefined },
+      { op: 'addStep', file, id, sheet, sequencer: sqId, pos: [snap(x - 66), snap(y - 23)], initial: !seq.steps.some((st) => !sqId || st.sequencer === sqId) || undefined },
       { label: `Add step ${id}`, select: { kind: 'block', id } },
     );
   };
@@ -1128,7 +1139,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       sep: true,
       items: [{ label: 'Grid', checked: prefs.grid, onClick: () => setCanvasPrefs({ grid: !prefs.grid }) }],
     },
-    { kind: 'button', key: 'add', label: SFC_LABELS.step, icon: CIcon.step, title: 'Add a step in the centre of the view (double-click the paper to place it)', sep: true, onClick: () => addSfcElement(seq, 'step', { sheet }) },
+    { kind: 'button', key: 'add', label: SFC_LABELS.step, icon: CIcon.step, title: 'Add a step in the centre of the view (double-click the paper to place it)', sep: true, onClick: () => addSfcElement(seq, 'step', { sheet, sequencer: sqId }) },
     {
       kind: 'menu',
       key: 'insert',
@@ -1237,14 +1248,54 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
           />
         )}
       </div>
-      <SequenceTabs seq={seq} sheet={sheet} />
+      <SequenceTabs seq={seq} sheet={sheet} sequencer={sqId} />
       {menu.element}
     </div>
   );
 }
 
-function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number }) {
+function SequenceTabs({ seq, sheet, sequencer }: { seq: Sequence; sheet: number; sequencer?: string }) {
   const file = seq.file;
+  const sqMenu = useMenu();
+  const sequencerItems = (): MenuEntry[] => [
+    ...(seq.explicitSequencers
+      ? [
+          { section: 'Show sequencer' } as MenuEntry,
+          ...seq.sequencers.map(
+            (q): MenuEntry => ({
+              label: q.title ? `${q.id} — ${q.title}` : q.id,
+              description: `start: ${q.start ?? '—'}${q.priority !== undefined ? ` · priority ${q.priority}` : ''}`,
+              checked: q.id === sequencer,
+              radio: true,
+              keepOpen: false,
+              onClick: () => store().setSequencer(q.id, sequencerSheets(seq, q.id)[0]),
+            }),
+          ),
+          'separator' as MenuEntry,
+        ]
+      : []),
+    { label: 'Add sequencer…', description: 'Another step chain with its own start condition and priority', onClick: () => void addSequencerDialog(seq) },
+    {
+      label: seq.stateModel === 'isa88' ? 'ISA-88 state model: on' : 'Use ISA-88 state model',
+      description: seq.stateModel === 'isa88' ? 'SEQ.HOLDING, SEQ.ABORTING … and per-state sequencers' : 'Adds sequencers RUN, HOLD, RESTART, STOP, ABORT with start conditions SEQ.<STATE>',
+      disabled: seq.stateModel === 'isa88',
+      onClick: () => {
+        if (store().dispatch({ op: 'setStateModel', file, model: 'isa88' }, { label: 'ISA-88 state model' })) store().toast('Added the ISA-88 state model: sequencers RUN, HOLD, RESTART, STOP, ABORT');
+      },
+    },
+    { label: 'Sequencer properties', disabled: !seq.explicitSequencers, description: 'Start conditions and priorities in the inspector', onClick: () => store().select(null) },
+  ];
+  const lead = (
+    <button
+      type="button"
+      className={`cv-tab sq${seq.explicitSequencers ? ' active-sq' : ''}`}
+      title="Sequencers: step chains with their own start condition and priority"
+      aria-haspopup="menu"
+      onClick={(e) => sqMenu.openBelow(e.currentTarget, sequencerItems())}
+    >
+      {seq.explicitSequencers ? `⧉ ${sequencer}` : '⧉ Sequencers'} ▾
+    </button>
+  );
   const hasSheets = useEditor((st) => {
     const t = st.files[file];
     return typeof t === 'string' && /^sheets\s*:/m.test(t);
@@ -1287,6 +1338,12 @@ function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number }) {
       onSelect={(id) => store().setSheet(id)}
       onAdd={addSheet}
       description={{ onOpen: () => openDescription(seq.docFile ?? strategyDocFile(file)), title: 'Function description (Markdown)' }}
+      lead={
+        <>
+          {lead}
+          {sqMenu.element}
+        </>
+      }
       tabMenu={(sh) => sheetTabMenu({ sheet: sh, count: seq.sheets.length, used: used(sh.id), usedWhat: 'steps and notes', rename: () => renameSheet(sh), remove: () => removeSheet(sh.id) })}
     />
   );

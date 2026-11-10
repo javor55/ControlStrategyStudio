@@ -110,6 +110,8 @@ export interface PlaceOptions {
   /** Drawing position for a new step (pinned). */
   pos?: [number, number];
   sheet: number;
+  /** Sequencer of a new free step (sequences with several sequencers). */
+  sequencer?: string;
 }
 
 /**
@@ -122,11 +124,17 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
   const sheetOf = (id: string) => seq.steps.find((x) => x.id === id)?.sheet ?? o.sheet;
   if (kind === 'step') {
     const [id] = freshNames(seq, 1);
-    return s.dispatch({ op: 'addStep', file, id, sheet: o.sheet, pos: o.pos?.map((v) => Math.round(v / 10) * 10) as [number, number] | undefined, initial: seq.steps.length === 0 || undefined }, { label: `Add step ${id}`, select: { kind: 'block', id } });
+    const sq = o.sequencer ?? seq.sequencers[0].id;
+    const first = !seq.steps.some((x) => x.sequencer === sq);
+    return s.dispatch(
+      { op: 'addStep', file, id, sheet: o.sheet, sequencer: seq.explicitSequencers ? sq : undefined, pos: o.pos?.map((v) => Math.round(v / 10) * 10) as [number, number] | undefined, initial: first || undefined },
+      { label: `Add step ${id}`, select: { kind: 'block', id } },
+    );
   }
   const from = o.from;
   if (kind === 'jump') {
-    const init = seq.steps.find((x) => x.initial);
+    const fromSq = seq.steps.find((x) => x.id === from)?.sequencer;
+    const init = seq.steps.find((x) => x.initial && (!fromSq || x.sequencer === fromSq));
     if (!from) return (s.toast('Select the step to jump from first'), false);
     if (!init) return (s.toast('The sequence has no initial step'), false);
     if (init.id === from) return (s.toast(`${from} is the initial step`), false);
@@ -146,7 +154,8 @@ export function addSfcElement(seq: Sequence, kind: SfcElement, o: PlaceOptions):
   const n = kind === 'transition' ? 1 : 2;
   if (kind !== 'transition' && kind !== 'parallel' && kind !== 'alternative') return false;
   const ids = freshNames(seq, n);
-  const ops: Op[] = ids.map((id) => ({ op: 'addStep', file, id, sheet }));
+  const sequencer = seq.explicitSequencers ? seq.steps.find((x) => x.id === from)?.sequencer : undefined;
+  const ops: Op[] = ids.map((id) => ({ op: 'addStep', file, id, sheet, sequencer }));
   if (kind === 'transition') ops.push({ op: 'addTransition', file, from, to: ids[0] });
   else if (kind === 'parallel') ops.push({ op: 'addTransition', file, from, to: ids });
   else for (const id of ids) ops.push({ op: 'addTransition', file, from, to: id });
@@ -241,4 +250,24 @@ export function openDescription(docFile: string) {
     if (!s.dispatch({ op: 'createFile', file: docFile, content: '## Function\n\n' }, { label: 'Create description' })) return;
   }
   s.open(docFile);
+}
+
+/** Asks for a sequencer name, adds it (next priority) and shows it; its start condition is set in the inspector. */
+export async function addSequencerDialog(seq: Sequence): Promise<void> {
+  const { promptDialog } = await import('../ui/dialogs');
+  const taken = new Set(seq.sequencers.map((x) => x.id));
+  const id = await promptDialog({
+    title: 'Add sequencer',
+    label: 'Name (letters, digits, _), e.g. HOLD, CLEANING',
+    placeholder: 'HOLD',
+    okLabel: 'Add',
+    validate: (v) => (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim()) ? 'Use letters, digits and _' : taken.has(v.trim()) ? `${v.trim()} already exists` : undefined),
+  });
+  if (!id?.trim()) return;
+  const name = id.trim();
+  const priority = Math.max(0, ...seq.sequencers.map((x) => x.priority ?? 0)) + 1;
+  const s = store();
+  if (!s.dispatch({ op: 'addSequencer', file: seq.file, id: name, priority }, { label: `Add sequencer ${name}` })) return;
+  s.setSequencer(name, seq.sheets[0]?.id ?? 1);
+  s.toast(`Sequencer ${name} added — set its start condition in the inspector, then add its steps`);
 }

@@ -195,6 +195,35 @@ the right, actions in boxes to the right of each step.
 | S4 · Exports & diff | PDF sections, viewer pages, visual diff | M |
 | S5 · Later | sequence test mode (token player), ISA-88 phase states (Running / Holding / Stopping / Aborting), sub-sequences (macro steps) | L |
 
+## 8a. Sequencers (several step chains)
+
+A sequence can hold several **sequencers** — step chains that each have a
+**start condition** and a **priority** (as the sequencers of an SFC in PCS 7, or
+the per-state logic of ISA-88 phases in DeltaV / PhaseManager). The sequencer
+whose start condition holds runs; when several hold, the highest priority wins.
+
+```yaml
+sequencers:
+  - { id: RUN,   title: Running, start: SEQ.RUNNING,  priority: 1 }
+  - { id: HOLD,  title: Holding, start: SEQ.HOLDING,  priority: 2 }
+  - { id: ABORT, title: Aborting, start: SEQ.ABORTING, priority: 5 }
+steps:
+  S0:  { initial: true }               # no `sequencer`: the first one (RUN)
+  H0:  { initial: true, sequencer: HOLD }
+```
+
+* Each sequencer has its own initial step; transitions stay within one sequencer.
+* Without `sequencers` a sequence has one implicit sequencer `MAIN` (as before).
+* `state_model: isa88` adds the ISA-88 / IEC 61512-1 procedural states as
+  signals `SEQ.IDLE`, `SEQ.RUNNING`, `SEQ.HOLDING`, `SEQ.HELD`, `SEQ.RESTARTING`,
+  `SEQ.STOPPING`, `SEQ.STOPPED`, `SEQ.ABORTING`, `SEQ.ABORTED`, `SEQ.COMPLETE`,
+  `SEQ.PAUSING`, `SEQ.PAUSED` (BOOL) and `SEQ.STATE` (number), and the
+  sequencers RUN, HOLD, RESTART, STOP and ABORT for the acting states. The
+  commands (Start, Hold, Restart, Stop, Abort, Reset) and the state transitions
+  themselves belong to the target system's phase logic.
+* Drawings, exports and the viewer show one page per sequencer with its start
+  condition and priority.
+
 ## 9. Decisions
 
 1. **File naming:** `NAME.seq.yaml` next to the strategies of the same folder;
@@ -202,6 +231,7 @@ the right, actions in boxes to the right of each step.
 2. **Conditions:** text expressions (above); transition networks are not planned.
 3. **Actions:** commands to block inputs (`set`, `value`, qualifier, time) or
    free text. Sub-sequences are on the roadmap.
-4. **ISA-88 phase states:** later (roadmap).
+4. **ISA-88 phase states:** sequencers with start conditions (above); the
+   ISA-88 state model is a preset of them.
 5. **Step names:** free names; the editor suggests `S` + multiples of 10 and
    picks a number between neighbours when inserting.

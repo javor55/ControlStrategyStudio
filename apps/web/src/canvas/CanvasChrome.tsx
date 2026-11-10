@@ -285,6 +285,8 @@ export function SheetTabs(props: {
   tabMenu: (s: SheetInfo) => MenuEntry[];
   /** Function description tab (Markdown). */
   description?: { onOpen: () => void; title: string };
+  /** Extra control before the sheet tabs (e.g. the sequencer chooser). */
+  lead?: ReactNode;
 }) {
   const menu = useMenu();
   return (
@@ -295,6 +297,7 @@ export function SheetTabs(props: {
           Description
         </button>
       )}
+      {props.lead}
       {props.sheets.map((sh) => (
         <button
           type="button"

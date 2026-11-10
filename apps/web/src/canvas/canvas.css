@@ -109,3 +109,5 @@
 .cv-overlay rect.seq-drop-box.ghost { stroke-dasharray: 5 3; }
 .cv-overlay .seq-drop-label rect { fill: var(--accent); }
 .cv-overlay .seq-drop-label text { fill: var(--accent-ink); font: 600 11.5px var(--f-ui); }
+.cv-tab.sq { font-family: var(--f-mono); }
+.cv-tab.sq.active-sq { color: var(--accent); }

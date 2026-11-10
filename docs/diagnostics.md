@@ -75,7 +75,7 @@ core can report is listed here.
 
 | Code | Severity | Meaning |
 |---|---|---|
-| `no-steps` | warning | The sequence has no steps yet. |
+| `no-steps` | warning | The sequence has no steps yet (info for an empty sequencer of a sequence with several). |
 | `no-initial-step` | error | No step is marked `initial: true`. |
 | `multiple-initial-steps` | error | More than one initial step. |
 | `unknown-step` | error | A transition names a step that does not exist. |

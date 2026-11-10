@@ -49,6 +49,8 @@ export interface EditorState {
   activeFile: string | null;
   /** Sheet shown on the canvas. */
   activeSheet: number;
+  /** Sequencer shown on the sequence canvas (sequences with several sequencers). */
+  activeSequencer?: string;
   selection: Selection;
   /** Bumped when the canvas should fit the drawing to the view. */
   fitRequest: number;
@@ -219,6 +221,7 @@ export class EditorStore {
     this.set({
       activeFile: file,
       activeSheet: opts.sheet ?? (changed ? 1 : this.state.activeSheet),
+      activeSequencer: changed ? undefined : this.state.activeSequencer,
       selection: opts.select ?? (changed ? null : this.state.selection),
       fitRequest: changed ? this.state.fitRequest + 1 : this.state.fitRequest,
     });
@@ -234,6 +237,12 @@ export class EditorStore {
 
   setSheet(sheet: number) {
     if (sheet !== this.state.activeSheet) this.set({ activeSheet: sheet, selection: null, fitRequest: this.state.fitRequest + 1 });
+  }
+
+  /** Shows another sequencer of the open sequence (optionally on a given sheet). */
+  setSequencer(id: string, sheet?: number, keepSelection = false) {
+    if (id === this.state.activeSequencer && (sheet === undefined || sheet === this.state.activeSheet)) return;
+    this.set({ activeSequencer: id, activeSheet: sheet ?? this.state.activeSheet, selection: keepSelection ? this.state.selection : null, fitRequest: this.state.fitRequest + 1 });
   }
 
   select(selection: Selection) {

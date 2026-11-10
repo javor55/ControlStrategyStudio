@@ -44,3 +44,9 @@
 .insp-scroll.seq-fill { flex: 1 1 auto; }
 .seq-new td { padding-top: 4px; }
 .seq-new td.insp-muted { font-size: 11px; }
+
+/* Sequencers */
+.seq-sq { margin: 4px 10px 10px; padding: 6px 8px 2px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--sheet); }
+.seq-sq.current { border-color: var(--accent); }
+.seq-sq-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.seq-sq-head .linkish { font-weight: 600; }

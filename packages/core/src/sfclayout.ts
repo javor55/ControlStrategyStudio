@@ -404,7 +404,9 @@ export function layoutSequenceSheet(seq: Sequence, sheet: number, ctx: SfcLayout
   }
   for (const l of lines) for (const [x, yy] of l) xs.push(x), ys.push(yy);
   for (const n of notes) xs.push(n.x, n.x + n.w), ys.push(n.y, n.y + n.h);
-  const header = sq ? { id: sq.id, title: sq.title, start: sq.start, priority: sq.priority, y: SFC.MARGIN - 6 } : undefined;
+  // Header above everything drawn (hand-placed steps may sit high).
+  const contentTop = Math.min(SFC.MARGIN + 30, ...steps.map((g) => g.y - (g.jumpsIn.length ? 30 : 0)), ...notes.map((n) => n.y));
+  const header = sq ? { id: sq.id, title: sq.title, start: sq.start, priority: sq.priority, y: Math.min(SFC.MARGIN - 6, contentTop - 50) } : undefined;
   if (header) {
     const text = `${sq!.id}${sq!.title ? ' — ' + sq!.title : ''}  start: ${sq!.start ?? '—'}${sq!.priority !== undefined ? '  priority ' + sq!.priority : ''}`;
     xs.push(SFC.MARGIN, SFC.MARGIN + 24 + text.length * M.CH_TEXT);

@@ -204,7 +204,7 @@ export function validateSequence(seq: Sequence, parsed: ParsedYaml, ctx: Sequenc
     const where = multi ? ` in sequencer ${sq.id}` : '';
     const init = steps.filter((s) => s.initial);
     if (!steps.length) {
-      if (multi) push('warning', 'no-steps', `Sequencer ${sq.id} has no steps yet`, at('sequencers', seq.sequencers.indexOf(sq)));
+      if (multi) push('info', 'no-steps', `Sequencer ${sq.id} has no steps yet`, at('sequencers', seq.sequencers.indexOf(sq)));
       continue;
     }
     if (!init.length) push('error', 'no-initial-step', `Mark one step${where} as initial (initial: true)`, at('steps', steps[0].id), { block: steps[0].id });

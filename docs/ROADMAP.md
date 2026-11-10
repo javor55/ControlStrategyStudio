@@ -11,7 +11,7 @@ strategies. Sizes: **S** small (≤ 1 day), **M** medium, **L** large.
 
 ## Sequences — follow-ups
 
-- [ ] ISA-88 phase states (hold / restart / stop / abort paths). **M–L**
+- [x] Sequencers with start conditions and priorities; ISA-88 state model as a preset. **M–L**
 - [ ] Sub-sequences (macro steps / calling another sequence). **M**
 - [x] Copy / paste of steps (clipboard fragments as for blocks). **S**
 - [x] Visual diff: ghosts of removed steps and transitions on the canvas. **S**

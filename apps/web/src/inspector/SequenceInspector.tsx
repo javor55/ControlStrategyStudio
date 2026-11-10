@@ -3,6 +3,7 @@
 // Same scaffold as the continuous strategy panels (inspector/Scaffold).
 import { useMemo, useRef, useState } from 'react';
 import {
+  sequencerSheets,
   ACTION_QUALIFIERS,
   diffSequence,
   formatEndpoint,
@@ -30,7 +31,7 @@ import { Icon } from '../project/icons';
 import { useCompare } from '../history/compare';
 import { Fields, Kind } from '../history/DiffDetails';
 import { actionTargets, conditionSignals, targetPort } from '../editor/seqsignals';
-import { insertIntoTransition, insertStepRelative, moveStepsToSheet, openDescription, removeSteps, stepSelection } from '../canvas/sfcops';
+import { addSequencerDialog, insertIntoTransition, insertStepRelative, moveStepsToSheet, openDescription, removeSteps, stepSelection } from '../canvas/sfcops';
 import { deleteStrategy, duplicateStrategy, moveStrategy } from '../project/actions';
 import { ConditionEditor } from './ConditionEditor';
 import { ChangesBox, DiagList, DocRow, Head, NAME_FIELD_ID, PathRow, PositionRow, deleteWithUndo } from './Scaffold';
@@ -249,6 +250,8 @@ function SequencePanel({ seq, model }: { seq: Sequence; model: ProjectModel }) {
         </tbody>
       </table>
 
+      <SequencersSection seq={seq} model={model} />
+
       <SectionHeader actions={<AddButton label="Add sheet" onClick={() => dispatch({ op: 'addSheet', file: seq.file }, 'Add sheet')} />}>Sheets</SectionHeader>
       {seq.sheets.map((sh) => (
         <Row key={sh.id} label={`Sheet ${sh.id}`}>
@@ -307,6 +310,80 @@ function RefList({ title, map }: { title: string; map: Map<string, Set<string>> 
 }
 
 // --- step ---------------------------------------------------------------------------------
+
+// --- sequencers -------------------------------------------------------------------------
+
+/** Sequencers: step chains with a start condition and a priority (PCS 7 style; ISA-88 per-state logic). */
+function SequencersSection({ seq, model }: { seq: Sequence; model: ProjectModel }) {
+  const options = useMemo(() => conditionSignals(model, seq), [model, seq]);
+  const file = seq.file;
+  const active = useEditor((st) => st.activeSequencer);
+  if (!seq.explicitSequencers) {
+    return (
+      <>
+        <SectionHeader actions={<AddButton label="Add sequencer" onClick={() => void addSequencerDialog(seq)} />}>Sequencers</SectionHeader>
+        <div className="insp-muted insp-pad">
+          One step chain. Add sequencers for logic that runs in other situations (hold, abort, cleaning …), each with a start condition and a priority — or use the ISA-88 state model.{' '}
+          <button type="button" className="linkish" onClick={() => dispatch({ op: 'setStateModel', file, model: 'isa88' }, 'ISA-88 state model')}>
+            Use ISA-88 state model
+          </button>
+        </div>
+      </>
+    );
+  }
+  const remove = (id: string) => {
+    const n = seq.steps.filter((x) => x.sequencer === id).length;
+    if (n) return store().toast(`Sequencer ${id} still has ${plural(n, 'step')} — delete or move them first`, 'error');
+    if (store().dispatch({ op: 'removeSequencer', file, id }, { label: `Delete sequencer ${id}` })) store().toastUndo(`Deleted sequencer ${id}`);
+  };
+  const rename = async (id: string) => {
+    const { promptDialog } = await import('../ui/dialogs');
+    const to = await promptDialog({ title: `Rename sequencer ${id}`, label: 'Name', value: id, okLabel: 'Rename', validate: (v) => (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim()) ? 'Use letters, digits and _' : undefined) });
+    if (to?.trim() && to.trim() !== id && dispatch({ op: 'renameSequencer', file, from: id, to: to.trim() }, `Rename sequencer ${id}`)) store().setSequencer(to.trim(), undefined, true);
+  };
+  return (
+    <>
+      <SectionHeader actions={<AddButton label="Add sequencer" onClick={() => void addSequencerDialog(seq)} />}>
+        Sequencers{seq.stateModel === 'isa88' ? ' · ISA-88' : ''}
+      </SectionHeader>
+      <div className="insp-muted insp-pad">
+        The sequencer whose start condition holds runs; when several hold, the highest priority wins.
+        {seq.stateModel === 'isa88' && ' State signals: SEQ.RUNNING, SEQ.HOLDING, SEQ.HELD, SEQ.ABORTING …'}
+      </div>
+      {seq.sequencers.map((q) => (
+        <div key={q.id} className={`seq-sq${q.id === active ? ' current' : ''}`}>
+          <div className="seq-sq-head">
+            <button type="button" className="linkish mono" title="Show this sequencer" onClick={() => store().setSequencer(q.id, sequencerSheets(seq, q.id)[0])}>
+              {q.id}
+            </button>
+            <span className="insp-muted">{plural(seq.steps.filter((x) => x.sequencer === q.id).length, 'step')}</span>
+            <span className="spacer" />
+            <button type="button" className="btn small ghost" onClick={() => void rename(q.id)}>
+              Rename
+            </button>
+            <button type="button" className="btn small ghost danger" disabled={seq.sequencers.length < 2} onClick={() => remove(q.id)}>
+              Delete
+            </button>
+          </div>
+          <Row label="Title">
+            <Field value={q.title} placeholder="e.g. Holding" onCommit={(v) => dispatch({ op: 'setSequencer', file, id: q.id, field: 'title', value: orUndef(v) }, `Title of ${q.id}`)} />
+          </Row>
+          <Row label="Start">
+            <ConditionEditor value={q.start} options={options} model={model} onCommit={(v) => dispatch({ op: 'setSequencer', file, id: q.id, field: 'start', value: orUndef(v) }, `Start condition of ${q.id}`)} />
+          </Row>
+          <Row label="Priority">
+            <Field
+              mono
+              value={q.priority === undefined ? undefined : String(q.priority)}
+              placeholder="higher wins"
+              onCommit={(v) => dispatch({ op: 'setSequencer', file, id: q.id, field: 'priority', value: v.trim() === '' ? undefined : Number(v) }, `Priority of ${q.id}`)}
+            />
+          </Row>
+        </div>
+      ))}
+    </>
+  );
+}
 
 function StepPanel({ seq, step, model }: { seq: Sequence; step: SeqStep; model: ProjectModel }) {
   const diags = diagsOf(model, seq.file).filter((d) => d.block === step.id);
@@ -371,6 +448,22 @@ function StepPanel({ seq, step, model }: { seq: Sequence; step: SeqStep; model: 
           <Field mono value={step.time?.max} placeholder="Max, e.g. 2min" onCommit={(v) => dispatch({ op: 'setStepTime', file, id: step.id, min: step.time?.min, max: orUndef(v) }, `Max time ${step.id}`)} />
         </span>
       </Row>
+      {seq.explicitSequencers && (
+        <Row label="Sequencer" title="The step chain this step belongs to; transitions stay within one sequencer">
+          <select
+            className="select"
+            value={step.sequencer}
+            onChange={(e) => dispatch({ op: 'setStepField', file, id: step.id, field: 'sequencer', value: e.target.value }, `Move ${step.id} to sequencer ${e.target.value}`)}
+            aria-label="Sequencer"
+          >
+            {seq.sequencers.map((q) => (
+              <option key={q.id} value={q.id}>
+                {q.title ? `${q.id} — ${q.title}` : q.id}
+              </option>
+            ))}
+          </select>
+        </Row>
+      )}
       <Row label="Sheet">
         <SheetSelect seq={seq} value={step.sheet} onChange={(v) => moveStepsToSheet(seq, [step.id], v)} />
       </Row>
