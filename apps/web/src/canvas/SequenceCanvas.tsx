@@ -1145,10 +1145,21 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       key: 'insert',
       label: 'Insert',
       title: 'Insert steps and branches at the selected step or transition',
-      items: insertCommands().flatMap((c): MenuEntry[] => [
-        ...(c.key === 'tstep' ? (['separator'] as MenuEntry[]) : []),
-        { label: c.label, hint: c.hint, disabled: c.disabled, description: c.disabled ? c.why : undefined, title: c.description, onClick: c.run },
-      ]),
+      items: [
+        ...insertCommands().flatMap((c): MenuEntry[] => [
+          ...(c.key === 'tstep' ? (['separator'] as MenuEntry[]) : []),
+          { label: c.label, hint: c.hint, disabled: c.disabled, description: c.disabled ? c.why : undefined, title: c.description, onClick: c.run },
+        ]),
+        'separator',
+        { label: 'Add sequencer…', title: 'Another step chain with its own start condition and priority', onClick: () => void addSequencerDialog(seq) },
+        {
+          label: 'Use ISA-88 state model',
+          disabled: seq.stateModel === 'isa88',
+          description: seq.stateModel === 'isa88' ? 'Already used' : undefined,
+          title: 'Adds sequencers RUN, HOLD, RESTART, STOP, ABORT with start conditions SEQ.<STATE>',
+          onClick: () => dispatch({ op: 'setStateModel', file, model: 'isa88' }, { label: 'ISA-88 state model' }),
+        },
+      ],
     },
     {
       kind: 'menu',
@@ -1170,6 +1181,7 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
       <CanvasHeader kind="sfc" path={folderPath(seq.folder)} name={seq.name} title={seq.title} />
       <CanvasToolbar zoomPct={pz.zoomPct} fit={fit} zoomBy={(f) => zoomAt(view.current.k * f)} zoomTo={(k) => zoomAt(k)} items={toolItems} helpOpen={showHelp} toggleHelp={() => setShowHelp((h) => !h)} focusCanvas={focusHost} />
       {compare.target && <CompareBanner kind="sequence" diff={seqDiff} />}
+      {sqId && <SequencerTabs seq={seq} active={sqId} sheet={sheet} />}
       <div className="cv-main">
         <div
           ref={hostRef}
@@ -1254,48 +1266,8 @@ function SeqCanvas({ seq }: { seq: Sequence }) {
   );
 }
 
-function SequenceTabs({ seq, sheet, sequencer }: { seq: Sequence; sheet: number; sequencer?: string }) {
+function SequenceTabs({ seq, sheet }: { seq: Sequence; sheet: number; sequencer?: string }) {
   const file = seq.file;
-  const sqMenu = useMenu();
-  const sequencerItems = (): MenuEntry[] => [
-    ...(seq.explicitSequencers
-      ? [
-          { section: 'Show sequencer' } as MenuEntry,
-          ...seq.sequencers.map(
-            (q): MenuEntry => ({
-              label: q.title ? `${q.id} — ${q.title}` : q.id,
-              description: `start: ${q.start ?? '—'}${q.priority !== undefined ? ` · priority ${q.priority}` : ''}`,
-              checked: q.id === sequencer,
-              radio: true,
-              keepOpen: false,
-              onClick: () => store().setSequencer(q.id, sequencerSheets(seq, q.id)[0]),
-            }),
-          ),
-          'separator' as MenuEntry,
-        ]
-      : []),
-    { label: 'Add sequencer…', description: 'Another step chain with its own start condition and priority', onClick: () => void addSequencerDialog(seq) },
-    {
-      label: seq.stateModel === 'isa88' ? 'ISA-88 state model: on' : 'Use ISA-88 state model',
-      description: seq.stateModel === 'isa88' ? 'SEQ.HOLDING, SEQ.ABORTING … and per-state sequencers' : 'Adds sequencers RUN, HOLD, RESTART, STOP, ABORT with start conditions SEQ.<STATE>',
-      disabled: seq.stateModel === 'isa88',
-      onClick: () => {
-        if (store().dispatch({ op: 'setStateModel', file, model: 'isa88' }, { label: 'ISA-88 state model' })) store().toast('Added the ISA-88 state model: sequencers RUN, HOLD, RESTART, STOP, ABORT');
-      },
-    },
-    { label: 'Sequencer properties', disabled: !seq.explicitSequencers, description: 'Start conditions and priorities in the inspector', onClick: () => store().select(null) },
-  ];
-  const lead = (
-    <button
-      type="button"
-      className={`cv-tab sq${seq.explicitSequencers ? ' active-sq' : ''}`}
-      title="Sequencers: step chains with their own start condition and priority"
-      aria-haspopup="menu"
-      onClick={(e) => sqMenu.openBelow(e.currentTarget, sequencerItems())}
-    >
-      {seq.explicitSequencers ? `⧉ ${sequencer}` : '⧉ Sequencers'} ▾
-    </button>
-  );
   const hasSheets = useEditor((st) => {
     const t = st.files[file];
     return typeof t === 'string' && /^sheets\s*:/m.test(t);
@@ -1338,13 +1310,70 @@ function SequenceTabs({ seq, sheet, sequencer }: { seq: Sequence; sheet: number;
       onSelect={(id) => store().setSheet(id)}
       onAdd={addSheet}
       description={{ onOpen: () => openDescription(seq.docFile ?? strategyDocFile(file)), title: 'Function description (Markdown)' }}
-      lead={
-        <>
-          {lead}
-          {sqMenu.element}
-        </>
-      }
+
       tabMenu={(sh) => sheetTabMenu({ sheet: sh, count: seq.sheets.length, used: used(sh.id), usedWhat: 'steps and notes', rename: () => renameSheet(sh), remove: () => removeSheet(sh.id) })}
     />
+  );
+}
+
+/**
+ * Sequencers of the sequence as sub-tabs of the sheet: RUN | HOLD | … | +.
+ * The tab shows the start condition and priority; right-click renames or deletes.
+ */
+function SequencerTabs({ seq, active, sheet }: { seq: Sequence; active: string; sheet: number }) {
+  const menu = useMenu();
+  const file = seq.file;
+  const tabMenu = (id: string): MenuEntry[] => {
+    const n = seq.steps.filter((x) => x.sequencer === id).length;
+    return [
+      { section: `Sequencer ${id}` },
+      { label: 'Properties', description: 'Start condition, priority, title', onClick: () => store().select(null) },
+      {
+        label: 'Rename…',
+        onClick: async () => {
+          const to = await promptDialog({ title: `Rename sequencer ${id}`, label: 'Name', value: id, okLabel: 'Rename' });
+          if (to?.trim() && to.trim() !== id && store().dispatch({ op: 'renameSequencer', file, from: id, to: to.trim() }, { label: `Rename sequencer ${id}` })) store().setSequencer(to.trim(), undefined, true);
+        },
+      },
+      'separator',
+      {
+        label: 'Delete',
+        danger: true,
+        disabled: n > 0 || seq.sequencers.length < 2,
+        description: n > 0 ? `Has ${plural(n, 'step')} — delete or move them first` : undefined,
+        onClick: () => {
+          if (store().dispatch({ op: 'removeSequencer', file, id }, { label: `Delete sequencer ${id}` })) store().toastUndo(`Deleted sequencer ${id}`);
+        },
+      },
+    ];
+  };
+  return (
+    <div className="sq-tabs" role="tablist" aria-label="Sequencers">
+      <span className="sq-tabs-label" title="Step chains of this sequence; the one whose start condition holds runs (highest priority wins)">
+        Sequencers
+      </span>
+      {seq.sequencers.map((q) => {
+        const n = seq.steps.filter((x) => x.sequencer === q.id).length;
+        return (
+          <button
+            type="button"
+            key={q.id}
+            role="tab"
+            aria-selected={q.id === active}
+            className={`sq-tab${q.id === active ? ' active' : ''}${n ? '' : ' sq-empty'}`}
+            title={`${q.id}${q.title ? ` — ${q.title}` : ''}\nstart: ${q.start ?? '(none)'}${q.priority !== undefined ? `\npriority ${q.priority}` : ''}\n${plural(n, 'step')} · right-click: properties, rename, delete`}
+            onClick={() => store().setSequencer(q.id, seq.steps.some((x) => x.sequencer === q.id && x.sheet === sheet) ? sheet : sequencerSheets(seq, q.id)[0])}
+            onContextMenu={(e) => menu.open(e, tabMenu(q.id))}
+          >
+            <span className="mono">{q.id}</span>
+            {q.title && <span className="sq-tab-sub">{q.title}</span>}
+          </button>
+        );
+      })}
+      <button type="button" className="sq-tab add" title="Add sequencer" aria-label="Add sequencer" onClick={() => void addSequencerDialog(seq)}>
+        +
+      </button>
+      {menu.element}
+    </div>
   );
 }

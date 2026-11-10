@@ -111,3 +111,13 @@
 .cv-overlay .seq-drop-label text { fill: var(--accent-ink); font: 600 11.5px var(--f-ui); }
 .cv-tab.sq { font-family: var(--f-mono); }
 .cv-tab.sq.active-sq { color: var(--accent); }
+
+/* Sequencer sub-tabs (inside a sequence sheet) */
+.sq-tabs { flex: none; display: flex; align-items: stretch; gap: 2px; height: 30px; padding: 0 8px; border-bottom: 1px solid var(--rule); background: var(--panel); overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+.sq-tabs-label { display: flex; align-items: center; padding-right: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.sq-tab { display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.sq-tab:hover { background: var(--hover); }
+.sq-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.sq-tab.sq-empty .mono { opacity: .6; }
+.sq-tab-sub { color: var(--ink-3); font-size: 11px; }
+.sq-tab.add { color: var(--ink-3); font-size: 14px; }

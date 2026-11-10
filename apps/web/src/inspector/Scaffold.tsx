@@ -6,11 +6,12 @@
 //   4. fields (Name, Type, Description, Documentation, Comment, specific, Sheet, Position)
 //   5. sections with a "+ Add X" button in the header
 //   6. Info last (content, file, function description as an action)
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Diag } from '@csd/core';
 import { store } from '../state/store';
 import { Row, type MenuEntry } from '../ui/kit';
 import { DiagBadges, MoreButton } from '../ui/parts';
+import { countDiags, plural } from '../ui/text';
 import { Icon } from '../project/icons';
 import { stopCompare } from '../history/compare';
 import { goToDiag } from '../project/ProblemsBar';
@@ -72,22 +73,66 @@ export function Head(props: HeadProps) {
 const SEV_LABEL = { error: 'Error', warning: 'Warning', info: 'Info' } as const;
 
 /** Problems of the shown element (right under the header). Click one to go to it. */
+const DIAGS_OPEN_KEY = 'csd.inspector.diagsOpen';
+const readOpen = () => {
+  try {
+    return localStorage.getItem(DIAGS_OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+/** Shared by every inspector panel: open / closed is remembered for all of them. */
+let diagsOpen = readOpen();
+const diagsListeners = new Set<() => void>();
+function setDiagsOpen(v: boolean) {
+  diagsOpen = v;
+  try {
+    localStorage.setItem(DIAGS_OPEN_KEY, v ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+  diagsListeners.forEach((f) => f());
+}
+
+/**
+ * Problems of the shown element — the same messages as the problems bar at the
+ * bottom, filtered to this file / element. Collapsed to one summary line by
+ * default so the fields stay in view; the choice is remembered.
+ */
 export function DiagList({ diags }: { diags: readonly Diag[] }) {
+  const [open, setOpen] = useState(diagsOpen);
+  useEffect(() => {
+    const f = () => setOpen(diagsOpen);
+    diagsListeners.add(f);
+    return () => void diagsListeners.delete(f);
+  }, []);
   if (!diags.length) return null;
+  const c = countDiags(diags);
+  const parts = [c.errors && plural(c.errors, 'error'), c.warnings && plural(c.warnings, 'warning'), c.infos && `${c.infos} info`].filter(Boolean).join(' · ');
+  const worst = c.errors ? 'error' : c.warnings ? 'warning' : 'info';
   return (
-    <ul className="insp-diags" aria-label="Problems">
-      {diags.map((x, i) => (
-        <li key={i} className={x.severity}>
-          <span className={`badge ${x.severity}`}>{SEV_LABEL[x.severity]}</span>
-          <span className="insp-diag-msg">{x.message}</span>
-          {x.line && (
-            <button type="button" className="insp-line" title="Show in the text" onClick={() => goToDiag(x)}>
-              :{x.line}
-            </button>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="insp-diagbox">
+      <button type="button" className={`insp-diag-sum ${worst}`} aria-expanded={open} title={open ? 'Hide the messages' : 'Show the messages'} onClick={() => setDiagsOpen(!open)}>
+        <span className="insp-diag-caret">{open ? '▾' : '▸'}</span>
+        <span className={`badge ${worst}`}>{SEV_LABEL[worst]}</span>
+        <span>{parts}</span>
+      </button>
+      {open && (
+        <ul className="insp-diags" aria-label="Problems">
+          {diags.map((x, i) => (
+            <li key={i} className={x.severity}>
+              <span className={`badge ${x.severity}`}>{SEV_LABEL[x.severity]}</span>
+              <span className="insp-diag-msg">{x.message}</span>
+              {x.line && (
+                <button type="button" className="insp-line" title="Show in the text" onClick={() => goToDiag(x)}>
+                  :{x.line}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

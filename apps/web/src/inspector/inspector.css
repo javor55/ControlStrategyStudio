@@ -20,7 +20,13 @@
 .insp-nowrap { flex-wrap: nowrap; min-width: 0; }
 .insp-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 4px; border-radius: var(--radius); background: var(--code-bg); }
 
-.insp-diags { list-style: none; margin: 6px 10px; padding: 0; display: grid; gap: 3px; }
+.insp-diagbox { margin: 4px 10px 6px; }
+.insp-diag-sum { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 6px; border: 0; border-radius: var(--radius); background: var(--hover); color: var(--ink-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.insp-diag-sum.error { background: var(--error-soft); }
+.insp-diag-sum.warning { background: var(--warning-soft); }
+.insp-diag-sum:hover { filter: brightness(0.97); }
+.insp-diag-caret { width: 10px; color: var(--ink-3); }
+.insp-diags { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
 .insp-diags li { display: flex; align-items: baseline; gap: 6px; padding: 3px 6px; border-radius: var(--radius); font-size: 12px; line-height: 1.35; }
 .insp-diags li.error { background: var(--error-soft); }
 .insp-diags li.warning { background: var(--warning-soft); }
