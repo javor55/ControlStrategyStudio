@@ -270,11 +270,12 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
     if (tg.expanded && !toggles) {
       // read-only output: nothing to draw for expanded parameters
     } else if (tg.expanded) {
-      // ▾ at the right end of the parameter separator
-      const cx = b.x + b.w - 9;
-      const cy = tg.y + 1;
+      // ⌄ at the right end of the first parameter row (below the separator,
+      // the same size as the › of the collapsed footer)
+      const cx = b.x + b.w - 10;
+      const cy = tg.y + 8;
       s += `<path${attrs({ d: `M${n(cx - 4)} ${n(cy - 2)} L${n(cx)} ${n(cy + 2.5)} L${n(cx + 4)} ${n(cy - 2)}`, fill: 'none', stroke: t.ink3, 'stroke-width': 1.3 })}/>`;
-      if (o.interactive) s += `<rect${attrs({ x: cx - 8, y: cy - 7, width: 16, height: 13, fill: 'transparent', ...hit })}><title>Hide parameters</title></rect>`;
+      if (o.interactive) s += `<rect${attrs({ x: cx - 8, y: cy - 6, width: 16, height: 12, fill: 'transparent', ...hit })}><title>Hide parameters</title></rect>`;
     } else {
       const fy = b.y + b.h - M.PARAM_ROW - 2;
       s += `<line${attrs({ x1: b.x, y1: fy - 1, x2: b.x + b.w, y2: fy - 1, stroke: t.rule, 'stroke-width': 0.8 })}/>`;

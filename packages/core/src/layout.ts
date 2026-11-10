@@ -307,7 +307,8 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       b.id.length * M.CH_NAME + 64,
       label.length * M.CH_SMALL + 64,
       (maxIn + maxOut) * M.CH_PORT + 26,
-      Math.max(0, ...params.map((s) => s.length)) * M.CH_SMALL + 14,
+      // + room for the hide-parameters arrow at the right of the first row
+      Math.max(0, ...params.map((s) => s.length)) * M.CH_SMALL + 14 + (paramsMode === 'block' && params.length ? 18 : 0),
       );
     w = Math.ceil(w / 10) * 10;
     const rows = Math.max(inputs.length, outputs.length, 1);
