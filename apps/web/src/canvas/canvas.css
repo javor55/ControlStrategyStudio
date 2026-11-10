@@ -130,3 +130,5 @@
 .cv-minimap .mm-note { fill: #f3d77a; }
 .cv-minimap .mm-selected { fill: var(--accent); }
 .cv-minimap .mm-frame { fill: color-mix(in srgb, var(--accent) 10%, transparent); stroke: var(--accent); stroke-width: 1.2; }
+
+.cv-note { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 4; padding: 5px 12px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); font-size: 12px; color: var(--ink-2); }

@@ -293,6 +293,22 @@ function renderBlock(b: BlockGeom, t: Theme, o: RenderOptions): string {
   return s + '</g>';
 }
 
+/** Scan time bands: dashed separators between them and a label on top of each. */
+function renderScanBands(sb: NonNullable<SheetLayout['scanBands']>, t: Theme): string {
+  let s = '<g data-scan-bands="">';
+  for (const x of sb.separators) s += `<line${attrs({ x1: n(x), y1: n(sb.top), x2: n(x), y2: n(sb.bottom), stroke: t.ink3, 'stroke-width': 1.2, 'stroke-dasharray': '8 5' })}/>`;
+  sb.bands.forEach((b, i) => {
+    const left = i === 0 ? b.x0 : sb.separators[i - 1];
+    const right = i === sb.bands.length - 1 ? b.x1 : sb.separators[i];
+    const cx = (left + right) / 2;
+    const label = `scan ${b.label}`;
+    const w = label.length * 6.6 + 18;
+    s += `<rect${attrs({ x: n(cx - w / 2), y: n(sb.top), width: n(w), height: 20, rx: 10, fill: t.paper, stroke: t.rule, 'stroke-width': 0.8 })}/>`;
+    s += text(cx, sb.top + 14, label, { 'font-family': t.fontSans, 'font-size': 11.5, 'font-weight': 'bold', fill: t.real, 'text-anchor': 'middle' });
+  });
+  return s + '</g>';
+}
+
 function renderConnector(c: ConnectorGeom, t: Theme, o: RenderOptions): string {
   const color = c.kind === 'ext-in' || c.kind === 'used-by' || c.kind === 'written-by' ? t.ext : c.kind === 'iface-in' || c.kind === 'iface-out' ? t.iface : t.ink2;
   const { x, y, w, h } = c;
@@ -368,6 +384,7 @@ export function renderSheetSvg(layout: SheetLayout, opts: RenderOptions = {}): s
       s += text(b.x + b.w + 5, b.y - 8, k === 'added' ? 'added' : 'changed', { 'font-family': t.fontSans, 'font-size': 9.5, 'font-weight': 'bold', fill: DIFF_COLORS[k], 'text-anchor': 'end' });
     }
   }
+  if (layout.scanBands?.ok) s += renderScanBands(layout.scanBands, t);
   for (const w of layout.wires) s += renderWire(w, t, opts);
   for (const [x, y] of layout.junctions) s += `<circle${attrs({ cx: x, cy: y, r: 2.8, fill: t.ink })}/>`;
   for (const c of layout.connectors) s += renderConnector(c, t, opts);

@@ -30,6 +30,7 @@ import {
   type SheetLayout,
   type YamlPath,
   wireKind,
+  arrangeByScan,
 } from '@csd/core';
 import { lineStrokeFor, lineStyleOptions, renderDiffFor, renderSheetSvg, type RenderDiff } from '@csd/render';
 import { store, useEditor, type EditorState } from '../state/store';
@@ -230,8 +231,8 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
     [display.paramsMode, display.comments, display.ports, wire !== null], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const baseLayout = useMemo(
-    () => layoutActiveSheet(ad, activeSheet, { overrides, noteOverrides, display: effDisplay }),
-    [ad, activeSheet, overrides, noteOverrides, effDisplay],
+    () => layoutActiveSheet(ad, activeSheet, { overrides, noteOverrides, display: effDisplay, scanBands: display.scanBands && !ad.composite }),
+    [ad, activeSheet, overrides, noteOverrides, effDisplay, display.scanBands],
   );
   // Comparison mode: highlight what changed since the compared version; removed
   // items are drawn as ghosts from the older version's layout of the same sheet.
@@ -516,6 +517,16 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
   };
 
   const geomOf = (id: string): BlockGeom | undefined => layoutRef.current.blocks.find((b) => b.id === id);
+
+  /** Arrange ▾ → Arrange by scan time: bands fastest → slowest, then show the band lines. */
+  const arrangeScan = () => {
+    const positions = arrangeByScan(ad.diagram, activeSheet, { ...ad.layoutContext, display: effDisplay });
+    if (!Object.keys(positions).length) return;
+    if (dispatch({ op: 'pinAll', positions, ...target }, { label: 'Arrange by scan time' })) {
+      if (!display.scanBands) setDisplayOpt({ scanBands: true });
+      store().requestFit();
+    }
+  };
 
   /** Align or distribute the selected blocks and notes (positions become pinned). */
   type AlignMode = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom' | 'hspread' | 'vspread';
@@ -1566,6 +1577,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       items: [
         { label: 'Grid', checked: display.grid, onClick: () => setDisplayOpt({ grid: !display.grid }) },
         { label: 'Minimap', checked: display.minimap, onClick: () => setDisplayOpt({ minimap: !display.minimap }) },
+        { label: 'Scan time bands', checked: display.scanBands, title: 'Dashed lines between blocks of different scan times (Arrange ▾ → Arrange by scan time)', onClick: () => setDisplayOpt({ scanBands: !display.scanBands }) },
         { section: 'Parameters' },
         ...PARAMS_MODES.map(([m, label, title]): MenuEntry => ({ label, title, radio: true, checked: display.paramsMode === m, onClick: () => setDisplayOpt({ paramsMode: m }) })),
         { section: 'Pins' },
@@ -1583,6 +1595,7 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
       items: [
         { label: 'Auto order', title: 'Set the execution order from the signal flow', onClick: doAutoOrder },
         { label: 'Align by order', title: 'Arrange the blocks by execution order (fills missing orders first)', onClick: alignByOrder },
+        { label: 'Arrange by scan time', disabled: !!ad.composite, title: 'Bands from the fastest scan time (left) to the slowest; shows the scan time bands', onClick: arrangeScan },
         'separator',
         { label: 'Align / distribute selection', submenu: alignItems() },
         'separator',
@@ -1668,6 +1681,14 @@ function DiagramCanvas({ ad }: { ad: ActiveDiagram }) {
             </svg>
           )}
         </div>
+        {display.scanBands && layout.scanBands && !layout.scanBands.ok && (
+          <div className="cv-note" role="note">
+            Scan time bands hidden: blocks of different scan times overlap.{' '}
+            <button type="button" className="linkish" onClick={arrangeScan}>
+              Arrange by scan time
+            </button>
+          </div>
+        )}
         {display.minimap && !empty && (
           <Minimap
             bounds={layout.bounds}

@@ -38,6 +38,8 @@ export interface ExportDisplay extends Pick<DisplayOptions, 'params' | 'comments
   labels: boolean;
   /** Colours / line styles of signal categories. */
   categories: boolean;
+  /** Scan time bands (dashed lines between blocks of different scan times, when they do not overlap). */
+  scanBands: boolean;
 }
 
 export interface ExportConfig {
@@ -75,7 +77,7 @@ export function defaultExportConfig(format: ExportFormat = 'pdf'): ExportConfig 
       history: true,
     },
     parameters: 'set',
-    display: { ports: 'auto', params: true, comments: true, order: true, feedback: true, labels: true, categories: true },
+    display: { ports: 'auto', params: true, comments: true, order: true, feedback: true, labels: true, categories: true, scanBands: false },
     titleBlock: {},
   };
 }

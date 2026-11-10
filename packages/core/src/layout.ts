@@ -3,7 +3,7 @@
 // Produces plain geometry (boxes, ports, polylines, connectors). Renderers —
 // SVG on screen, PDF, CLI — only draw it, so every output looks identical.
 import { IFACE_IN, IFACE_OUT, formatEndpoint } from './diagram';
-import { formatValue, wireKind, type WireKind } from './signals';
+import { formatValue, parseDuration, wireKind, type WireKind } from './signals';
 import type { BlockInst, BlockTypeDef, Diagram, LinkInst, PortDef } from './types';
 import { Occupancy, RouteGrid, routeIsClean, type Rect, type RouteRequest } from './router';
 
@@ -66,6 +66,8 @@ export interface LayoutContext {
   /** Temporary positions, e.g. while a block is dragged. */
   overrides?: Readonly<Record<string, [number, number]>>;
   noteOverrides?: Readonly<Record<number, [number, number]>>;
+  /** Compute scan time bands (separator lines and labels); see SheetLayout.scanBands. */
+  scanBands?: boolean;
 }
 
 export interface PortGeom {
@@ -114,6 +116,8 @@ export interface ConnectorGeom {
   h: number;
   signal: WireKind;
   link?: number;
+  /** Block the connector is drawn at. */
+  owner?: string;
   /** Target sheet / strategy for navigation. */
   target?: { sheet?: number; strategy?: string; block?: string };
 }
@@ -153,7 +157,23 @@ export interface SheetLayout {
   notes: NoteGeom[];
   /** Branch points of one signal (filled dots). */
   junctions: [number, number][];
+  /**
+   * Scan time bands (with LayoutContext.scanBands): one per scan time, left to
+   * right, with the separator lines between them. `ok: false` when blocks of
+   * different scan times overlap horizontally (nothing is drawn then).
+   */
+  scanBands?: ScanBands;
   bounds: { x: number; y: number; w: number; h: number };
+}
+
+export interface ScanBands {
+  ok: boolean;
+  bands: { ms: number; label: string; x0: number; x1: number }[];
+  /** x of the dashed separator lines (between bands). */
+  separators: number[];
+  /** Top of the labels, bottom of the lines. */
+  top: number;
+  bottom: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -571,7 +591,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       if (!port) continue;
       const w = connW(c.label);
       const cx = port.x - M.CONN_GAP - w;
-      connectors.push({ kind: c.kind, side: 'left', label: c.label, x: cx, y: port.y, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
+      connectors.push({ kind: c.kind, side: 'left', label: c.label, x: cx, y: port.y, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target, owner: g.id });
       const comment = commentOf(c.link);
       const lk = linkMeta(c.link);
       const text = [lk?.label, comment].filter(Boolean).join(' · ');
@@ -608,7 +628,7 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
       const { c, port } = r;
       const w = connW(c.label);
       const cx = port.x + gap;
-      connectors.push({ kind: c.kind, side: 'right', label: c.label, x: cx, y: cy, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target });
+      connectors.push({ kind: c.kind, side: 'right', label: c.label, x: cx, y: cy, w, h: M.CONN_H, signal: c.signal, link: c.link, target: c.target, owner: g.id });
       const bx = port.x + (branchX.get(c.port) ?? 10);
       const pts: [number, number][] = cy === port.y ? [[port.x, port.y], [cx, cy]] : [[port.x, port.y], [bx, port.y], [bx, cy], [cx, cy]];
       wires.push({ link: c.link, kind: c.signal, external: c.kind === 'used-by', derived: c.kind === 'used-by' || c.kind === 'planned-out', points: pts, source: `${g.id}.${c.port}` });
@@ -729,12 +749,14 @@ export function layoutSheet(diagram: Diagram, sheet: number, ctx: LayoutContext 
   for (const n of notes) xs.push(n.x, n.x + n.w), ys.push(n.y, n.y + n.h);
   for (const w of wires) for (const [x, y] of w.points) xs.push(x), ys.push(y);
   for (const w of wires) if (w.label) xs.push(w.label.x, w.label.x + w.label.text.length * M.CH_TEXT);
+  const scanBands = ctx.scanBands ? computeScanBands(blocks, connectors, ys) : undefined;
+  if (scanBands?.ok) ys.push(scanBands.top);
   const pad = 24;
   const x0 = xs.length ? Math.min(...xs) - pad : 0;
   const y0 = ys.length ? Math.min(...ys) - pad : 0;
   const x1 = xs.length ? Math.max(...xs) + pad : 400;
   const y1 = ys.length ? Math.max(...ys) + pad : 300;
-  return { sheet, blocks, wires, connectors, notes, junctions, bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  return { sheet, blocks, wires, connectors, notes, junctions, ...(scanBands ? { scanBands } : {}), bounds: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
 }
 
 function wireLabel(points: [number, number][], name?: string, comment?: string, delayed = false): WireGeom['label'] {
@@ -867,6 +889,68 @@ function junctionPoints(wires: WireGeom[]): [number, number][] {
       }
       if (dirs.size >= 3) out.push(v);
     }
+  }
+  return out;
+}
+
+/** "100 ms", "1 s", "1.5 min". */
+export function formatScan(ms: number): string {
+  if (ms >= 60000 && ms % 1000 === 0) return `${+(ms / 60000).toFixed(2)} min`;
+  if (ms >= 1000) return `${+(ms / 1000).toFixed(2)} s`;
+  return `${ms} ms`;
+}
+
+/** Bands of blocks by scan time (blocks plus their tags); separators between them. */
+function computeScanBands(blocks: BlockGeom[], connectors: ConnectorGeom[], ys: number[]): ScanBands | undefined {
+  const real = blocks.filter((b) => !b.iface);
+  const msOf = (b: BlockGeom) => (b.scan ? parseDuration(b.scan) : undefined) ?? Infinity;
+  const values = [...new Set(real.map(msOf))].sort((a, b) => a - b);
+  if (values.length < 2) return undefined;
+  const top = Math.min(...ys) - 34;
+  const bottom = Math.max(...ys) + 6;
+  const bands = values.map((ms) => {
+    const bl = real.filter((b) => msOf(b) === ms);
+    const ids = new Set(bl.map((b) => b.id));
+    const cs = connectors.filter((c) => c.owner && ids.has(c.owner));
+    return {
+      ms,
+      label: ms === Infinity ? 'no scan' : formatScan(ms),
+      x0: Math.min(...bl.map((b) => b.x - M.STUB), ...cs.map((c) => c.x)),
+      x1: Math.max(...bl.map((b) => b.x + b.w + M.STUB), ...cs.map((c) => c.x + c.w)),
+    };
+  });
+  const ok = bands.every((b, i) => i === 0 || bands[i - 1].x1 + 16 <= b.x0);
+  const separators = ok ? bands.slice(1).map((b, i) => (bands[i].x1 + b.x0) / 2) : [];
+  return { ok, bands, separators, top, bottom };
+}
+
+/**
+ * Positions that arrange a sheet into scan time bands: fastest scan left,
+ * inside a band by the automatic layout's columns (signal flow / execution
+ * order). Pass them to `pinAll`.
+ */
+export function arrangeByScan(diagram: Diagram, sheet: number, ctx: LayoutContext = {}): Record<string, [number, number]> {
+  // Start from the automatic layout (hand positions ignored).
+  const auto: Diagram = { ...diagram, blocks: diagram.blocks.map((b) => ({ ...b, pos: undefined })) };
+  const base = layoutSheet(auto, sheet, { ...ctx, overrides: undefined, scanBands: false });
+  const real = base.blocks.filter((b) => !b.iface);
+  const msOf = (b: BlockGeom) => (b.scan ? parseDuration(b.scan) : undefined) ?? Infinity;
+  const values = [...new Set(real.map(msOf))].sort((a, b) => a - b);
+  const leftNeed = (b: BlockGeom) => Math.max(0, ...base.connectors.filter((c) => c.owner === b.id && c.side === 'left').map((c) => b.x - c.x));
+  const rightNeed = (b: BlockGeom) => Math.max(0, ...base.connectors.filter((c) => c.owner === b.id && c.side === 'right').map((c) => c.x + c.w - b.x - b.w));
+  const out: Record<string, [number, number]> = {};
+  let x = M.MARGIN;
+  for (const ms of values) {
+    const bl = real.filter((b) => msOf(b) === ms);
+    const cols = [...new Set(bl.map((b) => b.x))].sort((a, b) => a - b);
+    for (const cx of cols) {
+      const inCol = bl.filter((b) => b.x === cx).sort((a, b) => a.y - b.y);
+      const lead = Math.max(...inCol.map(leftNeed));
+      x += lead;
+      for (const b of inCol) out[b.id] = [snap(x), b.y];
+      x += Math.max(...inCol.map((b) => b.w + rightNeed(b))) + M.GAP_X;
+    }
+    x += 80; // room for the separator between bands
   }
   return out;
 }

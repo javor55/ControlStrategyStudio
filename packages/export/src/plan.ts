@@ -514,6 +514,7 @@ export function planExport(
     const layouts = layoutDiagram(s, {
       defaultScan: s.scan,
       display,
+      scanBands: !!config.display.scanBands,
       paramsDefault: model.meta.drawing.params !== 'hide',
       usedBy: (block, port) => [
         ...model

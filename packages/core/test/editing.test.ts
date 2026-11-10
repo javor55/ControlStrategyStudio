@@ -280,3 +280,25 @@ describe('composite interface bars', () => {
     expect(t.diagram).toBeDefined();
   });
 });
+
+describe('scan time bands', () => {
+  it('arranges a sheet by scan time and draws separators only when the bands do not overlap', async () => {
+    const { arrangeByScan, exampleProjects } = await import('../src');
+    let files = exampleProjects().find((e) => e.id === 'dosing-cip')!.files();
+    const file = Object.keys(files).find((f) => f.endsWith('/PIC112.yaml'))!;
+    for (const [id, v] of Object.entries({ PT112: '100ms', PV112: '100ms', PIC112: '500ms', PAH112: '500ms', NO_PUMP: '1s' })) files = applyOp(files, { op: 'setBlockField', file, id, field: 'scan', value: v }).files;
+    let s = loadProject(files).strategies.find((x) => x.file === file)!;
+    // The automatic layout follows the signal flow: bands overlap, nothing drawn.
+    const before = layoutDiagram(s, { defaultScan: s.scan, scanBands: true })[0].scanBands!;
+    expect(before.ok).toBe(false);
+    const positions = arrangeByScan(s, 1, { defaultScan: s.scan });
+    files = applyOp(files, { op: 'pinAll', file, positions }).files;
+    s = loadProject(files).strategies.find((x) => x.file === file)!;
+    const sb = layoutDiagram(s, { defaultScan: s.scan, scanBands: true })[0].scanBands!;
+    expect(sb.ok).toBe(true);
+    expect(sb.bands.map((b) => b.label)).toEqual(['100 ms', '500 ms', '1 s']);
+    expect(sb.separators).toHaveLength(2);
+    // Without the option there are no bands.
+    expect(layoutDiagram(s, { defaultScan: s.scan })[0].scanBands).toBeUndefined();
+  });
+});

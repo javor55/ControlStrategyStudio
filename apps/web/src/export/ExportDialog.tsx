@@ -239,6 +239,7 @@ export function ExportDialog(props: { initialFormat?: ExportFormat; onClose: () 
                   ['feedback', 'z⁻¹ marks on previous-cycle links'],
                   ['labels', 'Signal names and link comments'],
                   ['categories', 'Line category colours'],
+                  ['scanBands', 'Scan time bands'],
                 ] as const
               ).map(([k, label]) => (
                 <label key={k} className="xp-row">
